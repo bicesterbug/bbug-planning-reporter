@@ -634,7 +634,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
 ### Phase 1: MCP Client Infrastructure & Progress Tracking
 
 - Task 1: Implement MCPClientManager with connection lifecycle
-  - Status: Backlog
+  - Status: Complete
   - SSE connections to 3 MCP servers
   - Health monitoring and reconnection logic
   - Tool call routing
@@ -642,7 +642,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:MCPClientManager/TS-01], [agent-integration:MCPClientManager/TS-02], [agent-integration:MCPClientManager/TS-03], [agent-integration:MCPClientManager/TS-04], [agent-integration:MCPClientManager/TS-05], [agent-integration:MCPClientManager/TS-06], [agent-integration:MCPClientManager/TS-07]
 
 - Task 2: Implement ProgressTracker with phase management
-  - Status: Backlog
+  - Status: Complete
   - Phase transition events
   - Sub-progress for long phases
   - Redis state persistence
@@ -650,7 +650,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ProgressTracker/TS-01], [agent-integration:ProgressTracker/TS-02], [agent-integration:ProgressTracker/TS-03], [agent-integration:ProgressTracker/TS-04], [agent-integration:ProgressTracker/TS-05]
 
 - Task 3: Implement ClaudeClient wrapper
-  - Status: Backlog
+  - Status: Complete
   - Anthropic SDK integration
   - Tool use handling
   - Token tracking
@@ -661,7 +661,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
 ### Phase 2: Core Orchestrator & Workflow
 
 - Task 4: Implement AgentOrchestrator workflow skeleton
-  - Status: Backlog
+  - Status: Complete
   - Phase state machine
   - MCP tool call coordination
   - Error handling framework
@@ -669,7 +669,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:AgentOrchestrator/TS-01], [agent-integration:AgentOrchestrator/TS-03], [agent-integration:AgentOrchestrator/TS-06], [agent-integration:AgentOrchestrator/TS-07]
 
 - Task 5: Implement orchestrator error recovery
-  - Status: Backlog
+  - Status: Complete
   - Partial failure handling
   - State recovery on restart
   - Graceful degradation
@@ -677,7 +677,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:AgentOrchestrator/TS-02], [agent-integration:AgentOrchestrator/TS-04], [agent-integration:AgentOrchestrator/TS-05], [agent-integration:AgentOrchestrator/TS-08]
 
 - Task 6: Wire orchestrator to worker job handler
-  - Status: Backlog
+  - Status: Complete
   - Integration with arq worker
   - Review job processing
   - Result storage
@@ -687,14 +687,14 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
 ### Phase 3: Review Assessment Logic
 
 - Task 7: Implement ReviewAssessor core
-  - Status: Backlog
+  - Status: Complete
   - Document search integration
   - Assessment structure
   - Requirements: [agent-integration:FR-004], [agent-integration:FR-005], [agent-integration:FR-006], [agent-integration:FR-007]
   - Test Scenarios: [agent-integration:ReviewAssessor/TS-01], [agent-integration:ReviewAssessor/TS-03], [agent-integration:ReviewAssessor/TS-05], [agent-integration:ReviewAssessor/TS-07]
 
 - Task 8: Implement cycle parking assessment
-  - Status: Backlog
+  - Status: Complete
   - Search for parking content
   - Evaluate against standards
   - Rate and document findings
@@ -702,7 +702,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ReviewAssessor/TS-01], [agent-integration:ReviewAssessor/TS-02]
 
 - Task 9: Implement cycle routes assessment
-  - Status: Backlog
+  - Status: Complete
   - Search for route content
   - Compare against LTN 1/20
   - Rate and document findings
@@ -710,7 +710,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ReviewAssessor/TS-03], [agent-integration:ReviewAssessor/TS-04]
 
 - Task 10: Implement junction design assessment
-  - Status: Backlog
+  - Status: Complete
   - Search for junction content
   - Compare against LTN 1/20 Ch.6
   - Rate and document findings
@@ -718,7 +718,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ReviewAssessor/TS-05], [agent-integration:ReviewAssessor/TS-06]
 
 - Task 11: Implement permeability assessment
-  - Status: Backlog
+  - Status: Complete
   - Search for connectivity content
   - Evaluate filtered permeability
   - Rate and document findings
@@ -726,7 +726,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ReviewAssessor/TS-07], [agent-integration:ReviewAssessor/TS-08]
 
 - Task 12: Implement missing document handling
-  - Status: Backlog
+  - Status: Complete
   - Detect missing key documents
   - Adjust assessment scope
   - Flag for human review
@@ -736,7 +736,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
 ### Phase 4: Policy Comparison & Output Generation
 
 - Task 13: Implement PolicyComparer
-  - Status: Backlog
+  - Status: Complete
   - Validation date policy queries
   - Compliance matrix generation
   - Revision tracking
@@ -744,7 +744,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:PolicyComparer/TS-01], [agent-integration:PolicyComparer/TS-02], [agent-integration:PolicyComparer/TS-03], [agent-integration:PolicyComparer/TS-04], [agent-integration:PolicyComparer/TS-05], [agent-integration:PolicyComparer/TS-06], [agent-integration:PolicyComparer/TS-07], [agent-integration:PolicyComparer/TS-08]
 
 - Task 14: Implement ReviewGenerator JSON output
-  - Status: Backlog
+  - Status: Complete
   - Structured JSON matching schema
   - Overall rating calculation
   - All required fields
@@ -752,14 +752,14 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ReviewGenerator/TS-01], [agent-integration:ReviewGenerator/TS-03], [agent-integration:ReviewGenerator/TS-04], [agent-integration:ReviewGenerator/TS-05], [agent-integration:ReviewGenerator/TS-10]
 
 - Task 15: Implement ReviewGenerator recommendations
-  - Status: Backlog
+  - Status: Complete
   - Actionable recommendations with policy
   - Suggested conditions
   - Requirements: [agent-integration:FR-009], [agent-integration:FR-010]
   - Test Scenarios: [agent-integration:ReviewGenerator/TS-06], [agent-integration:ReviewGenerator/TS-07], [agent-integration:ReviewGenerator/TS-08], [agent-integration:ReviewGenerator/TS-09]
 
 - Task 16: Implement ReviewTemplates and Markdown output
-  - Status: Backlog
+  - Status: Complete
   - Template strings matching DESIGN.md Section 5
   - Markdown formatting
   - Table rendering
@@ -769,7 +769,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
 ### Phase 5: Integration & End-to-End Testing
 
 - Task 17: Integration tests with mocked MCP servers
-  - Status: Backlog
+  - Status: Complete
   - Complete workflow testing
   - Partial failure scenarios
   - Policy revision selection
@@ -777,14 +777,14 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ITS-01], [agent-integration:ITS-02], [agent-integration:ITS-03], [agent-integration:ITS-04], [agent-integration:ITS-05], [agent-integration:ITS-06], [agent-integration:ITS-07], [agent-integration:ITS-08], [agent-integration:ITS-09], [agent-integration:ITS-10]
 
 - Task 18: Citation accuracy verification
-  - Status: Backlog
+  - Status: Complete
   - Verify all citations grounded in RAG
   - Test citation format
   - Requirements: [agent-integration:NFR-002], [agent-integration:NFR-003]
   - Test Scenarios: [agent-integration:ITS-10]
 
 - Task 19: Performance testing and token optimization
-  - Status: Backlog
+  - Status: Complete
   - Measure end-to-end timing
   - Optimize prompts for token efficiency
   - Verify <5 minute average
@@ -792,7 +792,7 @@ def calculate_overall_rating(aspects: list[Aspect]) -> Rating:
   - Test Scenarios: [agent-integration:ITS-08]
 
 - Task 20: End-to-end smoke tests
-  - Status: Backlog
+  - Status: Complete
   - Full system tests with real servers
   - Webhook verification
   - Polling verification
