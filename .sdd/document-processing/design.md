@@ -773,7 +773,7 @@ Errors:
 ### Phase 5: Integration & Testing
 
 - Task 15: Wire worker to Document Store MCP
-  - Status: Backlog
+  - Status: Complete
   - Worker spawns MCP process or connects via SSE
   - Call ingest_document for each downloaded file
   - Handle failures gracefully
@@ -781,7 +781,7 @@ Errors:
   - Test Scenarios: [document-processing:ITS-01], [document-processing:ITS-07]
 
 - Task 16: Integration tests with sample documents
-  - Status: Backlog
+  - Status: Complete
   - Test fixtures: text PDF, scanned PDF, drawing PDF
   - Full pipeline verification
   - Re-ingestion scenarios
@@ -789,7 +789,7 @@ Errors:
   - Test Scenarios: [document-processing:ITS-02], [document-processing:ITS-04], [document-processing:ITS-05], [document-processing:ITS-06], [document-processing:ITS-08]
 
 - Task 17: Performance testing and optimization
-  - Status: Backlog
+  - Status: Complete
   - Verify search latency <500ms
   - Test with 50 documents (NFR-001)
   - Optimize batch sizes, connection pooling

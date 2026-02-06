@@ -12,6 +12,8 @@ import structlog
 from arq import create_pool
 from arq.connections import RedisSettings
 
+from src.worker.jobs import ingest_application_documents, ingest_directory, search_documents
+
 # Configure structured logging
 structlog.configure(
     processors=[
@@ -71,8 +73,9 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     functions = [
-        # Jobs will be registered here as they're implemented
-        # process_review_job,
+        ingest_application_documents,
+        ingest_directory,
+        search_documents,
     ]
     queue_name = "review_jobs"
     max_jobs = 10
