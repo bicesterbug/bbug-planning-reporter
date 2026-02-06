@@ -8,10 +8,25 @@ Implements [document-processing:FR-012] - Detection of image-heavy pages
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import fitz  # PyMuPDF
 import structlog
+
+# Lazy import pytesseract - only loaded when OCR is needed
+# This allows the module to be imported even if tesseract isn't installed
+try:
+    import pytesseract
+    from PIL import Image as PILImage
+
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    pytesseract = None  # type: ignore[assignment]
+    PILImage = None  # type: ignore[assignment, misc]
+    PYTESSERACT_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from PIL import Image as PILImage
 
 logger = structlog.get_logger(__name__)
 
@@ -96,9 +111,12 @@ class DocumentProcessor:
         if self._ocr_available is not None:
             return self._ocr_available
 
-        try:
-            import pytesseract
+        if not PYTESSERACT_AVAILABLE:
+            self._ocr_available = False
+            logger.warning("pytesseract not installed, OCR fallback disabled")
+            return self._ocr_available
 
+        try:
             pytesseract.get_tesseract_version()
             self._ocr_available = True
         except Exception:
@@ -289,13 +307,14 @@ class DocumentProcessor:
         Returns:
             Tuple of (extracted_text, average_confidence)
         """
-        try:
-            import pytesseract
-            from PIL import Image
+        if not PYTESSERACT_AVAILABLE or pytesseract is None or PILImage is None:
+            logger.error("OCR called but pytesseract not available")
+            return "", 0.0
 
+        try:
             # Render page to image at 300 DPI for good OCR quality
             pix = page.get_pixmap(dpi=300)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            img = PILImage.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
             # Get detailed OCR data with confidence scores
             data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
@@ -329,11 +348,11 @@ class DocumentProcessor:
         if not self.enable_ocr or not self._check_ocr_available():
             raise ExtractionError("OCR is required for image files but is not available")
 
-        try:
-            import pytesseract
-            from PIL import Image
+        if not PYTESSERACT_AVAILABLE or pytesseract is None or PILImage is None:
+            raise ExtractionError("OCR is required for image files but pytesseract is not installed")
 
-            img = Image.open(path)
+        try:
+            img = PILImage.open(path)
 
             # Get detailed OCR data
             data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)

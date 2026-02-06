@@ -666,14 +666,14 @@ Errors:
   - Test Scenarios: [document-processing:DocumentProcessor/TS-01], [document-processing:DocumentProcessor/TS-05], [document-processing:DocumentProcessor/TS-06]
 
 - Task 2: Add OCR fallback to DocumentProcessor
-  - Status: Backlog
+  - Status: Complete
   - Tesseract integration via pytesseract
   - Confidence score tracking, mixed document handling
   - Requirements: [document-processing:FR-002], [document-processing:NFR-002]
   - Test Scenarios: [document-processing:DocumentProcessor/TS-02], [document-processing:DocumentProcessor/TS-03], [document-processing:DocumentProcessor/TS-07], [document-processing:DocumentProcessor/TS-08]
 
 - Task 3: Implement image-heavy page detection
-  - Status: Backlog
+  - Status: Complete
   - Detect drawings/site plans via image-to-text ratio
   - Set contains_drawings flag in metadata
   - Requirements: [document-processing:FR-012]
