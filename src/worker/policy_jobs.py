@@ -144,7 +144,7 @@ class PolicyIngestionService:
 
             # Phase 1: Extract text from PDF
             logger.info("Extracting text from PDF", phase="extracting")
-            extraction = self._processor.extract(str(file_path))
+            extraction = self._processor.extract_text(str(file_path))
 
             page_count = extraction.total_pages
             logger.info(

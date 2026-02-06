@@ -165,7 +165,7 @@ class TestSuccessfulIngestion:
         """
         # Setup mocks
         mock_registry.get_revision.return_value = sample_revision
-        mock_processor.extract.return_value = sample_extraction
+        mock_processor.extract_text.return_value = sample_extraction
         mock_chunker.chunk_pages.return_value = sample_chunks
 
         service = PolicyIngestionService(
@@ -229,7 +229,7 @@ class TestIngestionFailure:
 
         # Setup mocks
         mock_registry.get_revision.return_value = sample_revision
-        mock_processor.extract.side_effect = ExtractionError("Failed to open PDF: corrupted file")
+        mock_processor.extract_text.side_effect = ExtractionError("Failed to open PDF: corrupted file")
 
         service = PolicyIngestionService(
             registry=mock_registry,
@@ -269,7 +269,7 @@ class TestIngestionFailure:
         """Test handling of PDF with no extractable text."""
         # Setup mocks - extraction succeeds but no text
         mock_registry.get_revision.return_value = sample_revision
-        mock_processor.extract.return_value = DocumentExtraction(
+        mock_processor.extract_text.return_value = DocumentExtraction(
             file_path="/data/policy/empty.pdf",
             total_pages=1,
             pages=[
@@ -333,7 +333,7 @@ class TestTemporalMetadata:
         Then: All chunks have effective_from, effective_to in metadata
         """
         mock_registry.get_revision.return_value = sample_revision
-        mock_processor.extract.return_value = sample_extraction
+        mock_processor.extract_text.return_value = sample_extraction
         mock_chunker.chunk_pages.return_value = sample_chunks
 
         service = PolicyIngestionService(
@@ -393,7 +393,7 @@ class TestReindex:
         Then: Old chunks deleted before new ones created
         """
         mock_registry.get_revision.return_value = sample_revision
-        mock_processor.extract.return_value = sample_extraction
+        mock_processor.extract_text.return_value = sample_extraction
         mock_chunker.chunk_pages.return_value = sample_chunks
 
         service = PolicyIngestionService(

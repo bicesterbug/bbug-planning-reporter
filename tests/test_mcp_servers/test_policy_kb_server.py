@@ -651,7 +651,7 @@ class TestIngestPolicyRevision:
 
         # Create mock processor and chunker
         mock_processor = MagicMock()
-        mock_processor.extract.return_value = MagicMock(
+        mock_processor.extract_text.return_value = MagicMock(
             total_pages=2,
             pages=[
                 MagicMock(page_number=1, text="Chapter 5: Cycle Lane Design"),

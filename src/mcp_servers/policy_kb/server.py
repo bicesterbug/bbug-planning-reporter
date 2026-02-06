@@ -370,7 +370,6 @@ class PolicyKBMCP:
                 {
                     "source": p.source,
                     "title": p.title,
-                    "description": p.description,
                     "category": p.category.value if p.category else None,
                 }
                 for p in policies
@@ -460,7 +459,7 @@ class PolicyKBMCP:
 
         # Extract text from PDF
         processor = self._get_processor()
-        extraction = processor.extract(str(file_path))
+        extraction = processor.extract_text(str(file_path))
 
         # Chunk the text
         chunker = self._get_chunker()
