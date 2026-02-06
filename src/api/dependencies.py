@@ -1,18 +1,24 @@
 """
 FastAPI dependencies for dependency injection.
 
-Provides Redis client and other shared dependencies.
+Provides Redis client, PolicyRegistry, and other shared dependencies.
 """
 
 import os
 from typing import Annotated
 
+import redis.asyncio as aioredis
 from fastapi import Depends
 
+from src.shared.effective_date_resolver import EffectiveDateResolver
+from src.shared.policy_registry import PolicyRegistry
 from src.shared.redis_client import RedisClient
 
-# Global Redis client instance
+# Global instances
 _redis_client: RedisClient | None = None
+_raw_redis_client: aioredis.Redis | None = None
+_policy_registry: PolicyRegistry | None = None
+_effective_date_resolver: EffectiveDateResolver | None = None
 
 
 async def get_redis_client() -> RedisClient:
@@ -29,5 +35,50 @@ async def get_redis_client() -> RedisClient:
     return _redis_client
 
 
-# Type alias for dependency injection
+async def get_raw_redis_client() -> aioredis.Redis:
+    """
+    Get a raw async Redis client for PolicyRegistry.
+
+    Creates and connects the client on first call.
+    """
+    global _raw_redis_client
+    if _raw_redis_client is None:
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        _raw_redis_client = aioredis.from_url(
+            redis_url,
+            decode_responses=True,
+            max_connections=10,
+        )
+    return _raw_redis_client
+
+
+async def get_policy_registry() -> PolicyRegistry:
+    """
+    Get the PolicyRegistry instance.
+
+    Creates the registry on first call.
+    """
+    global _policy_registry
+    if _policy_registry is None:
+        redis = await get_raw_redis_client()
+        _policy_registry = PolicyRegistry(redis)
+    return _policy_registry
+
+
+async def get_effective_date_resolver() -> EffectiveDateResolver:
+    """
+    Get the EffectiveDateResolver instance.
+
+    Creates the resolver on first call.
+    """
+    global _effective_date_resolver
+    if _effective_date_resolver is None:
+        registry = await get_policy_registry()
+        _effective_date_resolver = EffectiveDateResolver(registry)
+    return _effective_date_resolver
+
+
+# Type aliases for dependency injection
 RedisClientDep = Annotated[RedisClient, Depends(get_redis_client)]
+PolicyRegistryDep = Annotated[PolicyRegistry, Depends(get_policy_registry)]
+EffectiveDateResolverDep = Annotated[EffectiveDateResolver, Depends(get_effective_date_resolver)]
