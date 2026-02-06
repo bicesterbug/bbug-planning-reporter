@@ -27,6 +27,7 @@ from src.mcp_servers.document_store.chroma_client import (
     DocumentRecord,
 )
 from src.mcp_servers.document_store.chunker import TextChunker
+from src.mcp_servers.document_store.classifier import DocumentClassifier
 from src.mcp_servers.document_store.embeddings import EmbeddingService
 from src.mcp_servers.document_store.processor import (
     DocumentProcessor,
@@ -99,6 +100,7 @@ class DocumentStoreMCP:
         self._processor: DocumentProcessor | None = None
         self._chunker: TextChunker | None = None
         self._embedding_service: EmbeddingService | None = None
+        self._classifier: DocumentClassifier | None = None
 
         # MCP server
         self._server = Server("document-store-mcp")
@@ -131,6 +133,13 @@ class DocumentStoreMCP:
             self._embedding_service = EmbeddingService()
             logger.info("EmbeddingService initialized")
         return self._embedding_service
+
+    def _get_classifier(self) -> DocumentClassifier:
+        """Get or create DocumentClassifier."""
+        if self._classifier is None:
+            self._classifier = DocumentClassifier()
+            logger.info("DocumentClassifier initialized")
+        return self._classifier
 
     def _setup_handlers(self) -> None:
         """Set up MCP server handlers."""
@@ -269,7 +278,25 @@ class DocumentStoreMCP:
 
         # Generate document ID
         document_id = ChromaClient.generate_document_id(input.application_ref, file_hash)
-        document_type = input.document_type or "other"
+
+        # Classify document type if not provided
+        if input.document_type:
+            document_type = input.document_type
+            classification_method = "provided"
+        else:
+            classifier = self._get_classifier()
+            # Use full text for content-based classification
+            full_text = extraction.full_text
+            classification = classifier.classify(file_path.name, content=full_text)
+            document_type = classification.document_type
+            classification_method = classification.method
+            logger.info(
+                "Document auto-classified",
+                filename=file_path.name,
+                document_type=document_type,
+                confidence=classification.confidence,
+                method=classification_method,
+            )
 
         # Create chunk records
         chunk_records = []
