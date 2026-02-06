@@ -799,21 +799,21 @@ Errors:
 ### Phase 6: Docker & Documentation
 
 - Task 18: Create Dockerfile for document-store-mcp
-  - Status: Backlog
+  - Status: Complete
   - Extend base image with Tesseract, sentence-transformers
   - Volume mount for /data/chroma
   - Health check for ChromaDB connection
   - Requirements: Project containerization
 
 - Task 19: Update docker-compose.yml
-  - Status: Backlog
+  - Status: Complete
   - Add document-store-mcp service
   - Configure port 3002, volume mounts
   - Dependency on base image build
   - Requirements: Project containerization
 
 - Task 20: E2E smoke test with real documents
-  - Status: Backlog
+  - Status: Complete
   - Test against sample Cherwell documents
   - Verify full flow: download -> ingest -> search
   - Requirements: [document-processing:NFR-001], [document-processing:NFR-002]

@@ -1,0 +1,23 @@
+# Document Store MCP Server
+# Implements [document-processing:FR-006] - MCP tool interface for document processing
+
+FROM cherwell-base:latest
+
+# Environment defaults
+ENV CHROMA_PERSIST_DIR=/data/chroma
+ENV EMBEDDING_MODEL=all-MiniLM-L6-v2
+ENV ENABLE_OCR=true
+ENV MCP_PORT=3002
+
+# Expose MCP port for SSE transport
+EXPOSE 3002
+
+# Create data directories
+RUN mkdir -p /data/chroma /data/raw
+
+# Health check - verify ChromaDB is accessible
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import chromadb; c = chromadb.PersistentClient(path='/data/chroma'); c.heartbeat()"
+
+# Run the MCP server
+CMD ["python", "-m", "src.mcp_servers.document_store.server"]

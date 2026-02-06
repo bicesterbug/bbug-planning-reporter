@@ -84,6 +84,27 @@ services:
     restart: unless-stopped
 
   # ==========================================================================
+  # Document Store MCP Server (Phase 2)
+  # ==========================================================================
+  document-store-mcp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.document-store
+    environment:
+      - CHROMA_PERSIST_DIR=/data/chroma
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - ENABLE_OCR=${ENABLE_OCR:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "3002:3002"
+    volumes:
+      - chroma_data:/data/chroma
+      - raw_docs:/data/raw
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  # ==========================================================================
   # Cherwell Scraper MCP Server (Phase 1)
   # ==========================================================================
   cherwell-scraper-mcp:
