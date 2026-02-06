@@ -137,7 +137,7 @@ class TestCreatePolicy:
 
         assert response.status_code == 409
         data = response.json()
-        assert data["detail"]["error"]["code"] == "policy_already_exists"
+        assert data["error"]["code"] == "policy_already_exists"
 
     def test_invalid_source_format(self, client, mock_registry):
         """
@@ -162,9 +162,9 @@ class TestCreatePolicy:
 
         assert response.status_code == 422
         data = response.json()
-        assert "detail" in data
+        assert "error" in data
         # The validation error should mention source format
-        assert any("source" in str(err).lower() for err in data["detail"])
+        assert any("source" in str(err).lower() for err in data["error"]["details"]["errors"])
 
 
 class TestListPolicies:
@@ -354,7 +354,7 @@ class TestGetPolicy:
 
         assert response.status_code == 404
         data = response.json()
-        assert data["detail"]["error"]["code"] == "policy_not_found"
+        assert data["error"]["code"] == "policy_not_found"
 
 
 class TestUpdatePolicy:
@@ -423,7 +423,7 @@ class TestUpdatePolicy:
 
         assert response.status_code == 404
         data = response.json()
-        assert data["detail"]["error"]["code"] == "policy_not_found"
+        assert data["error"]["code"] == "policy_not_found"
 
 
 class TestGetEffectiveSnapshot:
@@ -541,7 +541,7 @@ class TestGetEffectiveSnapshot:
 
         assert response.status_code == 422
         data = response.json()
-        assert "detail" in data
+        assert "error" in data
 
     def test_missing_date_parameter(self, client, mock_resolver):
         """
@@ -559,7 +559,7 @@ class TestGetEffectiveSnapshot:
 
         assert response.status_code == 422
         data = response.json()
-        assert "detail" in data
+        assert "error" in data
 
 
 # =============================================================================
@@ -668,7 +668,7 @@ class TestUploadRevision:
 
         assert response.status_code == 422
         data = response.json()
-        assert data["detail"]["error"]["code"] == "unsupported_file_type"
+        assert data["error"]["code"] == "unsupported_file_type"
 
     def test_upload_revision_overlap_rejected(self, client, mock_registry, tmp_path, monkeypatch):
         """
@@ -711,7 +711,7 @@ class TestUploadRevision:
 
         assert response.status_code == 409
         data = response.json()
-        assert data["detail"]["error"]["code"] == "revision_overlap"
+        assert data["error"]["code"] == "revision_overlap"
 
     def test_upload_revision_policy_not_found(self, client, mock_registry, tmp_path, monkeypatch):
         """
@@ -742,7 +742,7 @@ class TestUploadRevision:
 
         assert response.status_code == 404
         data = response.json()
-        assert data["detail"]["error"]["code"] == "policy_not_found"
+        assert data["error"]["code"] == "policy_not_found"
 
 
 class TestGetRevision:
@@ -811,7 +811,7 @@ class TestGetRevision:
 
         assert response.status_code == 404
         data = response.json()
-        assert data["detail"]["error"]["code"] == "revision_not_found"
+        assert data["error"]["code"] == "revision_not_found"
 
 
 class TestUpdateRevision:
@@ -885,7 +885,7 @@ class TestUpdateRevision:
 
         assert response.status_code == 404
         data = response.json()
-        assert data["detail"]["error"]["code"] == "revision_not_found"
+        assert data["error"]["code"] == "revision_not_found"
 
 
 class TestDeleteRevision:
@@ -967,7 +967,7 @@ class TestDeleteRevision:
 
         assert response.status_code == 409
         data = response.json()
-        assert data["detail"]["error"]["code"] == "cannot_delete_sole_revision"
+        assert data["error"]["code"] == "cannot_delete_sole_revision"
 
 
 class TestRevisionStatus:
@@ -1120,4 +1120,4 @@ class TestReindexRevision:
 
         assert response.status_code == 409
         data = response.json()
-        assert data["detail"]["error"]["code"] == "cannot_reindex"
+        assert data["error"]["code"] == "cannot_reindex"

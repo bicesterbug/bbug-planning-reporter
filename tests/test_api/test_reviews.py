@@ -89,7 +89,7 @@ class TestSubmitReview:
 
         assert response.status_code == 422
         data = response.json()
-        assert "detail" in data
+        assert "error" in data
 
     def test_duplicate_review_prevention(self, client, mock_redis):
         """
@@ -112,8 +112,8 @@ class TestSubmitReview:
 
         assert response.status_code == 409
         data = response.json()
-        assert "detail" in data
-        assert data["detail"]["error"]["code"] == "review_already_exists"
+        assert "error" in data
+        assert data["error"]["code"] == "review_already_exists"
 
 
 class TestGetReview:
@@ -209,7 +209,7 @@ class TestGetReview:
 
         assert response.status_code == 404
         data = response.json()
-        assert data["detail"]["error"]["code"] == "review_not_found"
+        assert data["error"]["code"] == "review_not_found"
 
 
 class TestListReviews:
@@ -304,7 +304,7 @@ class TestCancelReview:
 
         assert response.status_code == 409
         data = response.json()
-        assert data["detail"]["error"]["code"] == "cannot_cancel"
+        assert data["error"]["code"] == "cannot_cancel"
 
 
 class TestReviewStatus:
