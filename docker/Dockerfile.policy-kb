@@ -1,0 +1,26 @@
+# Policy KB MCP Server
+# Implements [policy-knowledge-base:FR-005] - search_policy with effective_date filtering
+# Implements [policy-knowledge-base:FR-006] - get_policy_section tool
+# Implements [policy-knowledge-base:FR-007] - list_policy_documents tool
+# Implements [policy-knowledge-base:FR-008] - list_policy_revisions tool
+
+FROM cherwell-base:latest
+
+# Environment defaults
+ENV CHROMA_PERSIST_DIR=/data/chroma
+ENV REDIS_URL=redis://redis:6379/0
+ENV EMBEDDING_MODEL=all-MiniLM-L6-v2
+ENV POLICY_KB_PORT=3003
+
+# Expose MCP port for SSE transport
+EXPOSE 3003
+
+# Create data directories
+RUN mkdir -p /data/chroma /data/policy
+
+# Health check - verify ChromaDB and Redis are accessible
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import chromadb; c = chromadb.PersistentClient(path='/data/chroma'); c.heartbeat()"
+
+# Run the MCP server
+CMD ["python", "-m", "src.mcp_servers.policy_kb.server"]

@@ -121,6 +121,56 @@ services:
       - agent-net
     restart: unless-stopped
 
+  # ==========================================================================
+  # Policy KB MCP Server
+  # Implements [policy-knowledge-base:FR-005] - Policy search with temporal filtering
+  # ==========================================================================
+  policy-kb-mcp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.policy-kb
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PERSIST_DIR=/data/chroma
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "3003:3003"
+    volumes:
+      - chroma_data:/data/chroma
+      - policy_docs:/data/policy
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Policy Init Container - Seeds initial policies at first deployment
+  # Implements [policy-knowledge-base:FR-013] - Seed initial policies
+  # ==========================================================================
+  policy-init:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.policy-init
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PERSIST_DIR=/data/chroma
+      - SEED_CONFIG_PATH=/data/policy/seed_config.json
+      - SEED_DIR=/data/policy/seed
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - chroma_data:/data/chroma
+      - policy_docs:/data/policy
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - agent-net
+    # Runs once at startup, then exits
+    restart: "no"
+
 # ==========================================================================
 # Volumes
 # ==========================================================================

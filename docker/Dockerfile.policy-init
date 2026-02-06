@@ -1,0 +1,16 @@
+# Policy Init Container - Seeds initial policies at first deployment
+# Implements [policy-knowledge-base:FR-013] - Seed initial policies at first deployment
+
+FROM cherwell-base:latest
+
+# Environment defaults
+ENV REDIS_URL=redis://redis:6379/0
+ENV CHROMA_PERSIST_DIR=/data/chroma
+ENV SEED_CONFIG_PATH=/data/policy/seed_config.json
+ENV SEED_DIR=/data/policy/seed
+
+# Create data directories
+RUN mkdir -p /data/chroma /data/policy/seed
+
+# Run the seeder script (runs once and exits)
+CMD ["python", "-m", "src.scripts.seed_policies"]
