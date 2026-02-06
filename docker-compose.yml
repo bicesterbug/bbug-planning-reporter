@@ -1,0 +1,123 @@
+# Cherwell Cycle Agent - Docker Compose Stack
+# Implements [foundation-api:NFR-005] - Containerisation
+#
+# Usage:
+#   docker compose build    # Build all images
+#   docker compose up -d    # Start all services
+#   docker compose logs -f  # Follow logs
+#   docker compose down     # Stop all services
+
+services:
+  # ==========================================================================
+  # API Gateway - FastAPI REST API
+  # ==========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    environment:
+      - API_KEYS=${API_KEYS:-sk-cycle-dev-key-1}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - WEBHOOK_REQUIRE_HTTPS=${WEBHOOK_REQUIRE_HTTPS:-false}
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Worker - arq job processor
+  # ==========================================================================
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-5-20250929}
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PERSIST_DIR=/data/chroma
+      - RAW_DOCS_DIR=/data/raw
+      - OUTPUT_DIR=/data/output
+      - POLICY_DOCS_DIR=/data/policy
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - SCRAPER_RATE_LIMIT=${SCRAPER_RATE_LIMIT:-1.0}
+      - SCRAPER_USER_AGENT=${SCRAPER_USER_AGENT:-CherwellCycleReview/1.0}
+      - WEBHOOK_TIMEOUT=${WEBHOOK_TIMEOUT:-10}
+      - WEBHOOK_MAX_RETRIES=${WEBHOOK_MAX_RETRIES:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - chroma_data:/data/chroma
+      - raw_docs:/data/raw
+      - output:/data/output
+      - policy_docs:/data/policy
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - agent-net
+    restart: unless-stopped
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+
+  # ==========================================================================
+  # Redis - Job queue, state store, pub/sub
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"  # Expose for local debugging; remove in prod
+    networks:
+      - agent-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Cherwell Scraper MCP Server (Phase 1)
+  # ==========================================================================
+  cherwell-scraper-mcp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.scraper
+    environment:
+      - SCRAPER_RATE_LIMIT=${SCRAPER_RATE_LIMIT:-1.0}
+      - SCRAPER_USER_AGENT=${SCRAPER_USER_AGENT:-CherwellCycleReview/1.0}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - raw_docs:/data/raw
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+# ==========================================================================
+# Volumes
+# ==========================================================================
+volumes:
+  chroma_data:
+    driver: local
+  raw_docs:
+    driver: local
+  output:
+    driver: local
+  policy_docs:
+    driver: local
+  redis_data:
+    driver: local
+
+# ==========================================================================
+# Networks
+# ==========================================================================
+networks:
+  agent-net:
+    driver: bridge
