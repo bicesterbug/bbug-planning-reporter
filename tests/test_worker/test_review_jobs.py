@@ -340,3 +340,106 @@ class TestSerializeApplication:
 
         result = _serialize_application(app)
         assert result["documents_fetched"] == 0
+
+
+class TestProcessReviewOptionsPassthrough:
+    """
+    Tests that process_review reads options from Redis and passes them to orchestrator.
+
+    Verifies [review-scope-control:process_review/TS-01] and [TS-02]
+    """
+
+    @pytest.mark.asyncio
+    async def test_reads_options_from_redis_and_passes_to_orchestrator(
+        self, mock_redis_wrapper, sample_success_result,
+    ):
+        """
+        Verifies [review-scope-control:process_review/TS-01] - Reads options
+
+        Given: A ReviewJob in Redis with options.include_consultation_responses=True
+        When: process_review is called
+        Then: AgentOrchestrator is created with the options from the job
+        """
+        from src.shared.models import ReviewJob, ReviewOptions
+
+        job = ReviewJob(
+            review_id="rev_options_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.PROCESSING,
+            options=ReviewOptions(
+                include_consultation_responses=True,
+                include_public_comments=False,
+            ),
+            created_at=datetime.now(UTC),
+        )
+        mock_redis_wrapper.get_job = AsyncMock(return_value=job)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            ctx = {
+                "redis": AsyncMock(),
+                "redis_client": mock_redis_wrapper,
+            }
+
+            await process_review(
+                ctx=ctx,
+                review_id="rev_options_test",
+                application_ref="25/01178/REM",
+            )
+
+            # Verify orchestrator was created with options
+            mock_orch_cls.assert_called_once()
+            call_kwargs = mock_orch_cls.call_args[1]
+            assert call_kwargs["options"] is not None
+            assert call_kwargs["options"].include_consultation_responses is True
+            assert call_kwargs["options"].include_public_comments is False
+
+    @pytest.mark.asyncio
+    async def test_works_without_options(
+        self, mock_redis_wrapper, sample_success_result,
+    ):
+        """
+        Verifies [review-scope-control:process_review/TS-02] - Works without options
+
+        Given: A ReviewJob in Redis with no options
+        When: process_review is called
+        Then: AgentOrchestrator is created with options=None
+        """
+        from src.shared.models import ReviewJob
+
+        job = ReviewJob(
+            review_id="rev_no_options",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.PROCESSING,
+            options=None,
+            created_at=datetime.now(UTC),
+        )
+        mock_redis_wrapper.get_job = AsyncMock(return_value=job)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            ctx = {
+                "redis": AsyncMock(),
+                "redis_client": mock_redis_wrapper,
+            }
+
+            await process_review(
+                ctx=ctx,
+                review_id="rev_no_options",
+                application_ref="25/01178/REM",
+            )
+
+            # Verify orchestrator was created with options=None
+            mock_orch_cls.assert_called_once()
+            call_kwargs = mock_orch_cls.call_args[1]
+            assert call_kwargs["options"] is None

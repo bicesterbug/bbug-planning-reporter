@@ -9,7 +9,14 @@ Implements test scenarios from [key-documents:ReviewContent/TS-01] through [TS-0
 import pytest
 from pydantic import ValidationError
 
-from src.api.schemas import KeyDocument, ReviewContent, ReviewRequest, WebhookConfigRequest
+from src.api.schemas import (
+    KeyDocument,
+    ReviewContent,
+    ReviewOptionsRequest,
+    ReviewRequest,
+    WebhookConfigRequest,
+)
+from src.shared.models import ReviewOptions
 
 
 class TestApplicationReferenceValidation:
@@ -309,3 +316,81 @@ class TestReviewContentKeyDocuments:
         data = doc.model_dump()
         assert set(data.keys()) == {"title", "category", "summary", "url"}
         assert all(v is not None for v in data.values())
+
+
+class TestReviewOptionsRequestToggles:
+    """
+    Tests for review-scope-control toggle fields on ReviewOptionsRequest.
+
+    Verifies [review-scope-control:ReviewOptionsRequest/TS-01] through [TS-03]
+    """
+
+    def test_defaults_both_toggles_to_false(self) -> None:
+        """
+        Verifies [review-scope-control:ReviewOptionsRequest/TS-01] - Defaults
+
+        Given: No toggle fields in request JSON
+        When: ReviewOptionsRequest is parsed
+        Then: Both fields are False
+        """
+        options = ReviewOptionsRequest()
+
+        assert options.include_consultation_responses is False
+        assert options.include_public_comments is False
+
+    def test_accepts_explicit_true_values(self) -> None:
+        """
+        Verifies [review-scope-control:ReviewOptionsRequest/TS-02] - Accepts true
+
+        Given: Request JSON includes both toggles as true
+        When: ReviewOptionsRequest is parsed
+        Then: Both fields are True
+        """
+        options = ReviewOptionsRequest(
+            include_consultation_responses=True,
+            include_public_comments=True,
+        )
+
+        assert options.include_consultation_responses is True
+        assert options.include_public_comments is True
+
+    def test_existing_fields_unaffected(self) -> None:
+        """
+        Verifies [review-scope-control:ReviewOptionsRequest/TS-03] - Backward compatibility
+
+        Given: Request with only existing fields (focus_areas, etc.)
+        When: ReviewOptionsRequest is parsed
+        Then: Existing fields parsed correctly, new fields default to false
+        """
+        options = ReviewOptionsRequest(
+            focus_areas=["cycle_parking", "cycle_routes"],
+            output_format="json",
+            include_policy_matrix=False,
+        )
+
+        assert options.focus_areas == ["cycle_parking", "cycle_routes"]
+        assert options.output_format == "json"
+        assert options.include_policy_matrix is False
+        assert options.include_consultation_responses is False
+        assert options.include_public_comments is False
+
+
+class TestReviewOptionsToggles:
+    """
+    Tests for review-scope-control toggle fields on internal ReviewOptions model.
+
+    Verifies [review-scope-control:ReviewOptions/TS-01]
+    """
+
+    def test_defaults_both_toggles_to_false(self) -> None:
+        """
+        Verifies [review-scope-control:ReviewOptions/TS-01] - Defaults
+
+        Given: ReviewOptions created with no toggle fields
+        When: Model is instantiated
+        Then: Both fields are False
+        """
+        options = ReviewOptions()
+
+        assert options.include_consultation_responses is False
+        assert options.include_public_comments is False

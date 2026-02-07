@@ -659,3 +659,278 @@ class TestDocumentFilter:
         assert len(allowed) == 0
         assert len(filtered) == 1
         assert "Non-transport" in filtered[0].filter_reason
+
+
+class TestReviewScopeControl:
+    """
+    Tests for review-scope-control feature.
+
+    Verifies [review-scope-control:DocumentFilter/TS-01] through [review-scope-control:DocumentFilter/TS-10]
+    """
+
+    @pytest.fixture
+    def filter(self):
+        """Create a DocumentFilter instance for testing."""
+        return DocumentFilter()
+
+    def test_consultation_response_blocked_despite_allowlist_match(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-01] - Consultation response blocked
+        by default despite allowlist match.
+
+        Given: A document with description "Consultation Response - OCC Highways"
+               and both toggles at default (false)
+        When: filter_documents is called
+        Then: Document is filtered out with consultation response reason,
+              NOT allowed through via "highway" allowlist match
+        """
+        docs = [
+            DocumentInfo(
+                document_id="cr1",
+                description="Consultation Response - OCC Highways",
+                document_type="Consultation Response",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0, "Consultation response should be blocked by default"
+        assert len(filtered) == 1
+        assert "Consultation response" in filtered[0].filter_reason
+
+    def test_consultation_response_allowed_when_toggle_enabled(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-02] - Consultation response
+        allowed when toggle enabled.
+
+        Given: A document with description "Consultation Response - OCC Highways"
+               and include_consultation_responses=True
+        When: filter_documents is called
+        Then: Document is allowed through
+        """
+        docs = [
+            DocumentInfo(
+                document_id="cr2",
+                description="Consultation Response - OCC Highways",
+                document_type="Consultation Response",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(
+            docs, include_consultation_responses=True
+        )
+
+        assert len(allowed) == 1, "Consultation response should be allowed when toggle is on"
+        assert len(filtered) == 0
+
+    def test_public_comment_blocked_by_default(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-03] - Public comment
+        blocked by default.
+
+        Given: A document with type "letter from resident" and both toggles false
+        When: filter_documents is called
+        Then: Document is filtered out with public comment reason
+        """
+        docs = [
+            DocumentInfo(
+                document_id="pc1",
+                description="Letter from Resident - J Smith",
+                document_type="letter from resident",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0, "Public comment should be blocked by default"
+        assert len(filtered) == 1
+        assert "Public comment" in filtered[0].filter_reason
+
+    def test_public_comment_allowed_when_toggle_enabled(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-04] - Public comment
+        allowed when toggle enabled.
+
+        Given: A document with type "letter from resident" and include_public_comments=True
+        When: filter_documents is called
+        Then: Document is allowed through
+        """
+        docs = [
+            DocumentInfo(
+                document_id="pc2",
+                description="Letter from Resident - J Smith",
+                document_type="letter from resident",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(
+            docs, include_public_comments=True
+        )
+
+        assert len(allowed) == 1, "Public comment should be allowed when toggle is on"
+        assert len(filtered) == 0
+
+    def test_both_toggles_enabled(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-05] - Both toggles
+        enabled simultaneously.
+
+        Given: Documents including both consultation responses and public comments,
+               with both toggles true
+        When: filter_documents is called
+        Then: Both document types are allowed through
+        """
+        docs = [
+            DocumentInfo(
+                document_id="cr3",
+                description="Consultation Response - Environment Agency",
+                document_type="Consultation Response",
+            ),
+            DocumentInfo(
+                document_id="pc3",
+                description="Letter of Objection from A Jones",
+                document_type="Letter of Objection",
+            ),
+            DocumentInfo(
+                document_id="core1",
+                description="Planning Statement",
+                document_type="Planning Statement",
+            ),
+        ]
+
+        allowed, filtered = filter.filter_documents(
+            docs,
+            include_consultation_responses=True,
+            include_public_comments=True,
+        )
+
+        assert len(allowed) == 3, "All documents should be allowed when both toggles are on"
+        assert len(filtered) == 0
+
+    def test_skip_filter_overrides_toggles(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-06] - skip_filter
+        overrides toggles.
+
+        Given: Documents with skip_filter=True and both toggles false
+        When: filter_documents is called
+        Then: All documents are allowed through (skip_filter takes precedence)
+        """
+        docs = [
+            DocumentInfo(
+                document_id="cr4",
+                description="Consultation Response - Parish Council",
+                document_type="Consultation Response",
+            ),
+            DocumentInfo(
+                document_id="pc4",
+                description="Public Comment - B Williams",
+                document_type="Public Comment",
+            ),
+        ]
+
+        allowed, filtered = filter.filter_documents(
+            docs,
+            skip_filter=True,
+            include_consultation_responses=False,
+            include_public_comments=False,
+        )
+
+        assert len(allowed) == 2, "skip_filter should override all other filtering"
+        assert len(filtered) == 0
+
+    def test_core_documents_unaffected_by_toggles(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-07] - Core documents
+        unaffected by toggles.
+
+        Given: A Transport Assessment document with toggles at default
+        When: filter_documents is called
+        Then: Document is allowed through via allowlist as before
+        """
+        docs = [
+            DocumentInfo(
+                document_id="ta1",
+                description="Transport Assessment Report",
+                document_type="Transport Assessment",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 1
+        assert len(filtered) == 0
+
+    def test_non_transport_document_unaffected_by_toggles(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-08] - Non-transport
+        documents unaffected by toggles.
+
+        Given: An ecology document with toggles at default
+        When: filter_documents is called
+        Then: Document is filtered out via non-transport denylist as before
+        """
+        docs = [
+            DocumentInfo(
+                document_id="eco1",
+                description="Ecology Survey Report",
+                document_type="Ecology",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Non-transport" in filtered[0].filter_reason
+
+    def test_consultation_response_case_insensitive(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-09] - Consultation
+        response pattern matching is case insensitive.
+
+        Given: A document with description "CONSULTATION RESPONSE - Environment Agency"
+        When: filter_documents is called with defaults
+        Then: Document is filtered out
+        """
+        docs = [
+            DocumentInfo(
+                document_id="cr5",
+                description="CONSULTATION RESPONSE - Environment Agency",
+                document_type="CONSULTATION RESPONSE",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0, "Case-insensitive match should filter consultation response"
+        assert len(filtered) == 1
+        assert "Consultation response" in filtered[0].filter_reason
+
+    def test_public_comment_toggle_does_not_affect_consultation_responses(self, filter):
+        """
+        Verifies [review-scope-control:DocumentFilter/TS-10] - Public comment
+        toggle does not affect consultation responses.
+
+        Given: A consultation response with include_public_comments=True
+               but include_consultation_responses=False
+        When: filter_documents is called
+        Then: Consultation response is still filtered out
+        """
+        docs = [
+            DocumentInfo(
+                document_id="cr6",
+                description="Consultation Response - Natural England",
+                document_type="Consultation Response",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(
+            docs,
+            include_consultation_responses=False,
+            include_public_comments=True,
+        )
+
+        assert len(allowed) == 0, "Consultation response should still be blocked"
+        assert len(filtered) == 1
+        assert "Consultation response" in filtered[0].filter_reason

@@ -108,6 +108,9 @@ async def submit_review(
             output_format=request.options.output_format,
             include_policy_matrix=request.options.include_policy_matrix,
             include_suggested_conditions=request.options.include_suggested_conditions,
+            # Implements [review-scope-control:FR-004] - Map toggle fields
+            include_consultation_responses=request.options.include_consultation_responses,
+            include_public_comments=request.options.include_public_comments,
         )
 
     webhook = None

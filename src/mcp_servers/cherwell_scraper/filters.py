@@ -157,8 +157,18 @@ class DocumentFilter:
         "legal agreement",
     ]
 
+    # Implements [review-scope-control:FR-001] - Consultation responses
+    # Documents submitted by statutory consultees (Highway Authority, Environment Agency, etc.)
+    # Checked BEFORE allowlist to prevent false matches (e.g. "highway" in "OCC Highways")
+    DENYLIST_CONSULTATION_RESPONSE_PATTERNS = [
+        "consultation response",
+        "consultee response",
+        "statutory consultee",
+    ]
+
     # Implements [document-filtering:FR-001] - Public comments
     # Documents submitted by members of the public - not relevant for policy review
+    # Checked BEFORE allowlist to prevent false matches
     DENYLIST_PUBLIC_COMMENT_PATTERNS = [
         "public comment",
         "comment from",
@@ -169,7 +179,6 @@ class DocumentFilter:
         "letter of objection",
         "letter of support",
         "petition",
-        "consultation response",  # Cherwell portal's label for public comments
     ]
 
     def __init__(self) -> None:
@@ -186,6 +195,8 @@ class DocumentFilter:
         documents: list[DocumentInfo],
         skip_filter: bool = False,
         application_ref: str | None = None,
+        include_consultation_responses: bool = False,
+        include_public_comments: bool = False,
     ) -> tuple[list[DocumentInfo], list[FilteredDocumentInfo]]:
         """
         Filter documents based on type, separating relevant from irrelevant.
@@ -193,11 +204,14 @@ class DocumentFilter:
         Implements [document-filtering:FR-005] - Override filter with skip_filter flag
         Implements [document-filtering:FR-006] - Return filtered documents with reasons
         Implements [document-filtering:NFR-003] - Log all filter decisions
+        Implements [review-scope-control:FR-003] - Per-review filter override toggles
 
         Args:
             documents: List of documents to filter
             skip_filter: If True, bypass filtering and allow all documents
             application_ref: Application reference for logging context
+            include_consultation_responses: If True, skip consultation response denylist
+            include_public_comments: If True, skip public comment denylist
 
         Returns:
             Tuple of (documents_to_download, filtered_documents)
@@ -215,7 +229,12 @@ class DocumentFilter:
         filtered_documents: list[FilteredDocumentInfo] = []
 
         for doc in documents:
-            should_download, reason = self._should_download(doc.document_type, doc.description)
+            should_download, reason = self._should_download(
+                doc.document_type,
+                doc.description,
+                include_consultation_responses=include_consultation_responses,
+                include_public_comments=include_public_comments,
+            )
 
             # Implements [document-filtering:NFR-003] - Log every filter decision
             logger.info(
@@ -254,6 +273,8 @@ class DocumentFilter:
         self,
         document_type: str | None,
         description: str | None = None,
+        include_consultation_responses: bool = False,
+        include_public_comments: bool = False,
     ) -> tuple[bool, str]:
         """
         Determine if a document should be downloaded based on its type and description.
@@ -262,16 +283,26 @@ class DocumentFilter:
         Implements [document-filtering:DocumentFilter/TS-07] - Unknown type defaults to allow
         Implements [document-filtering:DocumentFilter/TS-08] - Case insensitive matching
         Implements [document-filtering:DocumentFilter/TS-09] - Partial pattern matching
+        Implements [review-scope-control:FR-001] - Consultation response toggle
+        Implements [review-scope-control:FR-002] - Public comment toggle
 
         Strategy:
         1. If no document_type and no description → ALLOW (fail-safe)
-        2. Check allowlist (type + description) → ALLOW with reason
-        3. Check denylist: public comments, then non-transport → DENY with reason
-        4. Default → ALLOW (fail-safe for unknown types)
+        2. Check consultation response denylist (unless toggled on) → DENY
+        3. Check public comment denylist (unless toggled on) → DENY
+        4. Check allowlist (type + description) → ALLOW with reason
+        5. Check non-transport denylist → DENY with reason
+        6. Default → ALLOW (fail-safe for unknown types)
+
+        Consultation response and public comment patterns are checked BEFORE the
+        allowlist to prevent false matches (e.g. "highway" in "OCC Highways"
+        matching the transport assessment allowlist pattern).
 
         Args:
             document_type: Document type/category from Cherwell portal
             description: Document description/title from Cherwell portal
+            include_consultation_responses: If True, skip consultation response denylist
+            include_public_comments: If True, skip public comment denylist
 
         Returns:
             Tuple of (should_download, reason)
@@ -288,7 +319,26 @@ class DocumentFilter:
         if not match_texts:
             return (True, "No document type - allowed by default (fail-safe)")
 
-        # Check allowlist first (highest priority)
+        # Implements [review-scope-control:FR-001] - Check consultation response denylist
+        # Checked BEFORE allowlist to prevent "highway" in "OCC Highways" matching allowlist
+        if not include_consultation_responses:
+            for pattern in self.DENYLIST_CONSULTATION_RESPONSE_PATTERNS:
+                for text in match_texts:
+                    if pattern in text:
+                        return (False, "Consultation response - not included in review scope")
+
+        # Implements [review-scope-control:FR-002] - Check public comment denylist
+        # Checked BEFORE allowlist to prevent false matches
+        # Implements [document-filtering:DocumentFilter/TS-04] - Public comments filtered
+        # Implements [document-filtering:DocumentFilter/TS-05] - Objection letters filtered
+        # Implements [document-filtering:DocumentFilter/TS-06] - Representations filtered
+        if not include_public_comments:
+            for pattern in self.DENYLIST_PUBLIC_COMMENT_PATTERNS:
+                for text in match_texts:
+                    if pattern in text:
+                        return (False, "Public comment - not relevant for policy review")
+
+        # Check allowlist
         for pattern in self._allowlist_patterns:
             # Implements [document-filtering:DocumentFilter/TS-08] - Case insensitive
             # Implements [document-filtering:DocumentFilter/TS-09] - Partial pattern matching
@@ -301,15 +351,6 @@ class DocumentFilter:
                         return (True, "Technical assessment document")
                     elif pattern in self.ALLOWLIST_OFFICER_PATTERNS:
                         return (True, "Officer/decision document")
-
-        # Check denylist (public comments)
-        # Implements [document-filtering:DocumentFilter/TS-04] - Public comments filtered
-        # Implements [document-filtering:DocumentFilter/TS-05] - Objection letters filtered
-        # Implements [document-filtering:DocumentFilter/TS-06] - Representations filtered
-        for pattern in self.DENYLIST_PUBLIC_COMMENT_PATTERNS:
-            for text in match_texts:
-                if pattern in text:
-                    return (False, "Public comment - not relevant for policy review")
 
         # Check denylist (non-transport technical documents)
         for pattern in self.DENYLIST_NON_TRANSPORT_PATTERNS:

@@ -87,6 +87,15 @@ class DownloadAllDocumentsInput(BaseModel):
         default=False,
         description="Bypass document filtering and download all documents (default: False)",
     )
+    # Implements [review-scope-control:FR-004] - Toggle fields on MCP tool input
+    include_consultation_responses: bool = Field(
+        default=False,
+        description="Include consultation responses in download (default: False)",
+    )
+    include_public_comments: bool = Field(
+        default=False,
+        description="Include public comments in download (default: False)",
+    )
 
 
 class CherwellScraperMCP:
@@ -394,11 +403,14 @@ class CherwellScraperMCP:
 
         # Apply document filter
         # Implements [document-filtering:FR-001], [FR-002], [FR-003], [FR-004], [FR-005]
+        # Implements [review-scope-control:FR-004] - Pass toggle flags to filter
         document_filter = DocumentFilter()
         documents_to_download, filtered_documents = document_filter.filter_documents(
             all_documents,
             skip_filter=input.skip_filter,
             application_ref=input.application_ref,
+            include_consultation_responses=input.include_consultation_responses,
+            include_public_comments=input.include_public_comments,
         )
 
         # Implements [document-filtering:NFR-003] - Log filtering summary

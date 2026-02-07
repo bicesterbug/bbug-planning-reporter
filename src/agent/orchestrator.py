@@ -104,20 +104,25 @@ class AgentOrchestrator:
         application_ref: str,
         mcp_client: MCPClientManager | None = None,
         redis_client: redis.Redis | None = None,
+        options: Any | None = None,
     ) -> None:
         """
         Initialize the orchestrator.
+
+        Implements [review-scope-control:FR-004] - Accepts review options
 
         Args:
             review_id: The review job ID.
             application_ref: The planning application reference.
             mcp_client: Optional MCPClientManager (created if not provided).
             redis_client: Optional Redis client for state persistence.
+            options: Optional ReviewOptions with toggle flags for document filtering.
         """
         self._review_id = review_id
         self._application_ref = application_ref
         self._mcp_client = mcp_client
         self._redis = redis_client
+        self._options = options
         self._owns_mcp_client = mcp_client is None
 
         # Progress tracker
@@ -366,12 +371,20 @@ class AgentOrchestrator:
             # download_all_documents handles listing + downloading internally
             # Timeout increased to 1800s (30 min) to handle large applications
             # At 1 req/sec, can download up to 1800 documents before timeout
+            # Implements [review-scope-control:FR-004] - Pass toggle flags to MCP tool
+            download_args: dict[str, Any] = {
+                "application_ref": self._application_ref,
+                "output_dir": "/data/raw",
+            }
+            if self._options is not None:
+                if getattr(self._options, "include_consultation_responses", False):
+                    download_args["include_consultation_responses"] = True
+                if getattr(self._options, "include_public_comments", False):
+                    download_args["include_public_comments"] = True
+
             result = await self._mcp_client.call_tool(
                 "download_all_documents",
-                {
-                    "application_ref": self._application_ref,
-                    "output_dir": "/data/raw",
-                },
+                download_args,
                 timeout=1800.0,
             )
 

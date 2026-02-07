@@ -323,3 +323,117 @@ class TestCherwellScraperMCPFiltering:
         assert result["filtered_count"] == 2
         assert len(result["downloads"]) == 0
         assert len(result["filtered_documents"]) == 2
+
+
+class TestDownloadAllDocumentsInputToggles:
+    """
+    Tests for review-scope-control toggle fields on DownloadAllDocumentsInput.
+
+    Verifies [review-scope-control:DownloadAllDocumentsInput/TS-01]
+    Verifies [review-scope-control:DownloadAllDocumentsInput/TS-02]
+    """
+
+    def test_defaults_both_toggles_to_false(self):
+        """
+        Verifies [review-scope-control:DownloadAllDocumentsInput/TS-01] - Defaults
+
+        Given: No toggle values provided in input
+        When: Model is instantiated with only required fields
+        Then: include_consultation_responses and include_public_comments are both False
+        """
+        input_data = DownloadAllDocumentsInput(
+            application_ref="25/01178/REM",
+            output_dir="/data/raw",
+        )
+
+        assert input_data.include_consultation_responses is False
+        assert input_data.include_public_comments is False
+
+    def test_accepts_both_toggles_as_true(self):
+        """
+        Verifies [review-scope-control:DownloadAllDocumentsInput/TS-02] - Accepts true
+
+        Given: Input includes both toggles set to true
+        When: Model is instantiated
+        Then: Both fields are True
+        """
+        input_data = DownloadAllDocumentsInput(
+            application_ref="25/01178/REM",
+            output_dir="/data/raw",
+            include_consultation_responses=True,
+            include_public_comments=True,
+        )
+
+        assert input_data.include_consultation_responses is True
+        assert input_data.include_public_comments is True
+
+
+class TestDownloadAllDocumentsTogglePassthrough:
+    """
+    Tests that toggle parameters are passed through to the filter.
+
+    Verifies [review-scope-control:_download_all_documents/TS-01]
+    """
+
+    @pytest.fixture
+    def scraper(self):
+        """Create a CherwellScraperMCP instance for testing."""
+        return CherwellScraperMCP(
+            portal_url="https://test.portal.example.com",
+            rate_limit=0.1,
+        )
+
+    @pytest.fixture
+    def mock_client(self):
+        """Mock Cherwell client."""
+        mock_client = AsyncMock()
+        mock_client.get_documents_page.return_value = "<html>mock</html>"
+        mock_client.download_document.return_value = 1024
+        mock_client.base_url = "https://test.portal.example.com"
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_passes_consultation_toggle_to_filter(
+        self, scraper, mock_client, tmp_path
+    ):
+        """
+        Verifies [review-scope-control:_download_all_documents/TS-01] - Toggle passthrough
+
+        Given: Tool called with include_consultation_responses=True
+        When: _download_all_documents executes
+        Then: Consultation response documents are downloaded (not filtered)
+        """
+        mock_parser = MagicMock()
+        mock_parser.parse_document_list.return_value = [
+            DocumentInfo(
+                document_id="cr1",
+                description="Consultation Response - OCC Highways",
+                document_type="Consultation Response",
+                url="https://test.portal.example.com/doc/cr1.pdf",
+            ),
+            DocumentInfo(
+                document_id="core1",
+                description="Planning Statement",
+                document_type="Planning Statement",
+                url="https://test.portal.example.com/doc/core1.pdf",
+            ),
+        ]
+        mock_parser.get_next_page_url.return_value = None
+        scraper._parser = mock_parser
+
+        input_data = DownloadAllDocumentsInput(
+            application_ref="25/01178/REM",
+            output_dir=str(tmp_path),
+            include_consultation_responses=True,
+        )
+
+        with patch.object(scraper, "_get_client") as mock_get_client:
+            mock_get_client.return_value.__aenter__.return_value = mock_client
+
+            result = await scraper._download_all_documents(input_data)
+
+        # Both documents should be downloaded
+        assert result["downloaded_count"] == 2
+        assert result["filtered_count"] == 0
+        downloaded_ids = {d["document_id"] for d in result["downloads"]}
+        assert "cr1" in downloaded_ids

@@ -1515,3 +1515,121 @@ class TestKeyDocumentsIntegration:
         assert parsed["key_documents"][0]["category"] == "Transport & Access"
 
         await orchestrator.close()
+
+
+# ---------------------------------------------------------------------------
+# review-scope-control tests
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorPassesToggleFlags:
+    """
+    Tests that AgentOrchestrator passes toggle flags to the download_all_documents tool call.
+
+    Verifies [review-scope-control:AgentOrchestrator/TS-01] and [TS-02]
+    """
+
+    @pytest.mark.asyncio
+    async def test_passes_toggle_flags_when_options_set(
+        self, mock_mcp_client, mock_redis, sample_application_response,
+        sample_download_response, sample_ingest_response, sample_search_response,
+        monkeypatch,
+    ):
+        """
+        Verifies [review-scope-control:AgentOrchestrator/TS-01] - Passes toggle flags
+
+        Given: Orchestrator created with options having include_consultation_responses=True
+        When: _phase_download_documents executes
+        Then: download_all_documents MCP tool is called with include_consultation_responses: true
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        # Create options-like object with toggle flags
+        from types import SimpleNamespace as _NS
+        options = _NS(
+            include_consultation_responses=True,
+            include_public_comments=False,
+        )
+
+        mock_mcp_client.call_tool = AsyncMock(side_effect=[
+            sample_application_response,  # Phase 1: get_application_details
+            sample_download_response,     # Phase 2: download_all_documents
+            sample_ingest_response,       # Phase 3: ingest doc1
+            sample_ingest_response,       # Phase 3: ingest doc2
+            sample_ingest_response,       # Phase 3: ingest doc3
+        ] + _search_side_effects(7, sample_search_response))  # Phase 4
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
+            mock_client_instance = MagicMock()
+            mock_client_instance.messages.create.return_value = _make_claude_response()
+            mock_anthropic_cls.return_value = mock_client_instance
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_toggle_test",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+                options=options,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+
+        # Verify the download_all_documents call (second call_tool invocation)
+        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        assert download_call[0][0] == "download_all_documents"
+        download_args = download_call[0][1]
+        assert download_args["include_consultation_responses"] is True
+        assert "include_public_comments" not in download_args  # False is not passed
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_default_options_omit_toggle_flags(
+        self, mock_mcp_client, mock_redis, sample_application_response,
+        sample_download_response, sample_ingest_response, sample_search_response,
+        monkeypatch,
+    ):
+        """
+        Verifies [review-scope-control:AgentOrchestrator/TS-02] - Default options
+
+        Given: Orchestrator created with no options
+        When: _phase_download_documents executes
+        Then: download_all_documents MCP tool is called without toggle flags
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool = AsyncMock(side_effect=[
+            sample_application_response,
+            sample_download_response,
+            sample_ingest_response,
+            sample_ingest_response,
+            sample_ingest_response,
+        ] + _search_side_effects(7, sample_search_response))
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
+            mock_client_instance = MagicMock()
+            mock_client_instance.messages.create.return_value = _make_claude_response()
+            mock_anthropic_cls.return_value = mock_client_instance
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_default_test",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+                # No options passed
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+
+        # Verify the download_all_documents call has no toggle flags
+        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        assert download_call[0][0] == "download_all_documents"
+        download_args = download_call[0][1]
+        assert "include_consultation_responses" not in download_args
+        assert "include_public_comments" not in download_args
+
+        await orchestrator.close()

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.dependencies import get_redis_client
+from src.api.dependencies import get_arq_pool, get_redis_client
 from src.api.main import app
 from src.shared.models import (
     ProcessingPhase,
@@ -346,3 +346,46 @@ class TestReviewStatus:
         # Lightweight response should not include full review data
         assert "review" not in data
         assert "application" not in data
+
+
+class TestSubmitReviewScopeControl:
+    """
+    Tests for review-scope-control toggle fields flowing through submit_review.
+
+    Verifies [review-scope-control:submit_review/TS-01]
+    """
+
+    def test_toggle_fields_mapped_to_internal_model(self, client, mock_redis):
+        """
+        Verifies [review-scope-control:submit_review/TS-01] - Toggle fields mapped
+
+        Given: API request with include_consultation_responses=True
+        When: submit_review is called
+        Then: The ReviewOptions stored in Redis has include_consultation_responses=True
+        """
+        mock_arq = AsyncMock()
+        mock_arq.enqueue_job = AsyncMock()
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq
+
+        response = client.post(
+            "/api/v1/reviews",
+            json={
+                "application_ref": "25/01178/REM",
+                "options": {
+                    "include_consultation_responses": True,
+                    "include_public_comments": True,
+                },
+            },
+        )
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 202
+
+        # Verify the store_job was called with correct options
+        mock_redis.store_job.assert_called_once()
+        stored_job = mock_redis.store_job.call_args[0][0]
+        assert stored_job.options is not None
+        assert stored_job.options.include_consultation_responses is True
+        assert stored_job.options.include_public_comments is True

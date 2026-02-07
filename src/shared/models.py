@@ -58,6 +58,9 @@ class ReviewOptions(BaseModel):
     output_format: str = "markdown"
     include_policy_matrix: bool = True
     include_suggested_conditions: bool = True
+    # Implements [review-scope-control:FR-004] - Toggle fields on internal model
+    include_consultation_responses: bool = False
+    include_public_comments: bool = False
 
 
 class ReviewJob(BaseModel):

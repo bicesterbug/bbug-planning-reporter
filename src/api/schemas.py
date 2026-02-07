@@ -62,6 +62,16 @@ class ReviewOptionsRequest(BaseModel):
     include_suggested_conditions: bool = Field(
         default=True, description="Include suggested planning conditions"
     )
+    # Implements [review-scope-control:FR-001] - Consultation response toggle
+    include_consultation_responses: bool = Field(
+        default=False,
+        description="Include consultation responses from statutory consultees as evidence for LLM analysis",
+    )
+    # Implements [review-scope-control:FR-002] - Public comment toggle
+    include_public_comments: bool = Field(
+        default=False,
+        description="Include public comments and objection letters as evidence for LLM analysis",
+    )
 
 
 class ReviewRequest(BaseModel):

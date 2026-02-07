@@ -58,12 +58,26 @@ async def process_review(
             started_at=datetime.now(UTC),
         )
 
+    # Implements [review-scope-control:FR-004] - Read options from Redis job
+    options = None
+    if redis_wrapper:
+        job = await redis_wrapper.get_job(review_id)
+        if job and job.options:
+            options = job.options
+            logger.info(
+                "Review options loaded",
+                review_id=review_id,
+                include_consultation_responses=getattr(options, "include_consultation_responses", False),
+                include_public_comments=getattr(options, "include_public_comments", False),
+            )
+
     try:
         # Create and run orchestrator
         async with AgentOrchestrator(
             review_id=review_id,
             application_ref=application_ref,
             redis_client=redis_client,
+            options=options,
         ) as orchestrator:
             result = await orchestrator.run()
 
