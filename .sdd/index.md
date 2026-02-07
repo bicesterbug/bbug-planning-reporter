@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-07 | [document-filtering](document-filtering/) | [spec](document-filtering/specification.md) | [design](document-filtering/design.md) | Design Complete | Enhancement |
 | 2026-02-06 | [api-hardening](api-hardening/) | [spec](api-hardening/specification.md) | [design](api-hardening/design.md) | Design Complete | 5 |
 | 2026-02-06 | [agent-integration](agent-integration/) | [spec](agent-integration/specification.md) | [design](agent-integration/design.md) | Design Complete | 4 |
 | 2026-02-06 | [policy-knowledge-base](policy-knowledge-base/) | [spec](policy-knowledge-base/specification.md) | [design](policy-knowledge-base/design.md) | Design Complete | 3 |
