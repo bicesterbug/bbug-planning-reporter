@@ -9,15 +9,19 @@ Implements [response-letter:NFR-001] - Logs generation duration
 Implements [response-letter:NFR-002] - Logs token counts
 """
 
+import json
 import os
+import tempfile
 import time
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 import anthropic
 import structlog
 
 from src.shared.redis_client import RedisClient
+from src.shared.storage import StorageBackend, create_storage_backend
 from src.worker.letter_prompt import build_letter_prompt
 
 logger = structlog.get_logger(__name__)
@@ -75,6 +79,9 @@ async def letter_job(
 
     redis_client: RedisClient | None = ctx.get("redis_client")
     start_time = time.monotonic()
+
+    # Implements [s3-document-storage:FR-001] - Create storage backend from environment
+    storage = create_storage_backend()
 
     # Fetch the letter record to get request parameters
     letter_record = None
@@ -174,6 +181,16 @@ async def letter_job(
                 completed_at=datetime.now(UTC),
             )
 
+        # Implements [s3-document-storage:FR-005] - Upload letter output to S3
+        if storage.is_remote:
+            _upload_letter_output(
+                letter_id=letter_id,
+                application_ref=review_result.get("application_ref", "unknown"),
+                letter_content=letter_content,
+                metadata=metadata,
+                storage=storage,
+            )
+
         return {
             "letter_id": letter_id,
             "status": "completed",
@@ -216,3 +233,49 @@ async def letter_job(
             )
 
         return {"letter_id": letter_id, "status": "failed", "error": "letter_generation_failed"}
+
+
+def _upload_letter_output(
+    letter_id: str,
+    application_ref: str,
+    letter_content: str,
+    metadata: dict[str, Any],
+    storage: StorageBackend,
+) -> None:
+    """Upload letter JSON and markdown to S3. Non-fatal on failure.
+
+    Implements [s3-document-storage:FR-005] - Upload letter output to S3
+    Implements [s3-document-storage:LetterJobs/TS-01]
+    """
+    safe_ref = application_ref.replace("/", "_")
+    prefix = f"{safe_ref}/output"
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Upload letter JSON
+            letter_data = {
+                "letter_id": letter_id,
+                "application_ref": application_ref,
+                "content": letter_content,
+                "metadata": metadata,
+            }
+            json_path = Path(tmpdir) / f"{letter_id}_letter.json"
+            json_path.write_text(json.dumps(letter_data, indent=2, default=str))
+            storage.upload(json_path, f"{prefix}/{letter_id}_letter.json")
+
+            # Upload letter markdown
+            md_path = Path(tmpdir) / f"{letter_id}_letter.md"
+            md_path.write_text(letter_content)
+            storage.upload(md_path, f"{prefix}/{letter_id}_letter.md")
+
+        logger.info(
+            "Letter output uploaded to S3",
+            letter_id=letter_id,
+            application_ref=application_ref,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to upload letter output to S3",
+            letter_id=letter_id,
+            error=str(e),
+        )

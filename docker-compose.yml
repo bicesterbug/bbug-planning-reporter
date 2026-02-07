@@ -59,6 +59,15 @@ services:
       - ADVOCACY_GROUP_NAME=${ADVOCACY_GROUP_NAME:-Bicester Bike Users' Group}
       - ADVOCACY_GROUP_STYLISED=${ADVOCACY_GROUP_STYLISED:-Bicester BUG}
       - ADVOCACY_GROUP_SHORT=${ADVOCACY_GROUP_SHORT:-BBUG}
+      # S3-compatible storage (optional - omit to use local volumes)
+      # When set, documents are uploaded to S3 after download and URLs in
+      # reviews point to the S3 bucket instead of the Cherwell portal.
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      - S3_KEY_PREFIX=${S3_KEY_PREFIX:-planning}
+      - S3_REGION=${S3_REGION:-}
     volumes:
       - /media/pete/Files/bbug-reports/chroma:/data/chroma
       - /media/pete/Files/bbug-reports/raw:/data/raw

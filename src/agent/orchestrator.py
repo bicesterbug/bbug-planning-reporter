@@ -21,8 +21,10 @@ import asyncio
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -31,6 +33,7 @@ import structlog
 
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPToolError
 from src.agent.progress import ProgressTracker, ReviewPhase
+from src.shared.storage import LocalStorageBackend, StorageBackend, StorageUploadError
 
 logger = structlog.get_logger(__name__)
 
@@ -105,6 +108,7 @@ class AgentOrchestrator:
         mcp_client: MCPClientManager | None = None,
         redis_client: redis.Redis | None = None,
         options: Any | None = None,
+        storage_backend: StorageBackend | None = None,
     ) -> None:
         """
         Initialize the orchestrator.
@@ -117,12 +121,14 @@ class AgentOrchestrator:
             mcp_client: Optional MCPClientManager (created if not provided).
             redis_client: Optional Redis client for state persistence.
             options: Optional ReviewOptions with toggle flags for document filtering.
+            storage_backend: Optional StorageBackend for document storage (defaults to local).
         """
         self._review_id = review_id
         self._application_ref = application_ref
         self._mcp_client = mcp_client
         self._redis = redis_client
         self._options = options
+        self._storage: StorageBackend = storage_backend or LocalStorageBackend()
         self._owns_mcp_client = mcp_client is None
 
         # Progress tracker
@@ -372,9 +378,11 @@ class AgentOrchestrator:
             # Timeout increased to 1800s (30 min) to handle large applications
             # At 1 req/sec, can download up to 1800 documents before timeout
             # Implements [review-scope-control:FR-004] - Pass toggle flags to MCP tool
+            # Implements [s3-document-storage:DownloadPhase/TS-01] and [TS-02]
+            output_dir = "/tmp/raw" if self._storage.is_remote else "/data/raw"
             download_args: dict[str, Any] = {
                 "application_ref": self._application_ref,
-                "output_dir": "/data/raw",
+                "output_dir": output_dir,
             }
             if self._options is not None:
                 if getattr(self._options, "include_consultation_responses", False):
@@ -402,6 +410,35 @@ class AgentOrchestrator:
                         "document_type": dl.get("document_type"),
                         "url": dl.get("url"),
                     }
+
+            # Implements [s3-document-storage:FR-002] - Upload to S3 after download
+            # Implements [s3-document-storage:FR-004] - Rewrite URLs to S3 public URLs
+            if self._storage.is_remote:
+                upload_start = time.monotonic()
+                for dl in downloaded:
+                    file_path = dl.get("file_path")
+                    if not file_path:
+                        continue
+                    s3_key = file_path.removeprefix(output_dir + "/")
+                    try:
+                        self._storage.upload(Path(file_path), s3_key)
+                        public_url = self._storage.public_url(s3_key)
+                        if public_url and file_path in document_metadata:
+                            document_metadata[file_path]["url"] = public_url
+                    except StorageUploadError as e:
+                        logger.warning(
+                            "S3 upload failed, keeping original URL",
+                            review_id=self._review_id,
+                            file_path=file_path,
+                            error=str(e),
+                        )
+                upload_elapsed = time.monotonic() - upload_start
+                logger.info(
+                    "S3 uploads complete",
+                    review_id=self._review_id,
+                    s3_upload_total_seconds=round(upload_elapsed, 2),
+                    files_uploaded=len([dl for dl in downloaded if dl.get("file_path")]),
+                )
 
             self._ingestion_result = DocumentIngestionResult(
                 documents_fetched=len(downloaded),
@@ -470,6 +507,9 @@ class AgentOrchestrator:
                     )
 
                     if result.get("status") in ("success", "already_ingested"):
+                        # Implements [s3-document-storage:FR-003] - Clean up temp file
+                        if self._storage.is_remote:
+                            self._storage.delete_local(Path(doc_path))
                         async with counter_lock:
                             ingested_count += 1
                             await self._progress.update_sub_progress(

@@ -2,18 +2,22 @@
 Tests for review worker jobs.
 
 Implements [agent-integration:ITS-01] - Complete workflow with mocked MCP
+Implements [s3-document-storage:ReviewJobs/TS-01] through [TS-03]
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
 from src.shared.models import ReviewStatus
+from src.shared.storage import StorageUploadError
 from src.worker.review_jobs import (
     _handle_failure,
     _handle_success,
     _serialize_application,
+    _upload_review_output,
     process_review,
     review_job,
 )
@@ -443,3 +447,192 @@ class TestProcessReviewOptionsPassthrough:
             mock_orch_cls.assert_called_once()
             call_kwargs = mock_orch_cls.call_args[1]
             assert call_kwargs["options"] is None
+
+
+# ---------------------------------------------------------------------------
+# S3 Document Storage tests
+# ---------------------------------------------------------------------------
+
+
+def _make_s3_backend_mock():
+    """Create a mock S3 storage backend for testing."""
+    backend = MagicMock()
+    type(backend).is_remote = PropertyMock(return_value=True)
+    backend.upload.return_value = None
+    backend.public_url.side_effect = (
+        lambda key: f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
+    )
+    backend.delete_local.return_value = None
+    return backend
+
+
+class TestS3ReviewOutputUpload:
+    """
+    Tests for S3 review output upload.
+
+    Implements [s3-document-storage:ReviewJobs/TS-01], [TS-02], [TS-03]
+    """
+
+    @pytest.mark.asyncio
+    async def test_s3_output_upload_on_completion(
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
+    ):
+        """
+        Verifies [s3-document-storage:ReviewJobs/TS-01] - S3 output upload on completion
+
+        Given: S3 configured, review succeeds
+        When: _handle_success runs
+        Then: review.json and review.md uploaded to S3
+        """
+        # Add full_markdown to trigger .md upload
+        sample_success_result.review["full_markdown"] = "# Review\n\nTest review content."
+
+        backend = _make_s3_backend_mock()
+
+        result = await _handle_success(sample_success_result, mock_redis_wrapper, backend)
+
+        assert result["status"] == "completed"
+
+        # Verify upload was called (JSON + MD = 2 calls)
+        assert backend.upload.call_count == 2
+
+        upload_keys = [call[0][1] for call in backend.upload.call_args_list]
+        assert any("rev_test123_review.json" in k for k in upload_keys)
+        assert any("rev_test123_review.md" in k for k in upload_keys)
+
+        # Verify the S3 key path structure: {safe_ref}/output/{review_id}_review.{ext}
+        json_key = upload_keys[0]
+        assert json_key == "25_01178_REM/output/rev_test123_review.json"
+
+    @pytest.mark.asyncio
+    async def test_output_upload_failure_non_fatal(
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
+    ):
+        """
+        Verifies [s3-document-storage:ReviewJobs/TS-02] - Output upload failure non-fatal
+
+        Given: S3 configured, review succeeds, S3 upload fails
+        When: _handle_success runs
+        Then: Review still stored in Redis, no exception raised
+        """
+        backend = _make_s3_backend_mock()
+        backend.upload.side_effect = StorageUploadError(
+            key="test", attempts=3, last_error=Exception("Network error")
+        )
+
+        # Should not raise
+        result = await _handle_success(sample_success_result, mock_redis_wrapper, backend)
+
+        assert result["status"] == "completed"
+        # Redis store should still have been called
+        mock_redis_wrapper.store_result.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_s3_upload_when_local(
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
+    ):
+        """
+        Verifies [s3-document-storage:ReviewJobs/TS-03] - No S3 output upload when local
+
+        Given: No S3 configured
+        When: Review completes
+        Then: No S3 upload attempted
+        """
+        # Test with storage=None
+        result = await _handle_success(sample_success_result, mock_redis_wrapper, None)
+        assert result["status"] == "completed"
+
+        # Test with local backend
+        local_backend = MagicMock()
+        type(local_backend).is_remote = PropertyMock(return_value=False)
+
+        result = await _handle_success(sample_success_result, mock_redis_wrapper, local_backend)
+        assert result["status"] == "completed"
+        local_backend.upload.assert_not_called()
+
+    def test_upload_review_output_writes_correct_content(self):
+        """Verify _upload_review_output writes JSON and MD with correct content."""
+        from src.agent.orchestrator import ReviewResult
+
+        result = ReviewResult(
+            review_id="rev_upload_test",
+            application_ref="25/00284/F",
+            success=True,
+            review={
+                "overall_rating": "amber",
+                "full_markdown": "# Test Review\n\nContent here.",
+            },
+        )
+        review_data = {
+            "review_id": "rev_upload_test",
+            "application_ref": "25/00284/F",
+            "status": "completed",
+            "review": result.review,
+        }
+
+        backend = _make_s3_backend_mock()
+
+        _upload_review_output(result, review_data, backend)
+
+        assert backend.upload.call_count == 2
+
+        # Verify the file paths passed to upload are valid temp paths
+        json_call_path = backend.upload.call_args_list[0][0][0]
+        md_call_path = backend.upload.call_args_list[1][0][0]
+        assert isinstance(json_call_path, Path)
+        assert isinstance(md_call_path, Path)
+
+        # Verify S3 keys
+        assert backend.upload.call_args_list[0][0][1] == "25_00284_F/output/rev_upload_test_review.json"
+        assert backend.upload.call_args_list[1][0][1] == "25_00284_F/output/rev_upload_test_review.md"
+
+
+class TestProcessReviewPassesStorageBackend:
+    """Tests that process_review creates and passes storage backend to orchestrator."""
+
+    @pytest.mark.asyncio
+    async def test_storage_backend_passed_to_orchestrator(
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
+    ):
+        """
+        Verifies process_review creates storage backend and passes to orchestrator.
+        """
+        mock_redis_wrapper.get_job = AsyncMock(return_value=None)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls, \
+             patch("src.worker.review_jobs.create_storage_backend") as mock_factory:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            mock_backend = MagicMock()
+            type(mock_backend).is_remote = PropertyMock(return_value=False)
+            mock_factory.return_value = mock_backend
+
+            ctx = {
+                "redis": AsyncMock(),
+                "redis_client": mock_redis_wrapper,
+            }
+
+            await process_review(
+                ctx=ctx,
+                review_id="rev_test_storage",
+                application_ref="25/01178/REM",
+            )
+
+            # Verify create_storage_backend was called
+            mock_factory.assert_called_once()
+
+            # Verify orchestrator received storage_backend kwarg
+            call_kwargs = mock_orch_cls.call_args[1]
+            assert call_kwargs["storage_backend"] is mock_backend

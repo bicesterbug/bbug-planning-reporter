@@ -52,6 +52,9 @@ dependencies = [
 
     # Anthropic SDK (Phase 4)
     "anthropic>=0.18.0",
+
+    # S3-compatible object storage
+    "boto3>=1.34.0",
 ]
 
 [project.optional-dependencies]

@@ -2,16 +2,20 @@
 Tests for letter worker jobs.
 
 Implements test scenarios from [response-letter:LetterJob/TS-01] through [TS-07]
+Implements test scenarios from [s3-document-storage:LetterJobs/TS-01] through [TS-02]
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from src.shared.storage import StorageUploadError
 from src.worker.letter_jobs import (
     _get_group_config,
     _resolve_case_officer,
+    _upload_letter_output,
     letter_job,
 )
 
@@ -438,3 +442,143 @@ class TestGetGroupConfig:
             assert name == "Oxford Cycling Network"
             assert stylised == "OxCycleNet"
             assert short == "OCN"
+
+
+# ---------------------------------------------------------------------------
+# S3 Document Storage tests
+# ---------------------------------------------------------------------------
+
+
+def _make_s3_backend_mock():
+    """Create a mock S3 storage backend for testing."""
+    backend = MagicMock()
+    type(backend).is_remote = PropertyMock(return_value=True)
+    backend.upload.return_value = None
+    backend.delete_local.return_value = None
+    return backend
+
+
+class TestS3LetterOutputUpload:
+    """
+    Tests for S3 letter output upload.
+
+    Implements [s3-document-storage:LetterJobs/TS-01], [TS-02]
+    """
+
+    @pytest.mark.asyncio
+    async def test_s3_letter_output_upload(
+        self,
+        mock_redis_client,
+        sample_letter_record,
+        sample_review_result,
+        mock_anthropic_response,
+    ):
+        """
+        Verifies [s3-document-storage:LetterJobs/TS-01] - S3 letter output upload
+
+        Given: S3 configured, letter generation succeeds
+        When: Letter stored in Redis
+        Then: letter.json and letter.md uploaded to S3
+        """
+        mock_redis_client.get_letter.return_value = sample_letter_record
+        mock_redis_client.get_result.return_value = sample_review_result
+
+        ctx = {"redis_client": mock_redis_client}
+
+        mock_backend = _make_s3_backend_mock()
+
+        with patch("src.worker.letter_jobs.anthropic") as mock_anthropic_mod, \
+             patch("src.worker.letter_jobs.create_storage_backend", return_value=mock_backend):
+            mock_client = MagicMock()
+            mock_anthropic_mod.Anthropic.return_value = mock_client
+            mock_client.messages.create.return_value = mock_anthropic_response
+
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+                result = await letter_job(
+                    ctx=ctx,
+                    letter_id="ltr_test_s3",
+                    review_id="rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+                )
+
+        assert result["status"] == "completed"
+
+        # Verify upload was called (JSON + MD = 2 calls)
+        assert mock_backend.upload.call_count == 2
+
+        upload_keys = [call[0][1] for call in mock_backend.upload.call_args_list]
+        assert any("ltr_test_s3_letter.json" in k for k in upload_keys)
+        assert any("ltr_test_s3_letter.md" in k for k in upload_keys)
+
+        # Verify S3 key path structure
+        assert upload_keys[0] == "25_01178_REM/output/ltr_test_s3_letter.json"
+        assert upload_keys[1] == "25_01178_REM/output/ltr_test_s3_letter.md"
+
+    @pytest.mark.asyncio
+    async def test_letter_upload_failure_non_fatal(
+        self,
+        mock_redis_client,
+        sample_letter_record,
+        sample_review_result,
+        mock_anthropic_response,
+    ):
+        """
+        Verifies [s3-document-storage:LetterJobs/TS-02] - Letter upload failure non-fatal
+
+        Given: S3 configured, letter succeeds, S3 upload fails
+        When: Letter stored in Redis
+        Then: Warning logged, letter still available in Redis
+        """
+        mock_redis_client.get_letter.return_value = sample_letter_record
+        mock_redis_client.get_result.return_value = sample_review_result
+
+        ctx = {"redis_client": mock_redis_client}
+
+        mock_backend = _make_s3_backend_mock()
+        mock_backend.upload.side_effect = StorageUploadError(
+            key="test", attempts=3, last_error=Exception("Network error")
+        )
+
+        with patch("src.worker.letter_jobs.anthropic") as mock_anthropic_mod, \
+             patch("src.worker.letter_jobs.create_storage_backend", return_value=mock_backend):
+            mock_client = MagicMock()
+            mock_anthropic_mod.Anthropic.return_value = mock_client
+            mock_client.messages.create.return_value = mock_anthropic_response
+
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+                result = await letter_job(
+                    ctx=ctx,
+                    letter_id="ltr_test_s3_fail",
+                    review_id="rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+                )
+
+        # Letter should still succeed despite upload failure
+        assert result["status"] == "completed"
+
+        # Redis should still have been updated
+        mock_redis_client.update_letter_status.assert_called_once()
+        call_kwargs = mock_redis_client.update_letter_status.call_args.kwargs
+        assert call_kwargs["status"] == "completed"
+
+    def test_upload_letter_output_writes_correct_content(self):
+        """Verify _upload_letter_output writes JSON and MD with correct content."""
+        backend = _make_s3_backend_mock()
+
+        _upload_letter_output(
+            letter_id="ltr_content_test",
+            application_ref="25/00284/F",
+            letter_content="# Letter\n\nDear Sir/Madam,\n\nTest letter.",
+            metadata={"model": "test", "input_tokens": 100, "output_tokens": 200},
+            storage=backend,
+        )
+
+        assert backend.upload.call_count == 2
+
+        # Verify S3 keys
+        json_key = backend.upload.call_args_list[0][0][1]
+        md_key = backend.upload.call_args_list[1][0][1]
+        assert json_key == "25_00284_F/output/ltr_content_test_letter.json"
+        assert md_key == "25_00284_F/output/ltr_content_test_letter.md"
+
+        # Verify paths are Path objects
+        assert isinstance(backend.upload.call_args_list[0][0][0], Path)
+        assert isinstance(backend.upload.call_args_list[1][0][0], Path)

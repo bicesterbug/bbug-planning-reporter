@@ -6,12 +6,15 @@ Implements test scenarios from [key-documents:DocumentIngestionResult/TS-01] thr
 Implements test scenarios from [key-documents:AgentOrchestrator._phase_download_documents/TS-01] through [TS-02]
 Implements test scenarios from [key-documents:AgentOrchestrator._phase_generate_review/TS-01] through [TS-04]
 Implements test scenarios from [key-documents:ITS-01] through [ITS-02]
+Implements test scenarios from [s3-document-storage:AgentOrchestrator/TS-01] through [TS-05]
+Implements test scenarios from [s3-document-storage:DownloadPhase/TS-01] through [TS-02]
 """
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -24,6 +27,7 @@ from src.agent.orchestrator import (
     ReviewResult,
 )
 from src.agent.progress import ReviewPhase
+from src.shared.storage import StorageUploadError
 
 
 # ---------------------------------------------------------------------------
@@ -1631,5 +1635,390 @@ class TestOrchestratorPassesToggleFlags:
         download_args = download_call[0][1]
         assert "include_consultation_responses" not in download_args
         assert "include_public_comments" not in download_args
+
+        await orchestrator.close()
+
+
+# ---------------------------------------------------------------------------
+# S3 Document Storage tests
+# ---------------------------------------------------------------------------
+
+
+def _make_s3_backend_mock():
+    """Create a mock S3 storage backend for testing."""
+    backend = MagicMock()
+    type(backend).is_remote = PropertyMock(return_value=True)
+    backend.upload.return_value = None
+    backend.public_url.side_effect = (
+        lambda key: f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
+    )
+    backend.delete_local.return_value = None
+    return backend
+
+
+def _make_local_backend_mock():
+    """Create a mock local storage backend for testing."""
+    backend = MagicMock()
+    type(backend).is_remote = PropertyMock(return_value=False)
+    backend.upload.return_value = None
+    backend.public_url.return_value = None
+    backend.delete_local.return_value = None
+    return backend
+
+
+@pytest.fixture
+def sample_s3_download_response():
+    """Sample download response with /tmp/raw paths (S3 mode)."""
+    return {
+        "status": "success",
+        "downloads": [
+            {
+                "document_id": "doc1",
+                "file_path": "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "file_size": 150000,
+                "success": True,
+                "description": "Transport Assessment",
+                "document_type": "Transport Assessment",
+                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
+            },
+            {
+                "document_id": "doc2",
+                "file_path": "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
+                "file_size": 80000,
+                "success": True,
+                "description": "Site Plan",
+                "document_type": "Plans - Site Plan",
+                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2",
+            },
+            {
+                "document_id": "doc3",
+                "file_path": "/tmp/raw/25_01178_REM/003_Design Statement.pdf",
+                "file_size": 120000,
+                "success": True,
+                "description": "Design and Access Statement",
+                "document_type": "Design and Access Statement",
+                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3",
+            },
+        ],
+    }
+
+
+class TestS3StorageDownloadPhase:
+    """
+    Tests for S3 storage integration in download phase.
+
+    Implements [s3-document-storage:AgentOrchestrator/TS-01], [TS-04], [TS-05]
+    Implements [s3-document-storage:DownloadPhase/TS-01], [TS-02]
+    """
+
+    @pytest.mark.asyncio
+    async def test_s3_upload_after_download_with_url_rewriting(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        sample_s3_download_response,
+    ):
+        """
+        Verifies [s3-document-storage:AgentOrchestrator/TS-01] and [DownloadPhase/TS-01]
+
+        Given: S3 backend configured
+        When: Download phase completes
+        Then: output_dir is /tmp/raw, each file uploaded to S3, URLs rewritten to S3 public URLs
+        """
+        backend = _make_s3_backend_mock()
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_s3_download_response,
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_test_s3",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        await orchestrator._phase_download_documents()
+
+        # Verify output_dir was /tmp/raw
+        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        assert download_call[0][1]["output_dir"] == "/tmp/raw"
+
+        # Verify upload was called for each file
+        assert backend.upload.call_count == 3
+        upload_calls = backend.upload.call_args_list
+        assert upload_calls[0][0] == (
+            Path("/tmp/raw/25_01178_REM/001_Transport Assessment.pdf"),
+            "25_01178_REM/001_Transport Assessment.pdf",
+        )
+        assert upload_calls[1][0] == (
+            Path("/tmp/raw/25_01178_REM/002_Site Plan.pdf"),
+            "25_01178_REM/002_Site Plan.pdf",
+        )
+        assert upload_calls[2][0] == (
+            Path("/tmp/raw/25_01178_REM/003_Design Statement.pdf"),
+            "25_01178_REM/003_Design Statement.pdf",
+        )
+
+        # Verify URLs were rewritten to S3 URLs
+        meta = orchestrator._ingestion_result.document_metadata
+        assert len(meta) == 3
+        for file_path, doc_meta in meta.items():
+            assert "test-bucket.nyc3.digitaloceanspaces.com" in doc_meta["url"]
+            assert "cherwell.gov.uk" not in doc_meta["url"]
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_s3_upload_failure_keeps_cherwell_url(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        sample_s3_download_response,
+    ):
+        """
+        Verifies [s3-document-storage:AgentOrchestrator/TS-04] - S3 upload failure
+
+        Given: S3 backend configured, upload fails for one file
+        When: Download phase completes
+        Then: Failed file keeps Cherwell URL, other files have S3 URLs, no exception raised
+        """
+        backend = _make_s3_backend_mock()
+        # Second upload fails
+        backend.upload.side_effect = [
+            None,  # doc1 succeeds
+            StorageUploadError(key="25_01178_REM/002_Site Plan.pdf", attempts=3),
+            None,  # doc3 succeeds
+        ]
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_s3_download_response,
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_test_s3_fail",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        await orchestrator._phase_download_documents()
+
+        meta = orchestrator._ingestion_result.document_metadata
+
+        # doc1 and doc3 should have S3 URLs
+        doc1_path = "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf"
+        doc3_path = "/tmp/raw/25_01178_REM/003_Design Statement.pdf"
+        assert "test-bucket.nyc3.digitaloceanspaces.com" in meta[doc1_path]["url"]
+        assert "test-bucket.nyc3.digitaloceanspaces.com" in meta[doc3_path]["url"]
+
+        # doc2 should keep Cherwell URL (upload failed)
+        doc2_path = "/tmp/raw/25_01178_REM/002_Site Plan.pdf"
+        assert "cherwell.gov.uk" in meta[doc2_path]["url"]
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_local_backend_passthrough(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        sample_download_response,
+    ):
+        """
+        Verifies [s3-document-storage:AgentOrchestrator/TS-05] and [DownloadPhase/TS-02]
+
+        Given: Local storage backend (no S3)
+        When: Download phase runs
+        Then: output_dir is /data/raw, no upload calls, Cherwell URLs preserved
+        """
+        backend = _make_local_backend_mock()
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_download_response,
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_test_local",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        await orchestrator._phase_download_documents()
+
+        # Verify output_dir was /data/raw
+        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        assert download_call[0][1]["output_dir"] == "/data/raw"
+
+        # Verify no upload calls
+        backend.upload.assert_not_called()
+
+        # Verify Cherwell URLs preserved
+        meta = orchestrator._ingestion_result.document_metadata
+        for file_path, doc_meta in meta.items():
+            assert "cherwell.gov.uk" in doc_meta["url"]
+
+        await orchestrator.close()
+
+
+class TestS3StorageIngestionPhase:
+    """
+    Tests for S3 storage integration in ingestion phase.
+
+    Implements [s3-document-storage:AgentOrchestrator/TS-02], [TS-03]
+    """
+
+    @pytest.mark.asyncio
+    async def test_local_cleanup_after_successful_ingestion(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_ingest_response,
+    ):
+        """
+        Verifies [s3-document-storage:AgentOrchestrator/TS-02] - Local cleanup after ingestion
+
+        Given: S3 backend configured, files uploaded
+        When: Ingestion succeeds for a document
+        Then: Local temp file is deleted via backend.delete_local()
+        """
+        backend = _make_s3_backend_mock()
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_ingest_response,  # doc1 ingested
+            sample_ingest_response,  # doc2 ingested
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_test_cleanup",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        orchestrator._ingestion_result = DocumentIngestionResult(
+            documents_fetched=2,
+            document_paths=[
+                "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
+            ],
+        )
+
+        await orchestrator._phase_ingest_documents()
+
+        # Verify delete_local was called for each successfully ingested file
+        assert backend.delete_local.call_count == 2
+        delete_paths = [str(c[0][0]) for c in backend.delete_local.call_args_list]
+        assert "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf" in delete_paths
+        assert "/tmp/raw/25_01178_REM/002_Site Plan.pdf" in delete_paths
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_retain_file_on_ingestion_failure(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_ingest_response,
+    ):
+        """
+        Verifies [s3-document-storage:AgentOrchestrator/TS-03] - Retain file on ingestion failure
+
+        Given: S3 backend configured
+        When: Ingestion fails for a document
+        Then: Local temp file is NOT deleted
+        """
+        backend = _make_s3_backend_mock()
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_ingest_response,  # doc1 succeeds
+            MCPToolError("ingest_document", "OCR failed"),  # doc2 fails
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_test_retain",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        orchestrator._ingestion_result = DocumentIngestionResult(
+            documents_fetched=2,
+            document_paths=[
+                "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
+            ],
+        )
+
+        await orchestrator._phase_ingest_documents()
+
+        # Only one delete_local call (for the successful one)
+        assert backend.delete_local.call_count == 1
+        deleted_path = str(backend.delete_local.call_args_list[0][0][0])
+        assert "001_Transport Assessment" in deleted_path
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_no_cleanup_with_local_backend(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_ingest_response,
+    ):
+        """
+        Verifies local backend does not trigger file cleanup.
+
+        Given: Local storage backend (no S3)
+        When: Ingestion succeeds
+        Then: delete_local is NOT called (files remain on persistent volume)
+        """
+        backend = _make_local_backend_mock()
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_ingest_response,
+            sample_ingest_response,
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_test_local_ingest",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        orchestrator._ingestion_result = DocumentIngestionResult(
+            documents_fetched=2,
+            document_paths=[
+                "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "/data/raw/25_01178_REM/002_Site Plan.pdf",
+            ],
+        )
+
+        await orchestrator._phase_ingest_documents()
+
+        backend.delete_local.assert_not_called()
 
         await orchestrator.close()
