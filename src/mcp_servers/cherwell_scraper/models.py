@@ -141,6 +141,16 @@ class DownloadResult:
     error: str | None = None
     """Error message if download failed"""
 
+    # Implements [key-documents:FR-001] - Source metadata for key documents listing
+    description: str | None = None
+    """Document description/title from portal"""
+
+    document_type: str | None = None
+    """Document type/category from portal"""
+
+    url: str | None = None
+    """Original download URL from portal"""
+
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
         return {
@@ -149,4 +159,7 @@ class DownloadResult:
             "file_size": self.file_size,
             "success": self.success,
             "error": self.error,
+            "description": self.description,
+            "document_type": self.document_type,
+            "url": self.url,
         }

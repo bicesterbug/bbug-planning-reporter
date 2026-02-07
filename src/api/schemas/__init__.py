@@ -67,6 +67,7 @@ ReviewOptionsRequest = _module.ReviewOptionsRequest
 ApplicationInfo = _module.ApplicationInfo
 ReviewAspect = _module.ReviewAspect
 PolicyCompliance = _module.PolicyCompliance
+KeyDocument = _module.KeyDocument
 ReviewContent = _module.ReviewContent
 PolicyRevisionUsed = _module.PolicyRevisionUsed
 ReviewMetadata = _module.ReviewMetadata
@@ -97,6 +98,7 @@ __all__ = [
     "ApplicationInfo",
     "ReviewAspect",
     "PolicyCompliance",
+    "KeyDocument",
     "ReviewContent",
     "PolicyRevisionUsed",
     "ReviewMetadata",

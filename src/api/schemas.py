@@ -184,11 +184,36 @@ class PolicyCompliance(BaseModel):
     notes: str | None = None
 
 
+class KeyDocument(BaseModel):
+    """
+    A key document listed in the review report.
+
+    Implements [key-documents:FR-001] - Key documents array structure
+    Implements [key-documents:FR-002] - Category assignment
+    Implements [key-documents:FR-003] - LLM-generated summary
+    """
+
+    title: str = Field(..., description="Document title from the Cherwell portal")
+    category: str = Field(
+        ...,
+        description="Document category: 'Transport & Access', 'Design & Layout', or 'Application Core'",
+    )
+    summary: str = Field(
+        ...,
+        description="1-2 sentence LLM-generated summary of the document's content and cycling relevance",
+    )
+    url: str | None = Field(
+        default=None,
+        description="Direct PDF download URL from the Cherwell portal",
+    )
+
+
 class ReviewContent(BaseModel):
     """Review content in response."""
 
     overall_rating: str | None = None
     summary: str | None = None
+    key_documents: list[KeyDocument] | None = None
     aspects: list[ReviewAspect] | None = None
     policy_compliance: list[PolicyCompliance] | None = None
     recommendations: list[str] | None = None

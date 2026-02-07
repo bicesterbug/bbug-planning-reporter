@@ -18,7 +18,9 @@ Implements:
 """
 
 import asyncio
+import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -55,6 +57,8 @@ class DocumentIngestionResult:
     documents_ingested: int = 0
     failed_documents: list[dict[str, Any]] = field(default_factory=list)
     document_paths: list[str] = field(default_factory=list)
+    # Implements [key-documents:FR-005] - Maps file_path to {description, document_type, url}
+    document_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -375,10 +379,22 @@ class AgentOrchestrator:
             downloaded = [r for r in results_list if r.get("success", True)]
             failed = [r for r in results_list if not r.get("success", True)]
 
+            # Implements [key-documents:FR-005] - Capture source metadata per downloaded document
+            document_metadata: dict[str, dict[str, Any]] = {}
+            for dl in downloaded:
+                file_path = dl.get("file_path")
+                if file_path:
+                    document_metadata[file_path] = {
+                        "description": dl.get("description", ""),
+                        "document_type": dl.get("document_type"),
+                        "url": dl.get("url"),
+                    }
+
             self._ingestion_result = DocumentIngestionResult(
                 documents_fetched=len(downloaded),
                 document_paths=[d.get("file_path") for d in downloaded if d.get("file_path")],
                 failed_documents=failed,
+                document_metadata=document_metadata,
             )
 
             total_docs = len(results_list)
@@ -619,6 +635,18 @@ class AgentOrchestrator:
         app_evidence_text = "\n\n---\n\n".join(app_evidence[:20]) if app_evidence else "No application document content retrieved."
         policy_evidence_text = "\n\n---\n\n".join(policy_evidence[:15]) if policy_evidence else "No policy content retrieved."
 
+        # Implements [key-documents:FR-005] - Build ingested document list for LLM
+        ingested_docs_text = "No document metadata available."
+        if self._ingestion_result and self._ingestion_result.document_metadata:
+            doc_lines = []
+            for file_path, meta in self._ingestion_result.document_metadata.items():
+                desc = meta.get("description") or os.path.basename(file_path)
+                doc_type = meta.get("document_type", "Unknown")
+                url = meta.get("url") or "no URL"
+                doc_lines.append(f"- {desc} (type: {doc_type}, url: {url})")
+            if doc_lines:
+                ingested_docs_text = "\n".join(doc_lines)
+
         system_prompt = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
 
 For each application you review, you should:
@@ -664,6 +692,25 @@ Output your review in the following markdown format:
 - **Applicant:** [name]
 - **Status:** [current status]
 
+## Key Documents
+
+Group the ingested documents by category (Transport & Access first, then Design & Layout, then Application Core) and list each as a markdown link with a 1-2 sentence summary:
+
+### Transport & Access
+- [Document Title](download_url)
+  Summary of content and cycling relevance...
+
+### Design & Layout
+- [Document Title](download_url)
+  Summary of content and cycling relevance...
+
+### Application Core
+- [Document Title](download_url)
+  Summary of content and cycling relevance...
+
+For documents with no download URL, render without a link: `- Document Title (no download available)`.
+Within each category, order documents by relevance to cycling advocacy (most relevant first).
+
 ## Assessment Summary
 **Overall Rating:** RED / AMBER / GREEN
 
@@ -704,6 +751,25 @@ Output your review in the following markdown format:
 ## Suggested Conditions
 If the council is minded to approve, the following conditions are recommended:
 1. ...
+
+---
+
+After the markdown review, also output the key documents as a JSON array in a fenced code block with the language tag `key_documents_json`. Example format:
+
+```key_documents_json
+[
+  {"title": "Transport Assessment", "category": "Transport & Access", "summary": "Assesses trip generation and modal split for the development. Proposes 5% cycling mode share.", "url": "https://..."},
+  {"title": "Design and Access Statement", "category": "Design & Layout", "summary": "Describes site layout including internal roads. No mention of cycle permeability.", "url": "https://..."}
+]
+```
+
+Rules for the key_documents_json block:
+- category MUST be one of: "Transport & Access", "Design & Layout", "Application Core"
+- Only include documents that are relevant to the cycling advocacy review
+- title should match the document title from the ingested documents list
+- url should be the download URL from the ingested documents list (use null if not available)
+- summary should be 1-2 sentences describing the document's content and its relevance to cycling/active travel
+- Order by relevance within each category
 """
 
         user_prompt = f"""Please review the following planning application from a cycling advocacy perspective.
@@ -711,13 +777,19 @@ If the council is minded to approve, the following conditions are recommended:
 ## Application Details
 {app_summary}
 
+## Ingested Documents
+The following documents were downloaded and ingested from the planning portal. Use this list to populate the Key Documents section and key_documents_json block in your response:
+{ingested_docs_text}
+
 ## Evidence from Application Documents
 {app_evidence_text}
 
 ## Relevant Policy Extracts
 {policy_evidence_text}
 
-Please provide a comprehensive cycle advocacy review based on the above information. If the application documents don't contain enough transport/cycling information, note this as a concern and base your review on what is available. Use the policy extracts to ground your assessment in specific policy requirements."""
+Please provide a comprehensive cycle advocacy review based on the above information. If the application documents don't contain enough transport/cycling information, note this as a concern and base your review on what is available. Use the policy extracts to ground your assessment in specific policy requirements.
+
+Remember to include the key_documents_json code block after the markdown review."""
 
         # Call Claude API
         model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
@@ -751,6 +823,32 @@ Please provide a comprehensive cycle advocacy review based on the above informat
             elif "overall rating:** green" in rating_lower or "overall rating:** 🟢" in rating_lower:
                 overall_rating = "green"
 
+            # Implements [key-documents:FR-001] - Parse key_documents JSON from response
+            key_documents = None
+            kd_match = re.search(
+                r"```key_documents_json\s*\n(.*?)```",
+                review_markdown,
+                re.DOTALL,
+            )
+            if kd_match:
+                try:
+                    key_documents = json.loads(kd_match.group(1).strip())
+                    # Strip the JSON block from the markdown output
+                    review_markdown = review_markdown[:kd_match.start()].rstrip() + \
+                        review_markdown[kd_match.end():]
+                    review_markdown = review_markdown.rstrip()
+                    logger.info(
+                        "Parsed key_documents",
+                        review_id=self._review_id,
+                        count=len(key_documents),
+                    )
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(
+                        "Failed to parse key_documents JSON",
+                        review_id=self._review_id,
+                        error=str(e),
+                    )
+
             # Store review result on the ReviewResult object
             result = ReviewResult(
                 review_id=self._review_id,
@@ -758,6 +856,7 @@ Please provide a comprehensive cycle advocacy review based on the above informat
                 application=self._application,
                 review={
                     "overall_rating": overall_rating,
+                    "key_documents": key_documents,
                     "full_markdown": review_markdown,
                     "summary": review_markdown[:500],
                     "model": model,

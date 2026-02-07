@@ -423,6 +423,9 @@ class CherwellScraperMCP:
                             file_size=0,
                             success=False,
                             error="No URL available",
+                            description=doc.description,
+                            document_type=doc.document_type,
+                            url=None,
                         ).to_dict()
                     )
                     continue
@@ -444,6 +447,9 @@ class CherwellScraperMCP:
                             file_path=str(output_path),
                             file_size=file_size,
                             success=True,
+                            description=doc.description,
+                            document_type=doc.document_type,
+                            url=doc.url,
                         ).to_dict()
                     )
                 except CherwellClientError as e:
@@ -459,6 +465,9 @@ class CherwellScraperMCP:
                             file_size=0,
                             success=False,
                             error=e.message,
+                            description=doc.description,
+                            document_type=doc.document_type,
+                            url=doc.url,
                         ).to_dict()
                     )
 
