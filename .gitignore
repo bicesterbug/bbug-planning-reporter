@@ -82,6 +82,9 @@ data/policy/*
 !data/chroma/.gitkeep
 !data/policy/.gitkeep
 
+# Output files (generated reports and letters)
+output/
+
 # Logs
 *.log
 
