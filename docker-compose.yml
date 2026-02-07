@@ -20,6 +20,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WEBHOOK_REQUIRE_HTTPS=${WEBHOOK_REQUIRE_HTTPS:-false}
+      - ADVOCACY_GROUP_NAME=${ADVOCACY_GROUP_NAME:-Bicester Bike Users' Group}
+      - ADVOCACY_GROUP_STYLISED=${ADVOCACY_GROUP_STYLISED:-Bicester BUG}
+      - ADVOCACY_GROUP_SHORT=${ADVOCACY_GROUP_SHORT:-BBUG}
     ports:
       - "8080:8080"
     depends_on:
@@ -49,12 +52,18 @@ services:
       - SCRAPER_USER_AGENT=${SCRAPER_USER_AGENT:-CherwellCycleReview/1.0}
       - WEBHOOK_TIMEOUT=${WEBHOOK_TIMEOUT:-10}
       - WEBHOOK_MAX_RETRIES=${WEBHOOK_MAX_RETRIES:-5}
+      - CHERWELL_SCRAPER_URL=http://cherwell-scraper-mcp:3001
+      - DOCUMENT_STORE_URL=http://document-store-mcp:3002
+      - POLICY_KB_URL=http://policy-kb-mcp:3003
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ADVOCACY_GROUP_NAME=${ADVOCACY_GROUP_NAME:-Bicester Bike Users' Group}
+      - ADVOCACY_GROUP_STYLISED=${ADVOCACY_GROUP_STYLISED:-Bicester BUG}
+      - ADVOCACY_GROUP_SHORT=${ADVOCACY_GROUP_SHORT:-BBUG}
     volumes:
       - chroma_data:/data/chroma
       - raw_docs:/data/raw
       - output:/data/output
-      - policy_docs:/data/policy
+      - ./data/policy:/data/policy
     depends_on:
       redis:
         condition: service_healthy
@@ -112,9 +121,13 @@ services:
       context: .
       dockerfile: docker/Dockerfile.scraper
     environment:
+      - CHERWELL_PORTAL_URL=${CHERWELL_PORTAL_URL:-https://planningregister.cherwell.gov.uk}
+      - CHERWELL_SCRAPER_PORT=3001
       - SCRAPER_RATE_LIMIT=${SCRAPER_RATE_LIMIT:-1.0}
       - SCRAPER_USER_AGENT=${SCRAPER_USER_AGENT:-CherwellCycleReview/1.0}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "3001:3001"
     volumes:
       - raw_docs:/data/raw
     networks:
@@ -138,7 +151,7 @@ services:
       - "3003:3003"
     volumes:
       - chroma_data:/data/chroma
-      - policy_docs:/data/policy
+      - ./data/policy:/data/policy
     depends_on:
       redis:
         condition: service_healthy
@@ -162,7 +175,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - chroma_data:/data/chroma
-      - policy_docs:/data/policy
+      - ./data/policy:/data/policy
     depends_on:
       redis:
         condition: service_healthy
@@ -180,8 +193,6 @@ volumes:
   raw_docs:
     driver: local
   output:
-    driver: local
-  policy_docs:
     driver: local
   redis_data:
     driver: local

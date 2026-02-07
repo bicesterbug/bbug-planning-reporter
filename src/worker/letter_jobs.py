@@ -1,0 +1,218 @@
+"""
+Worker job function for response letter generation.
+
+Implements [response-letter:FR-001] - Orchestrates letter generation workflow
+Implements [response-letter:FR-003] - Reads advocacy group config from environment
+Implements [response-letter:FR-004] - Resolves case officer
+Implements [response-letter:FR-010] - Calls Claude API for letter generation
+Implements [response-letter:NFR-001] - Logs generation duration
+Implements [response-letter:NFR-002] - Logs token counts
+"""
+
+import os
+import time
+from datetime import UTC, date, datetime
+from typing import Any
+
+import anthropic
+import structlog
+
+from src.shared.redis_client import RedisClient
+from src.worker.letter_prompt import build_letter_prompt
+
+logger = structlog.get_logger(__name__)
+
+# Default advocacy group identity
+_DEFAULT_GROUP_NAME = "Bicester Bike Users' Group"
+_DEFAULT_GROUP_STYLISED = "Bicester BUG"
+_DEFAULT_GROUP_SHORT = "BBUG"
+
+
+def _get_group_config() -> tuple[str, str, str]:
+    """Read advocacy group configuration from environment."""
+    return (
+        os.getenv("ADVOCACY_GROUP_NAME", _DEFAULT_GROUP_NAME),
+        os.getenv("ADVOCACY_GROUP_STYLISED", _DEFAULT_GROUP_STYLISED),
+        os.getenv("ADVOCACY_GROUP_SHORT", _DEFAULT_GROUP_SHORT),
+    )
+
+
+def _resolve_case_officer(
+    request_case_officer: str | None,
+    review_result: dict[str, Any],
+) -> str | None:
+    """
+    Resolve case officer name from request override or review data.
+
+    Priority: request override > review application data > None (fallback to generic)
+    """
+    if request_case_officer:
+        return request_case_officer
+
+    application = review_result.get("application") or {}
+    return application.get("case_officer")
+
+
+async def letter_job(
+    ctx: dict[str, Any],
+    letter_id: str,
+    review_id: str,
+) -> dict[str, Any]:
+    """
+    arq-compatible job function for letter generation.
+
+    Implements [response-letter:LetterJob/TS-01] through [TS-07]
+
+    Args:
+        ctx: arq context containing Redis pool and other dependencies.
+        letter_id: The letter record ID.
+        review_id: The source review ID.
+
+    Returns:
+        Dict with letter generation results or error information.
+    """
+    logger.info("Starting letter job", letter_id=letter_id, review_id=review_id)
+
+    redis_client: RedisClient | None = ctx.get("redis_client")
+    start_time = time.monotonic()
+
+    # Fetch the letter record to get request parameters
+    letter_record = None
+    if redis_client:
+        letter_record = await redis_client.get_letter(letter_id)
+
+    if letter_record is None:
+        logger.error("Letter record not found", letter_id=letter_id)
+        return {"letter_id": letter_id, "status": "failed", "error": "letter_record_not_found"}
+
+    # Fetch the review result
+    review_result = None
+    if redis_client:
+        review_result = await redis_client.get_result(review_id)
+
+    if review_result is None:
+        logger.error("Review result not found", letter_id=letter_id, review_id=review_id)
+        if redis_client:
+            await redis_client.update_letter_status(
+                letter_id,
+                status="failed",
+                error={"code": "review_result_not_found", "message": "Review result has expired or does not exist"},
+                completed_at=datetime.now(UTC),
+            )
+        return {"letter_id": letter_id, "status": "failed", "error": "review_result_not_found"}
+
+    try:
+        # Read group config from environment
+        group_name, group_stylised, group_short = _get_group_config()
+
+        # Resolve case officer
+        request_case_officer = letter_record.get("case_officer")
+        case_officer = _resolve_case_officer(request_case_officer, review_result)
+
+        # Parse letter_date from record
+        letter_date_str = letter_record.get("letter_date")
+        letter_date = date.fromisoformat(letter_date_str) if letter_date_str else None
+
+        # Get stance and tone from letter record
+        stance = letter_record.get("stance", "neutral")
+        tone = letter_record.get("tone", "formal")
+
+        # Build prompts
+        system_prompt, user_prompt = build_letter_prompt(
+            review_result=review_result,
+            stance=stance,
+            tone=tone,
+            group_name=group_name,
+            group_stylised=group_stylised,
+            group_short=group_short,
+            case_officer=case_officer,
+            letter_date=letter_date,
+        )
+
+        # Call Claude API
+        model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set")
+
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model=model,
+            max_tokens=6000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        letter_content = message.content[0].text
+        duration = time.monotonic() - start_time
+
+        metadata = {
+            "model": model,
+            "input_tokens": message.usage.input_tokens,
+            "output_tokens": message.usage.output_tokens,
+            "processing_time_seconds": round(duration, 2),
+        }
+
+        logger.info(
+            "Letter generated",
+            letter_id=letter_id,
+            review_id=review_id,
+            model=model,
+            input_tokens=message.usage.input_tokens,
+            output_tokens=message.usage.output_tokens,
+            processing_time_seconds=round(duration, 2),
+        )
+
+        # Update letter record with content
+        if redis_client:
+            await redis_client.update_letter_status(
+                letter_id,
+                status="completed",
+                content=letter_content,
+                metadata=metadata,
+                completed_at=datetime.now(UTC),
+            )
+
+        return {
+            "letter_id": letter_id,
+            "status": "completed",
+            "metadata": metadata,
+        }
+
+    except anthropic.APIError as e:
+        duration = time.monotonic() - start_time
+        logger.error(
+            "Claude API error during letter generation",
+            letter_id=letter_id,
+            error=str(e),
+            processing_time_seconds=round(duration, 2),
+        )
+
+        if redis_client:
+            await redis_client.update_letter_status(
+                letter_id,
+                status="failed",
+                error={"code": "letter_generation_failed", "message": str(e)},
+                completed_at=datetime.now(UTC),
+            )
+
+        return {"letter_id": letter_id, "status": "failed", "error": "letter_generation_failed"}
+
+    except Exception as e:
+        duration = time.monotonic() - start_time
+        logger.exception(
+            "Unexpected error during letter generation",
+            letter_id=letter_id,
+            processing_time_seconds=round(duration, 2),
+        )
+
+        if redis_client:
+            await redis_client.update_letter_status(
+                letter_id,
+                status="failed",
+                error={"code": "letter_generation_failed", "message": str(e)},
+                completed_at=datetime.now(UTC),
+            )
+
+        return {"letter_id": letter_id, "status": "failed", "error": "letter_generation_failed"}

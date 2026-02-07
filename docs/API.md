@@ -15,11 +15,13 @@
 - [Endpoints](#endpoints)
   - [Health](#health)
   - [Reviews](#reviews)
+  - [Letters](#letters)
   - [Downloads](#downloads)
   - [Policies](#policies)
   - [Policy Revisions](#policy-revisions)
 - [Webhooks](#webhooks)
 - [Enums & Validation](#enums--validation)
+- [Environment Variables](#environment-variables)
 
 ---
 
@@ -548,6 +550,193 @@ Cancels a queued or processing review. No request body.
     }
   }
 }
+```
+
+---
+
+### Letters
+
+#### `POST /api/v1/reviews/{review_id}/letter` — Generate Letter
+
+Generate a consultee response letter from a completed review. The letter is produced asynchronously by an LLM, rewriting the review findings into formal letter prose addressed to the planning authority.
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `review_id` | string | The review to generate a letter for (must be `completed`) |
+
+**Request Body (`application/json`):**
+
+```json
+{
+  "stance": "object",
+  "tone": "formal",
+  "case_officer": "Ms J. Smith",
+  "letter_date": "2026-02-10"
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `stance` | string | Yes | — | Group's position: `object`, `support`, `conditional`, or `neutral` |
+| `tone` | string | No | `"formal"` | Letter tone: `formal` or `accessible` |
+| `case_officer` | string | No | `null` | Override case officer name (falls back to review data, then generic) |
+| `letter_date` | date | No | Today | Letter date in `YYYY-MM-DD` format |
+
+**Response `202 Accepted`:**
+
+```json
+{
+  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "status": "generating",
+  "created_at": "2026-02-07T12:34:56.789000Z",
+  "links": {
+    "self": "/api/v1/letters/ltr_01JKXYZ1234567890ABCDEF"
+  }
+}
+```
+
+**Error `400 Bad Request`:** Review is not completed.
+
+```json
+{
+  "error": {
+    "code": "review_incomplete",
+    "message": "Review rev_01HQXK has status 'processing', must be 'completed'",
+    "details": {
+      "review_id": "rev_01HQXK",
+      "current_status": "processing"
+    }
+  }
+}
+```
+
+**Error `404 Not Found`:** Review does not exist.
+
+```json
+{
+  "error": {
+    "code": "review_not_found",
+    "message": "No review found with ID rev_nonexistent",
+    "details": {
+      "review_id": "rev_nonexistent"
+    }
+  }
+}
+```
+
+**curl example:**
+
+```bash
+curl -X POST http://localhost:8080/api/v1/reviews/rev_01HQXK7V3WNPB8MTJF2R5ADGX9/letter \
+  -H "Authorization: Bearer sk-cycle-dev-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "stance": "object",
+    "tone": "formal",
+    "case_officer": "Ms J. Smith"
+  }'
+```
+
+---
+
+#### `GET /api/v1/letters/{letter_id}` — Retrieve Letter
+
+Returns the letter content when generation is complete, or current status if still generating.
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `letter_id` | string | The letter identifier returned by the generate endpoint |
+
+**Response `200 OK` (generating):**
+
+```json
+{
+  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "application_ref": "25/01178/REM",
+  "status": "generating",
+  "stance": "object",
+  "tone": "formal",
+  "case_officer": null,
+  "letter_date": null,
+  "content": null,
+  "metadata": null,
+  "error": null,
+  "created_at": "2026-02-07T12:34:56.789000Z",
+  "completed_at": null
+}
+```
+
+**Response `200 OK` (completed):**
+
+```json
+{
+  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "application_ref": "25/01178/REM",
+  "status": "completed",
+  "stance": "object",
+  "tone": "formal",
+  "case_officer": "Ms J. Smith",
+  "letter_date": "2026-02-10",
+  "content": "# Bicester BUG\n\n10 February 2026\n\nDear Ms J. Smith...",
+  "metadata": {
+    "model": "claude-sonnet-4-5-20250929",
+    "input_tokens": 4200,
+    "output_tokens": 1800,
+    "processing_time_seconds": 12.5
+  },
+  "error": null,
+  "created_at": "2026-02-07T12:34:56.789000Z",
+  "completed_at": "2026-02-07T12:35:09.289000Z"
+}
+```
+
+**Response `200 OK` (failed):**
+
+```json
+{
+  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "application_ref": "25/01178/REM",
+  "status": "failed",
+  "stance": "object",
+  "tone": "formal",
+  "content": null,
+  "metadata": null,
+  "error": {
+    "code": "letter_generation_failed",
+    "message": "Claude API error: rate limit exceeded"
+  },
+  "created_at": "2026-02-07T12:34:56.789000Z",
+  "completed_at": "2026-02-07T12:35:01.000000Z"
+}
+```
+
+**Error `404 Not Found`:**
+
+```json
+{
+  "error": {
+    "code": "letter_not_found",
+    "message": "No letter found with ID ltr_nonexistent",
+    "details": {
+      "letter_id": "ltr_nonexistent"
+    }
+  }
+}
+```
+
+**curl example:**
+
+```bash
+curl http://localhost:8080/api/v1/letters/ltr_01JKXYZ1234567890ABCDEF \
+  -H "Authorization: Bearer sk-cycle-dev-key-1"
 ```
 
 ---
@@ -1293,6 +1482,30 @@ function verifySignature(body, secret, signature) {
 | `analysing_application` | 4 | AI analysis using Claude |
 | `generating_review` | 5 | Formatting and storing results |
 
+### LetterStance
+
+| Value | Description |
+|-------|-------------|
+| `object` | Group opposes the application |
+| `support` | Group supports the application |
+| `conditional` | Group supports subject to conditions |
+| `neutral` | Group provides factual comments without a position |
+
+### LetterTone
+
+| Value | Description |
+|-------|-------------|
+| `formal` | Professional planning language with technical terminology |
+| `accessible` | Clear, jargon-light language for councillors and the public |
+
+### LetterStatus
+
+| Value | Description |
+|-------|-------------|
+| `generating` | LLM is producing the letter |
+| `completed` | Letter is ready for retrieval |
+| `failed` | Letter generation encountered an error |
+
 ### PolicyCategory
 
 | Value | Description |
@@ -1337,7 +1550,7 @@ Examples: `NPPF`, `LTN_1_20`, `CHERWELL_LOCAL_PLAN`, `OCC_LTCP`
 |------|---------|---------|
 | `200` | OK | GET, PATCH, DELETE, cancel |
 | `201` | Created | POST policies |
-| `202` | Accepted | POST reviews, POST revisions, POST reindex |
+| `202` | Accepted | POST reviews, POST letter, POST revisions, POST reindex |
 | `400` | Bad Request | Invalid parameters |
 | `401` | Unauthorized | Missing/invalid API key |
 | `404` | Not Found | Resource doesn't exist |
@@ -1345,3 +1558,17 @@ Examples: `NPPF`, `LTN_1_20`, `CHERWELL_LOCAL_PLAN`, `OCC_LTCP`
 | `422` | Validation Error | Pydantic field validation failure |
 | `429` | Too Many Requests | Rate limit exceeded |
 | `500` | Internal Error | Unhandled server error |
+
+---
+
+## Environment Variables
+
+### Advocacy Group Configuration
+
+The letter generation feature uses the following environment variables to configure the advocacy group identity. These are set in `docker-compose.yml` for both the `api` and `worker` services.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADVOCACY_GROUP_NAME` | `Bicester Bike Users' Group` | Full legal name, used in sign-off |
+| `ADVOCACY_GROUP_STYLISED` | `Bicester BUG` | Display name, used in letter body |
+| `ADVOCACY_GROUP_SHORT` | `BBUG` | Abbreviation, used in parenthetical references |

@@ -13,6 +13,8 @@ from arq import create_pool
 from arq.connections import RedisSettings
 
 from src.worker.jobs import ingest_application_documents, ingest_directory, search_documents
+from src.worker.letter_jobs import letter_job
+from src.worker.review_jobs import review_job
 
 # Configure structured logging
 structlog.configure(
@@ -55,13 +57,30 @@ def get_redis_settings() -> RedisSettings:
     return RedisSettings(host=host, port=port, database=database)
 
 
-async def startup(_ctx: dict) -> None:
+async def startup(ctx: dict) -> None:
     """Called when worker starts."""
+    import redis.asyncio as aioredis
+
+    from src.shared.redis_client import RedisClient
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    raw_redis = aioredis.from_url(redis_url, decode_responses=True)
+    redis_client = RedisClient(redis_url)
+    await redis_client.connect()
+
+    ctx["redis"] = raw_redis
+    ctx["redis_client"] = redis_client
     logger.info("Worker starting up", component="worker")
 
 
-async def shutdown(_ctx: dict) -> None:
+async def shutdown(ctx: dict) -> None:
     """Called when worker shuts down."""
+    redis_client = ctx.get("redis_client")
+    if redis_client:
+        await redis_client.close()
+    raw_redis = ctx.get("redis")
+    if raw_redis:
+        await raw_redis.aclose()
     logger.info("Worker shutting down", component="worker")
 
 
@@ -76,10 +95,12 @@ class WorkerSettings:
         ingest_application_documents,
         ingest_directory,
         search_documents,
+        review_job,
+        letter_job,
     ]
     queue_name = "review_jobs"
     max_jobs = 10
-    job_timeout = 600  # 10 minutes
+    job_timeout = 1800  # 30 minutes (large applications can have 300+ documents)
 
 
 if __name__ == "__main__":

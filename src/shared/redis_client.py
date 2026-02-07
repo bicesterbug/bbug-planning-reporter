@@ -395,6 +395,105 @@ class RedisClient:
         return json.loads(result_data)
 
     # =========================================================================
+    # Letter Operations
+    # Implements [response-letter:FR-001] - Store letter records
+    # Implements [response-letter:FR-008] - Retrieve letter records
+    # =========================================================================
+
+    def _letter_key(self, letter_id: str) -> str:
+        """Get Redis key for a letter record."""
+        return f"letter:{letter_id}"
+
+    async def store_letter(self, letter_id: str, letter: dict[str, Any], ttl_days: int = 30) -> None:
+        """
+        Store a letter record.
+
+        Implements [response-letter:LetterRedis/TS-01]
+
+        Args:
+            letter_id: The letter ID.
+            letter: The letter data dict.
+            ttl_days: Time-to-live in days.
+        """
+        client = await self._ensure_connected()
+        ttl_seconds = ttl_days * 24 * 60 * 60
+        await client.setex(self._letter_key(letter_id), ttl_seconds, json.dumps(letter))
+        logger.debug("Letter stored", letter_id=letter_id)
+
+    async def get_letter(self, letter_id: str) -> dict[str, Any] | None:
+        """
+        Retrieve a letter record.
+
+        Implements [response-letter:LetterRedis/TS-01]
+        Implements [response-letter:LetterRedis/TS-02]
+
+        Args:
+            letter_id: The letter ID.
+
+        Returns:
+            The letter data if found, None otherwise.
+        """
+        client = await self._ensure_connected()
+        data = await client.get(self._letter_key(letter_id))
+        if data is None:
+            return None
+        return json.loads(data)
+
+    async def update_letter_status(
+        self,
+        letter_id: str,
+        status: str,
+        content: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+        completed_at: datetime | None = None,
+    ) -> bool:
+        """
+        Update a letter record's status and optionally set content/metadata.
+
+        Implements [response-letter:LetterRedis/TS-03]
+
+        Args:
+            letter_id: The letter ID.
+            status: New status string.
+            content: Markdown letter content (on completion).
+            metadata: Generation metadata (model, tokens, duration).
+            error: Error details (on failure).
+            completed_at: Completion timestamp.
+
+        Returns:
+            True if letter was found and updated, False otherwise.
+        """
+        client = await self._ensure_connected()
+
+        letter = await self.get_letter(letter_id)
+        if letter is None:
+            return False
+
+        letter["status"] = status
+        if content is not None:
+            letter["content"] = content
+        if metadata is not None:
+            letter["metadata"] = metadata
+        if error is not None:
+            letter["error"] = error
+        if completed_at is not None:
+            letter["completed_at"] = completed_at.isoformat()
+
+        # Preserve remaining TTL
+        ttl = await client.ttl(self._letter_key(letter_id))
+        if ttl > 0:
+            await client.setex(self._letter_key(letter_id), ttl, json.dumps(letter))
+        else:
+            # Fallback: 30-day TTL
+            await client.setex(
+                self._letter_key(letter_id), 30 * 24 * 60 * 60, json.dumps(letter)
+            )
+
+        logger.debug("Letter status updated", letter_id=letter_id, status=status)
+        return True
+
+    # =========================================================================
     # Health Check
     # =========================================================================
 

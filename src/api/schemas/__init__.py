@@ -12,6 +12,15 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from src.api.schemas.letter import (
+    LetterMetadata,
+    LetterRequest,
+    LetterResponse,
+    LetterStance,
+    LetterStatus,
+    LetterSubmitResponse,
+    LetterTone,
+)
 from src.api.schemas.policy import (
     SOURCE_SLUG_PATTERN,
     CreatePolicyRequest,
@@ -63,6 +72,14 @@ PolicyRevisionUsed = _module.PolicyRevisionUsed
 ReviewMetadata = _module.ReviewMetadata
 
 __all__ = [
+    # Letter schemas
+    "LetterMetadata",
+    "LetterRequest",
+    "LetterResponse",
+    "LetterStance",
+    "LetterStatus",
+    "LetterSubmitResponse",
+    "LetterTone",
     # Review schemas (from schemas.py)
     "APPLICATION_REF_PATTERN",
     "ErrorDetail",
