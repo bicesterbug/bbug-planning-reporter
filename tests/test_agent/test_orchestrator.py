@@ -21,6 +21,12 @@ from src.agent.orchestrator import (
 from src.agent.progress import ReviewPhase
 
 
+@pytest.fixture(autouse=True)
+def _sequential_ingestion(monkeypatch):
+    """Force sequential ingestion in tests so side_effect lists are consumed in order."""
+    monkeypatch.setenv("INGEST_CONCURRENCY", "1")
+
+
 @pytest.fixture
 def mock_mcp_client():
     """Create a mock MCPClientManager."""

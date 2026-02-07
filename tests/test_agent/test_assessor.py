@@ -397,7 +397,7 @@ class TestMissingDocumentHandling:
                             "relevance_score": 0.6,
                             "metadata": {
                                 "document_name": "Design and Access Statement.pdf",
-                                "document_type": "design_and_access",
+                                "document_type": "design_access_statement",
                             },
                         }
                     ])

@@ -230,7 +230,7 @@ class ReviewAssessor:
     # Key document types that should be present for a full assessment
     KEY_DOCUMENT_TYPES = [
         "transport_assessment",
-        "design_and_access",
+        "design_access_statement",
         "site_plan",
     ]
 

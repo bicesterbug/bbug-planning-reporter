@@ -154,13 +154,13 @@ class TestDocumentFilter:
         assert len(allowed) == 1
         assert len(filtered) == 0
 
-    def test_technical_assessment_allowed_heritage(self, filter):
+    def test_technical_assessment_denied_heritage(self, filter):
         """
-        Verifies [document-filtering:DocumentFilter/TS-02] - Technical assessments allowed
+        Verifies non-transport technical documents are filtered.
 
         Given: Document with type "Heritage Statement"
         When: filter_documents is called
-        Then: Document is in allowed list
+        Then: Document is in filtered list (not transport-relevant)
         """
         docs = [
             DocumentInfo(
@@ -172,16 +172,17 @@ class TestDocumentFilter:
 
         allowed, filtered = filter.filter_documents(docs)
 
-        assert len(allowed) == 1
-        assert len(filtered) == 0
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Non-transport" in filtered[0].filter_reason
 
-    def test_technical_assessment_allowed_flood_risk(self, filter):
+    def test_technical_assessment_denied_flood_risk(self, filter):
         """
-        Verifies [document-filtering:DocumentFilter/TS-02] - Technical assessments allowed
+        Verifies non-transport technical documents are filtered.
 
         Given: Document with type "Flood Risk Assessment"
         When: filter_documents is called
-        Then: Document is in allowed list
+        Then: Document is in filtered list (not transport-relevant)
         """
         docs = [
             DocumentInfo(
@@ -193,8 +194,9 @@ class TestDocumentFilter:
 
         allowed, filtered = filter.filter_documents(docs)
 
-        assert len(allowed) == 1
-        assert len(filtered) == 0
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Non-transport" in filtered[0].filter_reason
 
     def test_officer_report_allowed(self, filter):
         """
@@ -444,9 +446,10 @@ class TestDocumentFilter:
         """
         Integration test with mixed document types.
 
-        Given: Application with 10 documents (5 core, 2 assessments, 3 public comments)
+        Given: Application with 10 documents (5 core, 1 transport assessment,
+               1 heritage statement, 3 public comments)
         When: filter_documents is called
-        Then: 7 documents allowed, 3 filtered
+        Then: 6 documents allowed, 4 filtered (heritage now filtered as non-transport)
         """
         docs = [
             # Core docs - should be allowed
@@ -475,12 +478,13 @@ class TestDocumentFilter:
                 description="Elevations",
                 document_type="Elevation Drawings",
             ),
-            # Technical assessments - should be allowed
+            # Transport assessment - should be allowed
             DocumentInfo(
                 document_id="assess1",
                 description="Transport Assessment",
                 document_type="Transport Assessment",
             ),
+            # Heritage statement - should be filtered (non-transport)
             DocumentInfo(
                 document_id="assess2",
                 description="Heritage Statement",
@@ -508,14 +512,14 @@ class TestDocumentFilter:
             docs, application_ref="25/01178/REM"
         )
 
-        assert len(allowed) == 7, f"Expected 7 allowed, got {len(allowed)}"
-        assert len(filtered) == 3, f"Expected 3 filtered, got {len(filtered)}"
+        assert len(allowed) == 6, f"Expected 6 allowed, got {len(allowed)}"
+        assert len(filtered) == 4, f"Expected 4 filtered, got {len(filtered)}"
 
-        # Check that all public comments were filtered
+        # Check that public comments and heritage were filtered
         filtered_ids = {f.document_id for f in filtered}
-        assert filtered_ids == {"comment1", "comment2", "comment3"}
+        assert filtered_ids == {"comment1", "comment2", "comment3", "assess2"}
 
-        # Check that core and assessment docs were allowed
+        # Check that core and transport docs were allowed
         allowed_ids = {d.document_id for d in allowed}
         expected_allowed = {
             "core1",
@@ -524,7 +528,6 @@ class TestDocumentFilter:
             "core4",
             "core5",
             "assess1",
-            "assess2",
         }
         assert allowed_ids == expected_allowed
 
@@ -541,7 +544,7 @@ class TestDocumentFilter:
         assert should_download is True
         assert "Core application document" in reason
 
-        # Technical assessment
+        # Technical assessment (transport)
         should_download, reason = filter._should_download("Transport Assessment")
         assert should_download is True
         assert "Technical assessment document" in reason
@@ -556,6 +559,11 @@ class TestDocumentFilter:
         assert should_download is False
         assert "Public comment" in reason
 
+        # Non-transport technical document
+        should_download, reason = filter._should_download("Heritage Statement")
+        assert should_download is False
+        assert "Non-transport" in reason
+
         # Unknown type
         should_download, reason = filter._should_download("Unknown Type")
         assert should_download is True
@@ -565,3 +573,89 @@ class TestDocumentFilter:
         should_download, reason = filter._should_download(None)
         assert should_download is True
         assert "fail-safe" in reason.lower()
+
+    def test_description_based_filtering(self, filter):
+        """
+        Verify that description is used for filtering when document_type is None.
+
+        Given: Document with no type but description containing denylist term
+        When: filter_documents is called
+        Then: Document is filtered based on description match
+        """
+        docs = [
+            DocumentInfo(
+                document_id="desc1",
+                description="Arboricultural Impact Assessment",
+                document_type=None,
+            ),
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Non-transport" in filtered[0].filter_reason
+
+    def test_description_allowlist_match(self, filter):
+        """
+        Verify that description allowlist match takes priority.
+
+        Given: Document with no type but description containing transport term
+        When: filter_documents is called
+        Then: Document is allowed based on description
+        """
+        docs = [
+            DocumentInfo(
+                document_id="desc2",
+                description="Transport Assessment Addendum",
+                document_type=None,
+            ),
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 1
+        assert len(filtered) == 0
+
+    def test_es_transport_chapter_allowed(self, filter):
+        """
+        Verify ES transport chapters are allowed (allowlist before denylist).
+
+        Given: Document described as "ES Chapter 05 Transport"
+        When: filter_documents is called
+        Then: Document is allowed because "transport" hits the allowlist first
+        """
+        docs = [
+            DocumentInfo(
+                document_id="es_transport",
+                description="ES Chapter 05 Transport",
+                document_type=None,
+            ),
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 1
+        assert len(filtered) == 0
+
+    def test_es_non_transport_chapter_filtered(self, filter):
+        """
+        Verify non-transport ES chapters are filtered.
+
+        Given: Document described as "ES Chapter 08 Ecology"
+        When: filter_documents is called
+        Then: Document is filtered (ecology in denylist, no allowlist match)
+        """
+        docs = [
+            DocumentInfo(
+                document_id="es_ecology",
+                description="ES Chapter 08 Ecology",
+                document_type=None,
+            ),
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Non-transport" in filtered[0].filter_reason

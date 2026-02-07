@@ -104,29 +104,37 @@ class DocumentFilter:
     ]
 
     # Implements [document-filtering:FR-003] - Technical assessment documents
-    # Specialist reports analyzing development impacts
+    # Transport-relevant specialist reports only
     ALLOWLIST_ASSESSMENT_PATTERNS = [
         "transport assessment",
         "transport statement",
         "travel plan",
         "highway",
         "parking",
-        "environmental impact",
-        "environmental statement",
-        "heritage statement",
-        "heritage impact",
-        "archaeological",
-        "flood risk assessment",
-        "drainage",
+    ]
+
+    # Non-transport technical documents - explicitly filtered to reduce noise
+    DENYLIST_NON_TRANSPORT_PATTERNS = [
         "ecology",
         "ecological",
         "biodiversity",
         "arboricultural",
         "tree survey",
-        "noise assessment",
+        "heritage statement",
+        "heritage impact",
+        "archaeological",
+        "flood risk",
+        "drainage",
+        "noise",
+        "acoustic",
         "air quality",
         "energy statement",
         "sustainability",
+        "landscape",
+        "visual impact",
+        "ground condition",
+        "contamination",
+        "geotechnical",
     ]
 
     # Implements [document-filtering:FR-004] - Officer and decision documents
@@ -207,7 +215,7 @@ class DocumentFilter:
         filtered_documents: list[FilteredDocumentInfo] = []
 
         for doc in documents:
-            should_download, reason = self._should_download(doc.document_type)
+            should_download, reason = self._should_download(doc.document_type, doc.description)
 
             # Implements [document-filtering:NFR-003] - Log every filter decision
             logger.info(
@@ -242,9 +250,13 @@ class DocumentFilter:
 
         return (allowed_documents, filtered_documents)
 
-    def _should_download(self, document_type: str | None) -> tuple[bool, str]:
+    def _should_download(
+        self,
+        document_type: str | None,
+        description: str | None = None,
+    ) -> tuple[bool, str]:
         """
-        Determine if a document should be downloaded based on its type.
+        Determine if a document should be downloaded based on its type and description.
 
         Implements [document-filtering:NFR-002] - Fail-safe defaults
         Implements [document-filtering:DocumentFilter/TS-07] - Unknown type defaults to allow
@@ -252,45 +264,58 @@ class DocumentFilter:
         Implements [document-filtering:DocumentFilter/TS-09] - Partial pattern matching
 
         Strategy:
-        1. If no document_type → ALLOW (fail-safe)
-        2. Check allowlist → ALLOW with reason
-        3. Check denylist → DENY with reason
+        1. If no document_type and no description → ALLOW (fail-safe)
+        2. Check allowlist (type + description) → ALLOW with reason
+        3. Check denylist: public comments, then non-transport → DENY with reason
         4. Default → ALLOW (fail-safe for unknown types)
 
         Args:
             document_type: Document type/category from Cherwell portal
+            description: Document description/title from Cherwell portal
 
         Returns:
             Tuple of (should_download, reason)
         """
-        # Implements [document-filtering:DocumentFilter/TS-07] - Unknown type defaults to allow
-        # Fail-safe: if no type provided, allow the document
-        if not document_type:
-            return (True, "No document type - allowed by default (fail-safe)")
+        # Build list of text fields to match against
+        match_texts: list[str] = []
+        if document_type:
+            match_texts.append(document_type.lower())
+        if description:
+            match_texts.append(description.lower())
 
-        # Normalize for case-insensitive matching
-        doc_type_lower = document_type.lower()
+        # Implements [document-filtering:DocumentFilter/TS-07] - Unknown type defaults to allow
+        # Fail-safe: if no type or description provided, allow the document
+        if not match_texts:
+            return (True, "No document type - allowed by default (fail-safe)")
 
         # Check allowlist first (highest priority)
         for pattern in self._allowlist_patterns:
             # Implements [document-filtering:DocumentFilter/TS-08] - Case insensitive
             # Implements [document-filtering:DocumentFilter/TS-09] - Partial pattern matching
-            if pattern in doc_type_lower:
-                # Determine category for clearer reason
-                if pattern in self.ALLOWLIST_CORE_PATTERNS:
-                    return (True, "Core application document")
-                elif pattern in self.ALLOWLIST_ASSESSMENT_PATTERNS:
-                    return (True, "Technical assessment document")
-                elif pattern in self.ALLOWLIST_OFFICER_PATTERNS:
-                    return (True, "Officer/decision document")
+            for text in match_texts:
+                if pattern in text:
+                    # Determine category for clearer reason
+                    if pattern in self.ALLOWLIST_CORE_PATTERNS:
+                        return (True, "Core application document")
+                    elif pattern in self.ALLOWLIST_ASSESSMENT_PATTERNS:
+                        return (True, "Technical assessment document")
+                    elif pattern in self.ALLOWLIST_OFFICER_PATTERNS:
+                        return (True, "Officer/decision document")
 
         # Check denylist (public comments)
         # Implements [document-filtering:DocumentFilter/TS-04] - Public comments filtered
         # Implements [document-filtering:DocumentFilter/TS-05] - Objection letters filtered
         # Implements [document-filtering:DocumentFilter/TS-06] - Representations filtered
         for pattern in self.DENYLIST_PUBLIC_COMMENT_PATTERNS:
-            if pattern in doc_type_lower:
-                return (False, "Public comment - not relevant for policy review")
+            for text in match_texts:
+                if pattern in text:
+                    return (False, "Public comment - not relevant for policy review")
+
+        # Check denylist (non-transport technical documents)
+        for pattern in self.DENYLIST_NON_TRANSPORT_PATTERNS:
+            for text in match_texts:
+                if pattern in text:
+                    return (False, "Non-transport technical document - not relevant for cycling review")
 
         # Default to allowing (fail-safe for unknown document types)
         # Implements [document-filtering:NFR-002] - Fail-safe reliability

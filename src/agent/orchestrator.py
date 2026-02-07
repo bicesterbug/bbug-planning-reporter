@@ -17,6 +17,7 @@ Implements:
 - [agent-integration:AgentOrchestrator/TS-08] All servers unavailable
 """
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -422,48 +423,64 @@ class AgentOrchestrator:
         total_docs = len(self._ingestion_result.document_paths)
         ingested_count = 0
         failed_count = 0
+        counter_lock = asyncio.Lock()
+        concurrency = int(os.getenv("INGEST_CONCURRENCY", "4"))
+        semaphore = asyncio.Semaphore(concurrency)
 
-        for i, doc_path in enumerate(self._ingestion_result.document_paths):
-            await self._progress.update_sub_progress(
-                f"Ingesting document {i + 1} of {total_docs}",
-                current=i + 1,
-                total=total_docs,
-            )
-
-            try:
-                result = await self._mcp_client.call_tool(
-                    "ingest_document",
-                    {
-                        "file_path": doc_path,
-                        "application_ref": self._application_ref,
-                    },
-                )
-
-                if result.get("status") in ("success", "already_ingested"):
-                    ingested_count += 1
-                else:
-                    failed_count += 1
-                    error_msg = result.get("message", "Unknown error")
-                    await self._progress.record_error(
-                        ReviewPhase.INGESTING_DOCUMENTS,
-                        error_msg,
-                        document=doc_path,
+        async def ingest_one(doc_path: str) -> bool:
+            """Ingest a single document, respecting the semaphore."""
+            nonlocal ingested_count, failed_count
+            async with semaphore:
+                try:
+                    result = await self._mcp_client.call_tool(
+                        "ingest_document",
+                        {
+                            "file_path": doc_path,
+                            "application_ref": self._application_ref,
+                        },
                     )
 
-            except MCPToolError as e:
-                # Log and continue - partial ingestion is acceptable
-                failed_count += 1
-                await self._progress.record_error(
-                    ReviewPhase.INGESTING_DOCUMENTS,
-                    str(e),
-                    document=doc_path,
-                )
-                logger.warning(
-                    "Document ingestion failed",
-                    review_id=self._review_id,
-                    document=doc_path,
-                    error=str(e),
-                )
+                    if result.get("status") in ("success", "already_ingested"):
+                        async with counter_lock:
+                            ingested_count += 1
+                            await self._progress.update_sub_progress(
+                                f"Ingested {ingested_count} of {total_docs} documents",
+                                current=ingested_count,
+                                total=total_docs,
+                            )
+                        return True
+                    else:
+                        async with counter_lock:
+                            failed_count += 1
+                        error_msg = result.get("message", "Unknown error")
+                        await self._progress.record_error(
+                            ReviewPhase.INGESTING_DOCUMENTS,
+                            error_msg,
+                            document=doc_path,
+                        )
+                        return False
+
+                except MCPToolError as e:
+                    # Log and continue - partial ingestion is acceptable
+                    async with counter_lock:
+                        failed_count += 1
+                    await self._progress.record_error(
+                        ReviewPhase.INGESTING_DOCUMENTS,
+                        str(e),
+                        document=doc_path,
+                    )
+                    logger.warning(
+                        "Document ingestion failed",
+                        review_id=self._review_id,
+                        document=doc_path,
+                        error=str(e),
+                    )
+                    return False
+
+        await asyncio.gather(*(
+            ingest_one(doc_path)
+            for doc_path in self._ingestion_result.document_paths
+        ))
 
         self._ingestion_result.documents_ingested = ingested_count
 
