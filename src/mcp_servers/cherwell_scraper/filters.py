@@ -8,6 +8,7 @@ Implements [document-filtering:FR-004] - Download officer/decision documents
 Implements [document-filtering:NFR-001] - Filter performance (<10ms per doc)
 Implements [document-filtering:NFR-002] - Fail-safe defaults for unknown types
 Implements [document-filtering:NFR-004] - Centralized filter rules
+Implements [review-output-fixes:FR-002] - Category-based filtering
 
 Implements:
 - [document-filtering:DocumentFilter/TS-01] Core documents allowed
@@ -20,6 +21,12 @@ Implements:
 - [document-filtering:DocumentFilter/TS-08] Case insensitive matching
 - [document-filtering:DocumentFilter/TS-09] Partial pattern matching
 - [document-filtering:DocumentFilter/TS-10] Skip filter override
+- [review-output-fixes:DocumentFilter/TS-01] Category allowlist hit
+- [review-output-fixes:DocumentFilter/TS-02] Category denylist hit
+- [review-output-fixes:DocumentFilter/TS-03] Category denylist override
+- [review-output-fixes:DocumentFilter/TS-04] No category fallback
+- [review-output-fixes:DocumentFilter/TS-05] Unknown category fallback
+- [review-output-fixes:DocumentFilter/TS-06] Comment category denied
 """
 
 from dataclasses import dataclass
@@ -78,13 +85,34 @@ class DocumentFilter:
     Implements [document-filtering:NFR-004] - Centralized filter rules
 
     Filter Strategy:
-    1. Check allowlist first (core docs, assessments, officer docs)
-    2. Check denylist second (public comments)
+    1. Check portal category (if document_type matches a known category) → immediate decision
+    2. Fall through to title-based pattern matching if category not recognised
     3. Default to ALLOW if no match (fail-safe)
 
     All pattern matching is case-insensitive and uses substring matching
     to handle variations in Cherwell portal naming.
     """
+
+    # Implements [review-output-fixes:FR-002] - Portal category allowlist
+    # These are Cherwell portal section headers that group documents.
+    # Documents under these categories are always allowed regardless of title.
+    CATEGORY_ALLOWLIST = [
+        "application forms",
+        "supporting documents",
+        "site plans",
+    ]
+
+    # Implements [review-output-fixes:FR-002] - Portal category denylist (consultation)
+    # Documents under these categories are denied unless toggled on.
+    CATEGORY_DENYLIST_CONSULTATION = [
+        "consultation responses",
+    ]
+
+    # Implements [review-output-fixes:FR-002] - Portal category denylist (public comments)
+    # Documents under these categories are denied unless toggled on.
+    CATEGORY_DENYLIST_PUBLIC = [
+        "public comments",
+    ]
 
     # Implements [document-filtering:FR-002] - Core application documents
     # These are essential submission materials and should always be downloaded
@@ -288,15 +316,17 @@ class DocumentFilter:
 
         Strategy:
         1. If no document_type and no description → ALLOW (fail-safe)
-        2. Check consultation response denylist (unless toggled on) → DENY
-        3. Check public comment denylist (unless toggled on) → DENY
-        4. Check allowlist (type + description) → ALLOW with reason
-        5. Check non-transport denylist → DENY with reason
-        6. Default → ALLOW (fail-safe for unknown types)
+        2. Check portal category (if document_type is a known category) → immediate decision
+        3. Fall through to title-based logic if category not recognised
+        4. Check consultation response denylist (unless toggled on) → DENY
+        5. Check public comment denylist (unless toggled on) → DENY
+        6. Check allowlist (type + description) → ALLOW with reason
+        7. Check non-transport denylist → DENY with reason
+        8. Default → ALLOW (fail-safe for unknown types)
 
-        Consultation response and public comment patterns are checked BEFORE the
-        allowlist to prevent false matches (e.g. "highway" in "OCC Highways"
-        matching the transport assessment allowlist pattern).
+        Portal category matching is checked first because it uses the
+        portal's own document grouping, which is more reliable than
+        title-based pattern matching.
 
         Args:
             document_type: Document type/category from Cherwell portal
@@ -318,6 +348,32 @@ class DocumentFilter:
         # Fail-safe: if no type or description provided, allow the document
         if not match_texts:
             return (True, "No document type - allowed by default (fail-safe)")
+
+        # Implements [review-output-fixes:FR-002] - Category-based filtering
+        # Check portal category first — these are section headers from the
+        # Cherwell portal document table, more reliable than title matching.
+        if document_type:
+            category_lower = document_type.lower()
+
+            # Category allowlist — documents under these headers are always relevant
+            for category in self.CATEGORY_ALLOWLIST:
+                if category_lower == category:
+                    return (True, f"Portal category: {document_type}")
+
+            # Category denylist — consultation responses
+            if not include_consultation_responses:
+                for category in self.CATEGORY_DENYLIST_CONSULTATION:
+                    if category_lower == category:
+                        return (False, "Portal category: consultation responses - not included in review scope")
+
+            # Category denylist — public comments
+            if not include_public_comments:
+                for category in self.CATEGORY_DENYLIST_PUBLIC:
+                    if category_lower == category:
+                        return (False, "Portal category: public comments - not relevant for policy review")
+
+        # Fall through to title-based pattern matching for unrecognised categories
+        # or when document_type is None
 
         # Implements [review-scope-control:FR-001] - Check consultation response denylist
         # Checked BEFORE allowlist to prevent "highway" in "OCC Highways" matching allowlist

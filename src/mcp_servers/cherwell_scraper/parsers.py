@@ -305,9 +305,118 @@ class CherwellParser:
     ) -> list[DocumentInfo]:
         """Parse documents from new Cherwell planning register format.
 
+        Implements [review-output-fixes:CherwellParser/TS-01] - Section headers propagated
+        Implements [review-output-fixes:CherwellParser/TS-02] - Consultation category extracted
+        Implements [review-output-fixes:CherwellParser/TS-03] - Flat table fallback
+        Implements [review-output-fixes:CherwellParser/TS-04] - Description preserved
+
         Documents have links with class 'singledownloadlink' and URLs like:
         /Document/Download?module=PLA&recordNumber=...&planId=...&imageId=...&isPlan=...&fileName=...
-        Each document row has: checkbox, link (category), date, description, size, plans indicator.
+
+        The portal groups documents under section header rows within the table.
+        Each header row has no download link and typically uses colspan or bold text.
+        Document rows inherit the category of their preceding section header.
+        """
+        documents: list[DocumentInfo] = []
+
+        # Find the table containing singledownloadlink elements
+        first_link = soup.find("a", class_="singledownloadlink")
+        if not first_link:
+            return documents
+
+        table = first_link.find_parent("table")
+        if not table:
+            # No enclosing table — fall back to flat link iteration
+            return self._parse_cherwell_register_documents_flat(soup, base_url)
+
+        # Walk all rows in the table in document order
+        current_section: str | None = None
+
+        for row in table.find_all("tr"):
+            link = row.find("a", class_="singledownloadlink")
+
+            if link and "/Document/Download" in link.get("href", ""):
+                # This is a document row
+                href = link.get("href", "")
+                url = self._resolve_url(href, base_url)
+                if not url:
+                    continue
+
+                cells = row.find_all("td")
+                # Typical structure: checkbox | link (filename) | date | description | size | plans
+                link_text = self._clean_text(link.get_text())
+                description = link_text
+                date_published = None
+                if len(cells) >= 4:
+                    description = self._clean_text(cells[3].get_text()) or link_text
+                if len(cells) >= 3:
+                    date_str = self._clean_text(cells[2].get_text())
+                    date_published = self._parse_date(date_str)
+
+                doc_id = self._generate_document_id(url)
+
+                documents.append(
+                    DocumentInfo(
+                        document_id=doc_id,
+                        description=description or "Unknown Document",
+                        document_type=current_section,
+                        date_published=date_published,
+                        url=url,
+                    )
+                )
+            else:
+                # Potential section header row — no download link
+                header_text = self._extract_section_header(row)
+                if header_text:
+                    current_section = header_text
+
+        return documents
+
+    def _extract_section_header(self, row: Tag) -> str | None:
+        """Extract section header text from a non-document table row.
+
+        Implements [review-output-fixes:FR-001] - Extract document category from portal
+
+        Section headers are identified by:
+        - Rows with no singledownloadlink
+        - Rows with colspan cells (spanning the full table width)
+        - Rows with bold/strong text content
+        - Non-empty text that doesn't look like a table header (th)
+        """
+        # Skip rows that are the table header (th elements)
+        if row.find("th"):
+            return None
+
+        cells = row.find_all("td")
+        if not cells:
+            return None
+
+        # Check for colspan cell (common for section headers)
+        for cell in cells:
+            colspan = cell.get("colspan")
+            if colspan and int(colspan) > 1:
+                text = self._clean_text(cell.get_text())
+                if text:
+                    return text
+
+        # Check for a row with a single meaningful cell or bold text
+        strong = row.find(["strong", "b"])
+        if strong:
+            text = self._clean_text(strong.get_text())
+            if text:
+                return text
+
+        return None
+
+    def _parse_cherwell_register_documents_flat(
+        self, soup: BeautifulSoup, base_url: str
+    ) -> list[DocumentInfo]:
+        """Fallback: parse singledownloadlink elements without section headers.
+
+        Implements [review-output-fixes:CherwellParser/TS-03] - Flat table fallback
+
+        Used when documents are not in a table or when no section headers are found.
+        Falls back to the original behaviour of using link text as category.
         """
         documents: list[DocumentInfo] = []
 
@@ -320,23 +429,18 @@ class CherwellParser:
             if not url:
                 continue
 
-            # Category (link text)
             category = self._clean_text(link.get_text())
 
-            # Get the parent row to extract other fields
             row = link.find_parent("tr")
             if not row:
                 continue
 
             cells = row.find_all("td")
-            # Typical structure: checkbox | link (category) | date | description | size | plans
             description = category
             date_published = None
             if len(cells) >= 4:
-                # Description is in the 4th cell (index 3)
                 description = self._clean_text(cells[3].get_text()) or category
             if len(cells) >= 3:
-                # Date is in the 3rd cell (index 2)
                 date_str = self._clean_text(cells[2].get_text())
                 date_published = self._parse_date(date_str)
 

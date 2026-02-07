@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-07 | [review-output-fixes](review-output-fixes/) | [spec](review-output-fixes/specification.md) | [design](review-output-fixes/design.md) | Implementation Complete | Bugfix |
 | 2026-02-07 | [s3-document-storage](s3-document-storage/) | [spec](s3-document-storage/specification.md) | [design](s3-document-storage/design.md) | Design Complete | Enhancement |
 | 2026-02-07 | [review-scope-control](review-scope-control/) | [spec](review-scope-control/specification.md) | [design](review-scope-control/design.md) | Implementation Complete | Enhancement |
 | 2026-02-07 | [key-documents](key-documents/) | [spec](key-documents/specification.md) | [design](key-documents/design.md) | Implementation Complete | Enhancement |

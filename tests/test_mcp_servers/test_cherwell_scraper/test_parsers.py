@@ -8,6 +8,8 @@ Implements:
 - [foundation-api:CherwellParser/TS-04] Handle malformed HTML
 """
 
+from pathlib import Path
+
 import pytest
 
 from src.mcp_servers.cherwell_scraper.parsers import CherwellParser
@@ -327,6 +329,157 @@ class TestParseDocumentList:
 
         # Should extract at least some documents
         assert isinstance(documents, list)
+
+
+class TestSectionHeaderExtraction:
+    """Tests for section header extraction from Cherwell register format.
+
+    Implements [review-output-fixes:CherwellParser/TS-01] through TS-04.
+    """
+
+    @pytest.fixture
+    def parser(self) -> CherwellParser:
+        return CherwellParser()
+
+    @pytest.fixture
+    def html_with_categories(self) -> str:
+        fixture_path = (
+            Path(__file__).parent.parent.parent
+            / "fixtures"
+            / "cherwell"
+            / "document_table_with_categories.html"
+        )
+        return fixture_path.read_text()
+
+    def test_section_headers_propagated(self, parser: CherwellParser, html_with_categories: str):
+        """
+        Verifies [review-output-fixes:CherwellParser/TS-01] - Section headers propagated
+
+        Given: HTML table with "Application Forms" header followed by 2 docs,
+               then "Supporting Documents" header followed by 3 docs
+        When: parse_document_list() is called
+        Then: First 2 docs have document_type="Application Forms",
+              next 3 have document_type="Supporting Documents"
+        """
+        documents = parser.parse_document_list(
+            html_with_categories,
+            "25/00284/F",
+            "https://planningregister.cherwell.gov.uk",
+        )
+
+        # 2 Application Forms + 3 Supporting Documents + 3 Consultation Responses + 1 Site Plans = 9
+        assert len(documents) == 9
+
+        # First 2 docs under "Application Forms"
+        assert documents[0].document_type == "Application Forms"
+        assert documents[1].document_type == "Application Forms"
+
+        # Next 3 docs under "Supporting Documents"
+        assert documents[2].document_type == "Supporting Documents"
+        assert documents[3].document_type == "Supporting Documents"
+        assert documents[4].document_type == "Supporting Documents"
+
+    def test_consultation_category_extracted(
+        self, parser: CherwellParser, html_with_categories: str
+    ):
+        """
+        Verifies [review-output-fixes:CherwellParser/TS-02] - Consultation category extracted
+
+        Given: HTML table with a "Consultation Responses" section header
+        When: parse_document_list() is called
+        Then: Documents under that header get document_type="Consultation Responses"
+        """
+        documents = parser.parse_document_list(
+            html_with_categories,
+            "25/00284/F",
+            "https://planningregister.cherwell.gov.uk",
+        )
+
+        consultation_docs = [d for d in documents if d.document_type == "Consultation Responses"]
+        assert len(consultation_docs) == 3
+
+        descriptions = [d.description for d in consultation_docs]
+        assert "Transport Response to Consultees" in descriptions
+        assert "Applicant's response to ATE comments" in descriptions
+        assert "Consultation Response" in descriptions
+
+    def test_flat_table_fallback(self, parser: CherwellParser):
+        """
+        Verifies [review-output-fixes:CherwellParser/TS-03] - Flat table fallback
+
+        Given: HTML with singledownloadlink elements but no section header rows
+        When: parse_document_list() is called
+        Then: Falls back to current behaviour (link text as document_type if
+              different from description, else None)
+        """
+        html = """
+        <html><body>
+        <table>
+          <tr>
+            <td><input type="checkbox" /></td>
+            <td><a class="singledownloadlink"
+                   href="/Document/Download?module=PLA&amp;recordNumber=1&amp;planId=1&amp;imageId=1&amp;isPlan=False&amp;fileName=Report.pdf">Report.pdf</a></td>
+            <td>01/01/2025</td>
+            <td>Planning Statement</td>
+            <td>1 MB</td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" /></td>
+            <td><a class="singledownloadlink"
+                   href="/Document/Download?module=PLA&amp;recordNumber=1&amp;planId=2&amp;imageId=2&amp;isPlan=False&amp;fileName=Plan.pdf">Site Plan</a></td>
+            <td>01/01/2025</td>
+            <td>Site Plan</td>
+            <td>2 MB</td>
+          </tr>
+        </table>
+        </body></html>
+        """
+        documents = parser.parse_document_list(
+            html, "25/00001/F", "https://planningregister.cherwell.gov.uk"
+        )
+
+        assert len(documents) == 2
+        # No section headers found — document_type should be None since there
+        # are no header rows to propagate
+        assert documents[0].document_type is None
+        assert documents[1].document_type is None
+        # Descriptions still come from the 4th cell
+        assert documents[0].description == "Planning Statement"
+        assert documents[1].description == "Site Plan"
+
+    def test_description_preserved(self, parser: CherwellParser, html_with_categories: str):
+        """
+        Verifies [review-output-fixes:CherwellParser/TS-04] - Description preserved
+
+        Given: HTML table with section headers where each row has description in 4th cell
+        When: parse_document_list() is called
+        Then: description is the 4th cell text (not the section header);
+              document_type is the section header
+        """
+        documents = parser.parse_document_list(
+            html_with_categories,
+            "25/00284/F",
+            "https://planningregister.cherwell.gov.uk",
+        )
+
+        # Check a Supporting Documents entry
+        ta_doc = next(
+            d for d in documents
+            if "Transport Assessment" in d.description and d.document_type == "Supporting Documents"
+        )
+        assert ta_doc.description == "ES Appendix 5.1 Transport Assessment (Part 1 of 7)"
+        assert ta_doc.document_type == "Supporting Documents"
+
+        # Check a Consultation Responses entry
+        consultee_doc = next(
+            d for d in documents
+            if d.description == "Transport Response to Consultees"
+        )
+        assert consultee_doc.document_type == "Consultation Responses"
+
+        # Check that Site Plans doc works too
+        masterplan = next(d for d in documents if d.description == "Masterplan")
+        assert masterplan.document_type == "Site Plans"
 
 
 class TestPagination:

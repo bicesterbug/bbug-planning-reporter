@@ -8,6 +8,8 @@ Implements test scenarios from [key-documents:AgentOrchestrator._phase_generate_
 Implements test scenarios from [key-documents:ITS-01] through [ITS-02]
 Implements test scenarios from [s3-document-storage:AgentOrchestrator/TS-01] through [TS-05]
 Implements test scenarios from [s3-document-storage:DownloadPhase/TS-01] through [TS-02]
+Implements test scenarios from [review-output-fixes:AgentOrchestrator/TS-01] through [TS-03]
+Implements test scenarios from [review-output-fixes:ITS-02]
 """
 
 import json
@@ -2020,5 +2022,264 @@ class TestS3StorageIngestionPhase:
         await orchestrator._phase_ingest_documents()
 
         backend.delete_local.assert_not_called()
+
+        await orchestrator.close()
+
+
+class TestStructuredReviewFieldParsing:
+    """
+    Tests for structured review field parsing in _phase_generate_review.
+
+    Implements [review-output-fixes:AgentOrchestrator/TS-01] through [TS-03]
+    Implements [review-output-fixes:ITS-02]
+    """
+
+    @pytest.mark.asyncio
+    async def test_structured_fields_populated(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_search_response,
+    ):
+        """
+        Verifies [review-output-fixes:AgentOrchestrator/TS-01] - Structured fields populated.
+
+        Given: Claude returns markdown containing Assessment Summary table,
+               Policy Compliance Matrix, and Recommendations section
+        When: _phase_generate_review() completes
+        Then: result.review dict includes non-null aspects, policy_compliance,
+              and recommendations
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        markdown = (
+            "# Cycle Advocacy Review\n\n"
+            "## Assessment Summary\n"
+            "**Overall Rating:** RED\n\n"
+            "| Aspect | Rating | Key Issue |\n"
+            "|--------|--------|----------|\n"
+            "| Cycle Parking | AMBER | Design unverified |\n"
+            "| Cycle Routes | RED | No off-site connections |\n\n"
+            "## Policy Compliance Matrix\n\n"
+            "| Requirement | Policy Source | Compliant? | Notes |\n"
+            "|---|---|---|---|\n"
+            "| Prioritise sustainable transport | NPPF para 115 | ❌ NO | Car-based design |\n"
+            "| Facilitate public transport | NPPF para 117 | ⚠️ PARTIAL | Bus contribution only |\n\n"
+            "## Recommendations\n\n"
+            "1. **A41 Cycle Route**\n"
+            "   - Provide segregated cycle track\n\n"
+            "2. **Green Lane Connection**\n"
+            "   - Remove bollards\n"
+        )
+
+        claude_resp = _make_claude_response(
+            markdown=markdown,
+            key_documents_json=[{"title": "TA", "category": "Transport", "summary": "S", "url": None}],
+        )
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_structured_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+
+        orchestrator._application = ApplicationMetadata(
+            reference="25/01178/REM",
+            address="Test Site",
+            proposal="Test proposal",
+        )
+        orchestrator._ingestion_result = DocumentIngestionResult(
+            documents_fetched=1,
+            documents_ingested=1,
+            document_paths=["/data/ta.pdf"],
+            document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
+        )
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.return_value = claude_resp
+            MockAnthropic.return_value = mock_client_inst
+
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+
+        # Aspects
+        assert review["aspects"] is not None
+        assert len(review["aspects"]) == 2
+        assert review["aspects"][0]["name"] == "Cycle Parking"
+        assert review["aspects"][0]["rating"] == "amber"
+        assert review["aspects"][1]["name"] == "Cycle Routes"
+        assert review["aspects"][1]["rating"] == "red"
+
+        # Policy compliance
+        assert review["policy_compliance"] is not None
+        assert len(review["policy_compliance"]) == 2
+        assert review["policy_compliance"][0]["compliant"] is False
+        assert review["policy_compliance"][1]["compliant"] is False
+
+        # Recommendations
+        assert review["recommendations"] is not None
+        assert len(review["recommendations"]) == 2
+        assert review["recommendations"][0] == "A41 Cycle Route"
+        assert review["recommendations"][1] == "Green Lane Connection"
+
+        # Suggested conditions (not in this review)
+        assert review["suggested_conditions"] is None
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_parser_failure_graceful(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_search_response,
+    ):
+        """
+        Verifies [review-output-fixes:AgentOrchestrator/TS-02] - Parser failure graceful.
+
+        Given: Claude returns markdown that doesn't contain recognisable tables
+        When: _phase_generate_review() completes
+        Then: result.review dict has null for aspects, policy_compliance,
+              recommendations, suggested_conditions; no exception raised
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        markdown = (
+            "# Cycle Advocacy Review\n\n"
+            "## Assessment Summary\n"
+            "**Overall Rating:** AMBER\n\n"
+            "This review has no tables or structured sections.\n"
+        )
+
+        claude_resp = _make_claude_response(markdown=markdown)
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_parse_fail_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+
+        orchestrator._application = ApplicationMetadata(
+            reference="25/01178/REM",
+            address="Test Site",
+            proposal="Test proposal",
+        )
+        orchestrator._ingestion_result = DocumentIngestionResult(
+            documents_fetched=1,
+            documents_ingested=1,
+            document_paths=["/data/ta.pdf"],
+            document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
+        )
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.return_value = claude_resp
+            MockAnthropic.return_value = mock_client_inst
+
+            # Should not raise
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+
+        assert review["aspects"] is None
+        assert review["policy_compliance"] is None
+        assert review["recommendations"] is None
+        assert review["suggested_conditions"] is None
+
+        # Existing fields should still be populated
+        assert review["overall_rating"] is not None
+        assert review["full_markdown"] is not None
+        assert review["summary"] is not None
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_existing_fields_preserved(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_search_response,
+    ):
+        """
+        Verifies [review-output-fixes:AgentOrchestrator/TS-03] - Existing fields preserved.
+        Verifies [review-output-fixes:ITS-02] - End-to-end review parsing.
+
+        Given: Claude returns valid markdown with structured sections
+        When: _phase_generate_review() completes
+        Then: full_markdown, overall_rating, key_documents, summary are unchanged
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        markdown = (
+            "# Cycle Advocacy Review\n\n"
+            "## Assessment Summary\n"
+            "**Overall Rating:** RED\n\n"
+            "| Aspect | Rating | Key Issue |\n"
+            "|--------|--------|----------|\n"
+            "| Parking | GREEN | Meets standards |\n\n"
+            "## Recommendations\n\n"
+            "1. **Improve routes**\n"
+        )
+
+        key_docs = [
+            {"title": "TA", "category": "Transport & Access",
+             "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
+        ]
+
+        claude_resp = _make_claude_response(
+            markdown=markdown,
+            key_documents_json=key_docs,
+        )
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_preserve_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+
+        orchestrator._application = ApplicationMetadata(
+            reference="25/01178/REM",
+            address="Test Site",
+            proposal="Test proposal",
+        )
+        orchestrator._ingestion_result = DocumentIngestionResult(
+            documents_fetched=1,
+            documents_ingested=1,
+            document_paths=["/data/ta.pdf"],
+            document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
+        )
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.return_value = claude_resp
+            MockAnthropic.return_value = mock_client_inst
+
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+
+        # Existing fields preserved
+        assert review["overall_rating"] == "red"
+        assert review["key_documents"] is not None
+        assert len(review["key_documents"]) == 1
+        assert review["key_documents"][0]["title"] == "TA"
+        assert review["full_markdown"] is not None
+        assert "## Assessment Summary" in review["full_markdown"]
+        assert review["summary"] is not None
+
+        # New fields also populated
+        assert review["aspects"] is not None
+        assert review["recommendations"] is not None
 
         await orchestrator.close()

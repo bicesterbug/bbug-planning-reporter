@@ -5,6 +5,12 @@ Implements [agent-integration:FR-001] - Establishes and maintains MCP server con
 Implements [agent-integration:FR-002] - Orchestrates complete review workflow
 Implements [agent-integration:NFR-001] - Workflow completes within time limits
 Implements [agent-integration:NFR-005] - Handles partial failures gracefully
+Implements [review-output-fixes:FR-003] - Parse aspects from markdown
+Implements [review-output-fixes:FR-004] - Parse policy compliance from markdown
+Implements [review-output-fixes:FR-005] - Parse recommendations from markdown
+Implements [review-output-fixes:FR-006] - Parse suggested conditions from markdown
+Implements [review-output-fixes:NFR-001] - Parsing failures must not break review generation
+Implements [review-output-fixes:NFR-003] - Existing fields preserved
 
 Implements:
 - [agent-integration:AgentOrchestrator/TS-01] Successful MCP connections
@@ -15,6 +21,9 @@ Implements:
 - [agent-integration:AgentOrchestrator/TS-06] Cancellation handling
 - [agent-integration:AgentOrchestrator/TS-07] State persistence
 - [agent-integration:AgentOrchestrator/TS-08] All servers unavailable
+- [review-output-fixes:AgentOrchestrator/TS-01] Structured fields populated
+- [review-output-fixes:AgentOrchestrator/TS-02] Parser failure graceful
+- [review-output-fixes:AgentOrchestrator/TS-03] Existing fields preserved
 """
 
 import asyncio
@@ -33,6 +42,7 @@ import structlog
 
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPToolError
 from src.agent.progress import ProgressTracker, ReviewPhase
+from src.agent.review_parser import ReviewMarkdownParser
 from src.shared.storage import LocalStorageBackend, StorageBackend, StorageUploadError
 
 logger = structlog.get_logger(__name__)
@@ -902,6 +912,35 @@ Remember to include the key_documents_json code block after the markdown review.
                         error=str(e),
                     )
 
+            # Implements [review-output-fixes:FR-003] through [FR-006]
+            # Parse structured fields from the markdown review
+            aspects = None
+            policy_compliance = None
+            recommendations = None
+            suggested_conditions = None
+            try:
+                review_parser = ReviewMarkdownParser()
+                aspects = review_parser.parse_aspects(review_markdown)
+                policy_compliance = review_parser.parse_policy_compliance(review_markdown)
+                recommendations = review_parser.parse_recommendations(review_markdown)
+                suggested_conditions = review_parser.parse_suggested_conditions(review_markdown)
+
+                logger.info(
+                    "Parsed structured review fields",
+                    review_id=self._review_id,
+                    aspects_count=len(aspects) if aspects else 0,
+                    compliance_count=len(policy_compliance) if policy_compliance else 0,
+                    recommendations_count=len(recommendations) if recommendations else 0,
+                    conditions_count=len(suggested_conditions) if suggested_conditions else 0,
+                )
+            except Exception as e:
+                # Implements [review-output-fixes:NFR-001] - never break review generation
+                logger.warning(
+                    "Failed to parse structured review fields",
+                    review_id=self._review_id,
+                    error=str(e),
+                )
+
             # Store review result on the ReviewResult object
             result = ReviewResult(
                 review_id=self._review_id,
@@ -910,6 +949,10 @@ Remember to include the key_documents_json code block after the markdown review.
                 review={
                     "overall_rating": overall_rating,
                     "key_documents": key_documents,
+                    "aspects": aspects,
+                    "policy_compliance": policy_compliance,
+                    "recommendations": recommendations,
+                    "suggested_conditions": suggested_conditions,
                     "full_markdown": review_markdown,
                     "summary": review_markdown[:500],
                     "model": model,

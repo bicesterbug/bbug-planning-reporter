@@ -3,14 +3,18 @@ Tests for document filtering.
 
 Verifies [document-filtering:DocumentFilter/TS-01] through [document-filtering:DocumentFilter/TS-10]
 Verifies [document-filtering:FilteredDocumentInfo/TS-01] through [document-filtering:FilteredDocumentInfo/TS-02]
+Verifies [review-output-fixes:DocumentFilter/TS-01] through [review-output-fixes:DocumentFilter/TS-06]
+Verifies [review-output-fixes:ITS-01]
 """
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from src.mcp_servers.cherwell_scraper.filters import DocumentFilter, FilteredDocumentInfo
 from src.mcp_servers.cherwell_scraper.models import DocumentInfo
+from src.mcp_servers.cherwell_scraper.parsers import CherwellParser
 
 
 class TestFilteredDocumentInfo:
@@ -934,3 +938,245 @@ class TestReviewScopeControl:
         assert len(allowed) == 0, "Consultation response should still be blocked"
         assert len(filtered) == 1
         assert "Consultation response" in filtered[0].filter_reason
+
+
+class TestCategoryBasedFiltering:
+    """
+    Tests for portal category-based filtering.
+
+    Verifies [review-output-fixes:DocumentFilter/TS-01] through [review-output-fixes:DocumentFilter/TS-06]
+    """
+
+    @pytest.fixture
+    def filter(self):
+        """Create a DocumentFilter instance for testing."""
+        return DocumentFilter()
+
+    def test_category_allowlist_hit(self, filter):
+        """
+        Verifies [review-output-fixes:DocumentFilter/TS-01] - Category allowlist takes
+        precedence over title content.
+
+        Given: Document with document_type="Supporting Documents" and
+               description="Transport Response to Consultees"
+        When: _should_download() is called
+        Then: Returns (True, ...) — category takes precedence over title that
+              would have matched consultation response denylist
+        """
+        should_download, reason = filter._should_download(
+            document_type="Supporting Documents",
+            description="Transport Response to Consultees",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+    def test_category_denylist_hit(self, filter):
+        """
+        Verifies [review-output-fixes:DocumentFilter/TS-02] - Category denylist denies
+        regardless of title.
+
+        Given: Document with document_type="Consultation Responses" and
+               description="Transport Assessment"
+        When: _should_download() is called with include_consultation_responses=False
+        Then: Returns (False, ...) — category denylist denies regardless of
+              title that would have matched transport allowlist
+        """
+        should_download, reason = filter._should_download(
+            document_type="Consultation Responses",
+            description="Transport Assessment",
+            include_consultation_responses=False,
+        )
+
+        assert should_download is False
+        assert "consultation responses" in reason.lower()
+
+    def test_category_denylist_override(self, filter):
+        """
+        Verifies [review-output-fixes:DocumentFilter/TS-03] - Category denylist can be
+        overridden with toggle.
+
+        Given: Document with document_type="Consultation Responses"
+        When: _should_download() is called with include_consultation_responses=True
+        Then: Returns (True, ...) — override bypasses category denylist
+        """
+        should_download, reason = filter._should_download(
+            document_type="Consultation Responses",
+            description="OCC Highways Response",
+            include_consultation_responses=True,
+        )
+
+        # With the toggle on, "Consultation Responses" category is not denied.
+        # It's not in the category allowlist either, so it falls through to
+        # title-based logic. "highway" matches the transport assessment allowlist.
+        assert should_download is True
+
+    def test_no_category_fallback(self, filter):
+        """
+        Verifies [review-output-fixes:DocumentFilter/TS-04] - No category falls through
+        to title-based logic.
+
+        Given: Document with document_type=None and description="Consultation Response"
+        When: _should_download() is called
+        Then: Returns (False, ...) — falls through to existing title-based
+              consultation response denylist
+        """
+        should_download, reason = filter._should_download(
+            document_type=None,
+            description="Consultation Response",
+        )
+
+        assert should_download is False
+        assert "Consultation response" in reason
+
+    def test_unknown_category_fallback(self, filter):
+        """
+        Verifies [review-output-fixes:DocumentFilter/TS-05] - Unrecognised category
+        falls through to title-based logic.
+
+        Given: Document with document_type="Other Stuff" and
+               description="Planning Statement"
+        When: _should_download() is called
+        Then: Falls through to title-based logic, returns (True, "Core application document")
+        """
+        should_download, reason = filter._should_download(
+            document_type="Other Stuff",
+            description="Planning Statement",
+        )
+
+        assert should_download is True
+        assert "Core application document" in reason
+
+    def test_comment_category_denied(self, filter):
+        """
+        Verifies [review-output-fixes:DocumentFilter/TS-06] - Public Comments category
+        is denied.
+
+        Given: Document with document_type="Public Comments"
+        When: _should_download() is called with include_public_comments=False
+        Then: Returns (False, ...)
+        """
+        should_download, reason = filter._should_download(
+            document_type="Public Comments",
+            description="Letter from resident",
+            include_public_comments=False,
+        )
+
+        assert should_download is False
+        assert "public comments" in reason.lower()
+
+    def test_category_case_insensitive(self, filter):
+        """
+        Verifies category matching is case-insensitive.
+
+        Given: Document with document_type="SUPPORTING DOCUMENTS"
+        When: _should_download() is called
+        Then: Matches category allowlist despite case difference
+        """
+        should_download, reason = filter._should_download(
+            document_type="SUPPORTING DOCUMENTS",
+            description="Some document",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+    def test_application_forms_category_allowed(self, filter):
+        """
+        Verifies Application Forms category is in allowlist.
+
+        Given: Document with document_type="Application Forms"
+        When: _should_download() is called
+        Then: Returns (True, ...) with portal category reason
+        """
+        should_download, reason = filter._should_download(
+            document_type="Application Forms",
+            description="App Form.pdf",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+    def test_site_plans_category_allowed(self, filter):
+        """
+        Verifies Site Plans category is in allowlist.
+
+        Given: Document with document_type="Site Plans"
+        When: _should_download() is called
+        Then: Returns (True, ...) with portal category reason
+        """
+        should_download, reason = filter._should_download(
+            document_type="Site Plans",
+            description="Masterplan.pdf",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+
+class TestParserFilterIntegration:
+    """
+    Integration test for parser + filter pipeline.
+
+    Verifies [review-output-fixes:ITS-01] - Category-based filter with real document set
+    """
+
+    def test_parser_filter_pipeline(self):
+        """
+        Verifies [review-output-fixes:ITS-01] - Category-based filter with real document set.
+
+        Given: HTML fixture with section headers containing "Supporting Documents"
+               and "Consultation Responses" groups, including documents that
+               previously bypassed the filter ("Transport Response to Consultees",
+               "Applicant's response to ATE comments")
+        When: CherwellParser.parse_document_list() then DocumentFilter.filter_documents()
+        Then: "Transport Response to Consultees" under "Consultation Responses" is
+              filtered; "Transport Assessment" under "Supporting Documents" is allowed
+        """
+        fixture_path = Path(__file__).parent.parent.parent / "fixtures" / "cherwell" / "document_table_with_categories.html"
+        html = fixture_path.read_text()
+
+        # Parse documents from HTML
+        parser = CherwellParser()
+        documents = parser.parse_document_list(
+            html=html,
+            reference="25/00162/OUT",
+            base_url="https://planningregister.cherwell.gov.uk",
+        )
+
+        assert len(documents) == 9, f"Expected 9 documents, got {len(documents)}"
+
+        # Filter documents
+        doc_filter = DocumentFilter()
+        allowed, filtered = doc_filter.filter_documents(
+            documents, application_ref="25/00162/OUT"
+        )
+
+        # Consultation Responses (3 docs) should all be filtered
+        filtered_descriptions = {f.description for f in filtered}
+        assert "Transport Response to Consultees" in filtered_descriptions, \
+            "Transport Response to Consultees should be filtered (under Consultation Responses category)"
+        assert "Applicant's response to ATE comments" in filtered_descriptions, \
+            "Applicant's response to ATE comments should be filtered (under Consultation Responses category)"
+        assert "Consultation Response" in filtered_descriptions, \
+            "Consultation Response should be filtered (under Consultation Responses category)"
+
+        # Supporting Documents should be allowed
+        allowed_descriptions = {d.description for d in allowed}
+        assert "ES Appendix 5.1 Transport Assessment (Part 1 of 7)" in allowed_descriptions, \
+            "Transport Assessment under Supporting Documents should be allowed"
+        assert "Planning Statement" in allowed_descriptions, \
+            "Planning Statement under Supporting Documents should be allowed"
+        assert "Travel Plan" in allowed_descriptions, \
+            "Travel Plan under Supporting Documents should be allowed"
+
+        # Application Forms should be allowed
+        assert "App Form" in allowed_descriptions
+        assert "Validation Checklist Form" in allowed_descriptions
+
+        # Site Plans should be allowed
+        assert "Masterplan" in allowed_descriptions
+
+        # Total counts
+        assert len(allowed) == 6, f"Expected 6 allowed, got {len(allowed)}: {allowed_descriptions}"
+        assert len(filtered) == 3, f"Expected 3 filtered, got {len(filtered)}: {filtered_descriptions}"
