@@ -8,4 +8,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import redis; r = redis.from_url('${REDIS_URL:-redis://redis:6379/0}'); r.ping()"
 
 # Run the worker
-CMD ["python", "-m", "src.worker.main"]
+CMD ["arq", "src.worker.main.WorkerSettings"]

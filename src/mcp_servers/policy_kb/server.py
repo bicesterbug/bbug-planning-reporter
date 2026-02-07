@@ -35,8 +35,7 @@ from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent, Tool
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
-from starlette.responses import Response
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 
 from src.mcp_servers.document_store.chunker import TextChunker
 from src.mcp_servers.document_store.embeddings import EmbeddingService
@@ -606,15 +605,10 @@ def create_app(
             await mcp_server.server.run(
                 streams[0], streams[1], mcp_server.server.create_initialization_options()
             )
-        return Response()
-
-    async def handle_messages(request):
-        await sse.handle_post_message(request.scope, request.receive, request._send)
-        return Response()
 
     routes = [
         Route("/sse", endpoint=handle_sse),
-        Route("/messages/", endpoint=handle_messages, methods=["POST"]),
+        Mount("/messages", app=sse.handle_post_message),
     ]
 
     return Starlette(routes=routes)

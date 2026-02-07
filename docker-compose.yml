@@ -60,9 +60,9 @@ services:
       - ADVOCACY_GROUP_STYLISED=${ADVOCACY_GROUP_STYLISED:-Bicester BUG}
       - ADVOCACY_GROUP_SHORT=${ADVOCACY_GROUP_SHORT:-BBUG}
     volumes:
-      - chroma_data:/data/chroma
-      - raw_docs:/data/raw
-      - output:/data/output
+      - /media/pete/Files/bbug-reports/chroma:/data/chroma
+      - /media/pete/Files/bbug-reports/raw:/data/raw
+      - /media/pete/Files/bbug-reports/output:/data/output
       - ./data/policy:/data/policy
     depends_on:
       redis:
@@ -80,7 +80,7 @@ services:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes:
-      - redis_data:/data
+      - /media/pete/Files/bbug-reports/redis:/data
     ports:
       - "6379:6379"  # Expose for local debugging; remove in prod
     networks:
@@ -107,8 +107,8 @@ services:
     ports:
       - "3002:3002"
     volumes:
-      - chroma_data:/data/chroma
-      - raw_docs:/data/raw
+      - /media/pete/Files/bbug-reports/chroma:/data/chroma
+      - /media/pete/Files/bbug-reports/raw:/data/raw
     networks:
       - agent-net
     restart: unless-stopped
@@ -129,7 +129,7 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - raw_docs:/data/raw
+      - /media/pete/Files/bbug-reports/raw:/data/raw
     networks:
       - agent-net
     restart: unless-stopped
@@ -150,7 +150,7 @@ services:
     ports:
       - "3003:3003"
     volumes:
-      - chroma_data:/data/chroma
+      - /media/pete/Files/bbug-reports/chroma:/data/chroma
       - ./data/policy:/data/policy
     depends_on:
       redis:
@@ -174,7 +174,7 @@ services:
       - SEED_DIR=/data/policy/seed
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - chroma_data:/data/chroma
+      - /media/pete/Files/bbug-reports/chroma:/data/chroma
       - ./data/policy:/data/policy
     depends_on:
       redis:
@@ -183,19 +183,6 @@ services:
       - agent-net
     # Runs once at startup, then exits
     restart: "no"
-
-# ==========================================================================
-# Volumes
-# ==========================================================================
-volumes:
-  chroma_data:
-    driver: local
-  raw_docs:
-    driver: local
-  output:
-    driver: local
-  redis_data:
-    driver: local
 
 # ==========================================================================
 # Networks

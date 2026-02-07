@@ -6,9 +6,9 @@ FROM cherwell-base:latest
 # Expose MCP server port (SSE transport)
 EXPOSE 3001
 
-# Health check
+# Health check - verify SSE endpoint is responding
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:3001/health', timeout=5).raise_for_status()" || exit 0
+    CMD python -c "import httpx; r = httpx.get('http://localhost:3001/sse', headers={'Accept': 'text/event-stream'}, timeout=5); exit(0 if r.status_code == 200 else 1)" || exit 1
 
 # Run the MCP server
 CMD ["python", "-m", "src.mcp_servers.cherwell_scraper.server"]

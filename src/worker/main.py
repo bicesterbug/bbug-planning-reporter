@@ -100,7 +100,7 @@ class WorkerSettings:
     ]
     queue_name = "review_jobs"
     max_jobs = 10
-    job_timeout = 1800  # 30 minutes (large applications can have 300+ documents)
+    job_timeout = 3600  # 60 minutes (large applications with many docs need more time for ingestion)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query
 from ulid import ULID
 
-from src.api.dependencies import RedisClientDep
+from src.api.dependencies import ArqPoolDep, RedisClientDep
 from src.api.schemas import (
     ErrorResponse,
     ReviewLinks,
@@ -64,6 +64,7 @@ def make_error_response(code: str, message: str, details: dict[str, Any] | None 
 async def submit_review(
     request: ReviewRequest,
     redis: RedisClientDep,
+    arq_pool: ArqPoolDep,
 ) -> ReviewSubmitResponse:
     """
     Submit a new review request.
@@ -136,7 +137,19 @@ async def submit_review(
         application_ref=request.application_ref,
     )
 
-    # TODO: Enqueue job to arq queue (Phase 3)
+    # Enqueue job to arq worker queue
+    await arq_pool.enqueue_job(
+        "review_job",
+        review_id=review_id,
+        application_ref=request.application_ref,
+        _queue_name="review_jobs",
+    )
+
+    logger.info(
+        "Review job enqueued",
+        review_id=review_id,
+        application_ref=request.application_ref,
+    )
 
     return ReviewSubmitResponse(
         review_id=review_id,

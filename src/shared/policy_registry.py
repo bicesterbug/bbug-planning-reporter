@@ -570,6 +570,11 @@ class PolicyRegistry:
 
             # Case 1: Existing revision has no end (currently in force)
             if rev_end is None:
+                # If new revision has a defined end before the existing revision starts,
+                # there's no overlap (inserting a historical revision)
+                if effective_to is not None and effective_to < rev_start:
+                    continue
+
                 # New revision starts on or before existing revision
                 if effective_from <= rev_start:
                     # This is an overlap error - can't insert before an open-ended revision

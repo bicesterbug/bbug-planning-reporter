@@ -703,34 +703,34 @@ No large missing features or infrastructure. All dependencies are well-establish
 ### Phase 4: Cherwell Scraper MCP
 
 - Task 13: Implement CherwellParser for HTML extraction
-  - Status: Backlog
+  - Status: Complete
   - Parse application detail page, parse documents table
   - Handle pagination, missing fields, malformed HTML
   - Requirements: [foundation-api:FR-009], [foundation-api:FR-010]
   - Test Scenarios: [foundation-api:CherwellParser/TS-01], [foundation-api:CherwellParser/TS-02], [foundation-api:CherwellParser/TS-03], [foundation-api:CherwellParser/TS-04]
 
 - Task 14: Implement Cherwell HTTP client with rate limiting
-  - Status: Backlog
+  - Status: Complete
   - Async httpx client, configurable rate limit, User-Agent
   - Session handling, retry on 5xx/timeout
   - Requirements: [foundation-api:FR-012], [foundation-api:NFR-004]
   - Test Scenarios: [foundation-api:CherwellScraperMCP/TS-06], [foundation-api:CherwellScraperMCP/TS-07]
 
 - Task 15: Implement MCP server with get_application_details tool
-  - Status: Backlog
+  - Status: Complete
   - MCP server setup, tool registration
   - Fetch and parse application page
   - Requirements: [foundation-api:FR-009]
   - Test Scenarios: [foundation-api:CherwellScraperMCP/TS-01], [foundation-api:CherwellScraperMCP/TS-02]
 
 - Task 16: Implement list_application_documents tool
-  - Status: Backlog
+  - Status: Complete
   - Fetch documents tab, parse table, handle pagination
   - Requirements: [foundation-api:FR-010]
   - Test Scenarios: [foundation-api:CherwellScraperMCP/TS-03], [foundation-api:CherwellScraperMCP/TS-08]
 
 - Task 17: Implement download_document and download_all_documents tools
-  - Status: Backlog
+  - Status: Complete
   - Stream downloads to /data/raw/{ref}/, return paths
   - Requirements: [foundation-api:FR-011]
   - Test Scenarios: [foundation-api:CherwellScraperMCP/TS-04], [foundation-api:CherwellScraperMCP/TS-05]
