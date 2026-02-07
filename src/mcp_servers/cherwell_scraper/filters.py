@@ -161,6 +161,7 @@ class DocumentFilter:
         "letter of objection",
         "letter of support",
         "petition",
+        "consultation response",  # Cherwell portal's label for public comments
     ]
 
     def __init__(self) -> None:
