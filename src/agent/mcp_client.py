@@ -223,7 +223,7 @@ class MCPClientManager:
 
         config = self._servers[server_type]
         state = self._states[server_type]
-        effective_timeout = timeout or 30.0
+        effective_timeout = timeout or 300.0
 
         try:
             async with asyncio.timeout(effective_timeout):
