@@ -116,6 +116,11 @@ See [docs/DESIGN.md](docs/DESIGN.md) for full architecture documentation.
 
 See [.sdd/](/.sdd/) for Spec Driven Development artifacts including specifications and designs for each feature.
 
+## CI/CD
+
+- **Pull Requests**: Automatically linted (ruff) and tested (pytest) via GitHub Actions
+- **Releases**: Push a `v*` tag to build and publish Docker images to `ghcr.io`
+
 ## License
 
 MIT
