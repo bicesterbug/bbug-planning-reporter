@@ -1,0 +1,49 @@
+# PR Checks — lint and test on every pull request
+# Implements [ci-cd-github-actions:FR-001], [ci-cd-github-actions:FR-002], [ci-cd-github-actions:FR-006]
+
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Implements [ci-cd-github-actions:NFR-002] - pip cache
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-eng poppler-utils \
+            libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libcairo2
+
+      - name: Install Python dependencies
+        run: |
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev]"
+
+      # Implements [ci-cd-github-actions:FR-002] - ruff lint
+      - name: Lint with ruff
+        run: ruff check .
+
+      # Implements [ci-cd-github-actions:FR-001] - full test suite (excluding integration/e2e)
+      - name: Run tests
+        run: pytest -m "not integration and not e2e" --tb=short -q
