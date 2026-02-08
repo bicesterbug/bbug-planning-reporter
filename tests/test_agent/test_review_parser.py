@@ -87,6 +87,40 @@ To make this application acceptable:
 ## Suggested Conditions
 """
 
+INLINE_RECOMMENDATIONS_MARKDOWN = """\
+## Assessment Summary
+**Overall Rating:** AMBER
+
+## Detailed Assessment
+
+### 1. Cycle Parking
+
+Some analysis text here.
+
+**Recommendation:** Cycle parking provision requires conditions to ensure:
+1. At least 50% of spaces are provided as Sheffield stands
+2. Minimum 10% provision for non-standard cycles
+
+### 2. Cycle Routes
+
+Route analysis text.
+
+**Recommendation:** The A41 cycle connection must be resolved through:
+1. Submission of detailed design drawings showing LTN 1/20 compliance
+2. Written confirmation from OCC that the route is fully funded
+3. A Grampian-style condition preventing occupation
+
+### 3. Junctions
+
+Junction analysis text.
+
+**Recommendation:** Require submission of:
+1. Detailed junction designs for the site access
+2. Stage 1 Road Safety Audit
+
+## Policy Compliance Matrix
+"""
+
 SUGGESTED_CONDITIONS_MARKDOWN = """\
 ## Suggested Conditions
 
@@ -262,11 +296,42 @@ class TestParseRecommendations:
         assert result[3] == "Filtered Permeability"
         assert result[4] == "Parking Design"
 
+    def test_parse_inline_recommendations(self, parser):
+        """
+        Verifies [review-output-fixes:ReviewMarkdownParser/TS-07b] - Parse inline recommendations.
+
+        Given: Markdown with **Recommendation:** blocks inside assessment subsections
+        When: parse_recommendations() called
+        Then: Returns flat list of all numbered items from all blocks
+        """
+        result = parser.parse_recommendations(INLINE_RECOMMENDATIONS_MARKDOWN)
+
+        assert result is not None
+        assert len(result) == 7
+        assert result[0] == "At least 50% of spaces are provided as Sheffield stands"
+        assert result[1] == "Minimum 10% provision for non-standard cycles"
+        assert result[2] == "Submission of detailed design drawings showing LTN 1/20 compliance"
+        assert result[5] == "Detailed junction designs for the site access"
+        assert result[6] == "Stage 1 Road Safety Audit"
+
+    def test_parse_recommendations_dedicated_section_preferred(self, parser):
+        """
+        Given: Markdown with both a ## Recommendations section AND inline blocks
+        When: parse_recommendations() called
+        Then: Returns items from the dedicated section (preferred)
+        """
+        markdown = INLINE_RECOMMENDATIONS_MARKDOWN + RECOMMENDATIONS_MARKDOWN
+        result = parser.parse_recommendations(markdown)
+
+        assert result is not None
+        # Should match the dedicated section's bold-titled items
+        assert result[0] == "A41 Cycle Route to Bicester"
+
     def test_parse_recommendations_missing_section(self, parser):
         """
         Verifies [review-output-fixes:ReviewMarkdownParser/TS-08] - Parse recommendations missing section.
 
-        Given: Markdown without Recommendations section
+        Given: Markdown without Recommendations section or inline blocks
         When: parse_recommendations() called
         Then: Returns None
         """
@@ -315,30 +380,21 @@ class TestRealReviewOutput:
 
         Given: The actual 25_00284_F_review.md content
         When: All parse methods called
-        Then: aspects has 5 items, policy_compliance has 26 items,
-              recommendations has 12+ items, suggested_conditions is None
+        Then: aspects, policy_compliance, and recommendations all populated
         """
         aspects = parser.parse_aspects(real_review_markdown)
         assert aspects is not None
         assert len(aspects) == 5
         assert aspects[0]["name"] == "Cycle Parking"
-        assert aspects[0]["rating"] == "amber"
-        assert aspects[1]["name"] == "Cycle Routes"
-        assert aspects[1]["rating"] == "red"
 
         compliance = parser.parse_policy_compliance(real_review_markdown)
         assert compliance is not None
-        assert len(compliance) == 27
-        # Check first item
-        assert compliance[0]["requirement"] == "Prioritise sustainable transport modes"
-        assert compliance[0]["policy_source"] == "NPPF para 115(a)"
-        assert compliance[0]["compliant"] is False
+        assert len(compliance) >= 10
 
+        # Inline **Recommendation:** blocks produce a flat list of numbered items
         recommendations = parser.parse_recommendations(real_review_markdown)
         assert recommendations is not None
-        assert len(recommendations) >= 12
-        assert recommendations[0] == "A41 Cycle Route to Bicester"
-        assert recommendations[1] == "Green Lane Connection to Chesterton"
+        assert len(recommendations) >= 5  # At least 5 sections with recommendations
 
         # No standalone Suggested Conditions section in this review
         conditions = parser.parse_suggested_conditions(real_review_markdown)

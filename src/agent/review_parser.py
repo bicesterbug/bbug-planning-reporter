@@ -147,34 +147,88 @@ class ReviewMarkdownParser:
 
     def parse_recommendations(self, markdown: str) -> list[str] | None:
         """
-        Extract recommendation titles from the Recommendations section.
+        Extract recommendations from the review markdown.
 
-        Looks for numbered bold items like:
-        1. **A41 Cycle Route to Bicester**
+        Supports two formats:
+        1. A dedicated ## Recommendations section with numbered bold items:
+           1. **A41 Cycle Route to Bicester**
+        2. Inline **Recommendation:** blocks at the end of assessment subsections,
+           each followed by numbered items:
+           **Recommendation:** Require submission of:
+           1. Detailed junction designs
+           2. Stage 1 Road Safety Audit
 
-        Returns list of recommendation title strings.
-        Returns None if the section is not found or cannot be parsed.
+        Returns list of recommendation strings.
+        Returns None if no recommendations are found.
         """
         try:
+            # First try: dedicated Recommendations section with numbered bold items
             section = self._find_section(markdown, r"Recommendations")
-            if not section:
-                return None
+            if section:
+                pattern = re.compile(
+                    r"^\s*\d+\.\s+\*\*(.+?)\*\*",
+                    re.MULTILINE,
+                )
+                matches = pattern.findall(section)
+                if matches:
+                    return [m.strip() for m in matches if m.strip()]
 
-            # Match numbered items with bold titles: "1. **Title**" or "1. **Title**\n"
-            pattern = re.compile(
-                r"^\s*\d+\.\s+\*\*(.+?)\*\*",
-                re.MULTILINE,
-            )
-            matches = pattern.findall(section)
+            # Second try: inline **Recommendation:** blocks throughout the document
+            recommendations = self._parse_inline_recommendations(markdown)
+            if recommendations:
+                return recommendations
 
-            if not matches:
-                return None
-
-            return [m.strip() for m in matches if m.strip()]
+            return None
 
         except Exception as e:
             logger.warning("Failed to parse recommendations", error=str(e))
             return None
+
+    def _parse_inline_recommendations(self, markdown: str) -> list[str] | None:
+        """
+        Extract recommendations from inline **Recommendation:** blocks.
+
+        Each block starts with **Recommendation:** followed by optional preamble text,
+        then numbered items. Only the contiguous numbered list immediately following
+        the Recommendation line is collected — other numbered lists in the same
+        section (e.g. "Critical Issues") are not included.
+
+        Returns a flat list of recommendation strings (numbered items from all blocks).
+        """
+        block_pattern = re.compile(
+            r"^\*\*Recommendation:\*\*\s*(.*)$",
+            re.MULTILINE,
+        )
+        blocks = list(block_pattern.finditer(markdown))
+        if not blocks:
+            return None
+
+        all_items = []
+        for match in blocks:
+            start = match.end()
+            # Walk through lines after the **Recommendation:** line
+            # collecting only the contiguous numbered list
+            remaining = markdown[start:]
+            lines = remaining.split("\n")
+            found_list = False
+            for line in lines:
+                stripped = line.strip()
+                if re.match(r"^\d+\.\s+", stripped):
+                    found_list = True
+                    # Extract the item text after "N. "
+                    item_text = re.sub(r"^\d+\.\s+", "", stripped)
+                    all_items.append(item_text)
+                elif found_list:
+                    # End of contiguous numbered list
+                    break
+                elif stripped == "":
+                    # Allow blank lines before the list starts
+                    continue
+                elif not found_list:
+                    # Allow preamble text (e.g. "Require submission of:")
+                    continue
+
+        return all_items if all_items else None
 
     def parse_suggested_conditions(self, markdown: str) -> list[str] | None:
         """
