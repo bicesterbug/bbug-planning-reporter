@@ -11,7 +11,6 @@ Implements:
 
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -61,7 +60,7 @@ class TestGetApplicationDetails:
             </dl>
         </body></html>
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/25/01178/REM").mock(
             return_value=httpx.Response(200, text=html)
         )
 
@@ -93,7 +92,7 @@ class TestGetApplicationDetails:
         When: Call get_application_details
         Then: Returns error with code "application_not_found"
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/99/99999/XXX").mock(
             return_value=httpx.Response(404, text="Not Found")
         )
 
@@ -144,7 +143,7 @@ class TestListApplicationDocuments:
             </table>
         </body></html>
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/25/01178/REM").mock(
             return_value=httpx.Response(200, text=html)
         )
 
@@ -181,7 +180,7 @@ class TestListApplicationDocuments:
             <p>No documents have been uploaded.</p>
         </body></html>
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/25/01178/REM").mock(
             return_value=httpx.Response(200, text=html)
         )
 
@@ -265,7 +264,7 @@ class TestDownloadAllDocuments:
             </table>
         </body></html>
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/25/01178/REM").mock(
             return_value=httpx.Response(200, text=list_html)
         )
 
@@ -329,7 +328,7 @@ class TestDownloadAllDocuments:
             </table>
         </body></html>
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/25/01178/REM").mock(
             return_value=httpx.Response(200, text=list_html)
         )
 

@@ -7,8 +7,7 @@ These tests verify the complete workflow with all components working together
 using mocked MCP servers and Claude client.
 """
 
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -244,7 +243,7 @@ class TestValidationDatePolicySelection:
         )
 
         # Trigger a policy search
-        from src.agent.assessor import AspectAssessment, AspectName, AspectRating
+        from src.agent.assessor import AspectAssessment, AspectRating
 
         aspects = [
             AspectAssessment(

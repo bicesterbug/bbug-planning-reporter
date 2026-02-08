@@ -238,8 +238,7 @@ class ClaudeClient:
 
             except APIError as e:
                 # Retry on 5xx errors
-                if e.status_code and e.status_code >= 500:
-                    if attempt < self.MAX_RETRIES - 1:
+                if e.status_code and e.status_code >= 500 and attempt < self.MAX_RETRIES - 1:
                         logger.warning(
                             "Transient API error, retrying",
                             status_code=e.status_code,

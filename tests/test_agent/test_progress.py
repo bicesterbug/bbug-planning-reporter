@@ -6,7 +6,7 @@ Implements test scenarios from [agent-integration:ProgressTracker/TS-01] through
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -273,7 +273,7 @@ class TestStatePersistence:
         mock_redis.set.assert_called()
 
         # Get the last set call
-        set_calls = [c for c in mock_redis.set.call_args_list]
+        set_calls = list(mock_redis.set.call_args_list)
         assert len(set_calls) >= 1
 
         last_call = set_calls[-1]
@@ -424,7 +424,7 @@ class TestCancellation:
         mock_redis.set.assert_called()
 
         # Verify cancel key was set
-        set_calls = [c for c in mock_redis.set.call_args_list]
+        set_calls = list(mock_redis.set.call_args_list)
         cancel_call = [c for c in set_calls if "review_cancel:" in str(c)]
         assert len(cancel_call) >= 1
 

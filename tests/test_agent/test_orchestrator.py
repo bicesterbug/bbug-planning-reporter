@@ -13,7 +13,6 @@ Implements test scenarios from [structured-review-output:ITS-01] through [ITS-03
 """
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -26,11 +25,9 @@ from src.agent.orchestrator import (
     ApplicationMetadata,
     DocumentIngestionResult,
     OrchestratorError,
-    ReviewResult,
 )
 from src.agent.progress import ReviewPhase
 from src.shared.storage import StorageUploadError
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -628,7 +625,7 @@ class TestStatePersistence:
                 ],
             )
 
-            result = await orchestrator.run()
+            await orchestrator.run()
 
         # Should not have called get_application_details or download
         # (those phases were completed in previous run)
@@ -730,7 +727,7 @@ class TestReconnectionOnTransientFailure:
                 documents=[{"id": "doc1", "name": "test.pdf"}],
             )
 
-            result = await orchestrator.run()
+            await orchestrator.run()
 
         errors = orchestrator.progress.state.errors_encountered
         assert any("Connection lost" in e.get("error", "") for e in errors)
@@ -1794,7 +1791,7 @@ class TestS3StorageDownloadPhase:
         # Verify URLs were rewritten to S3 URLs
         meta = orchestrator._ingestion_result.document_metadata
         assert len(meta) == 3
-        for file_path, doc_meta in meta.items():
+        for _file_path, doc_meta in meta.items():
             assert "test-bucket.nyc3.digitaloceanspaces.com" in doc_meta["url"]
             assert "cherwell.gov.uk" not in doc_meta["url"]
 
@@ -1897,7 +1894,7 @@ class TestS3StorageDownloadPhase:
 
         # Verify Cherwell URLs preserved
         meta = orchestrator._ingestion_result.document_metadata
-        for file_path, doc_meta in meta.items():
+        for _file_path, doc_meta in meta.items():
             assert "cherwell.gov.uk" in doc_meta["url"]
 
         await orchestrator.close()

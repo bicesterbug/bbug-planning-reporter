@@ -140,7 +140,7 @@ class LocalStorageBackend:
         # Implements [s3-document-storage:LocalStorageBackend/TS-01]
         pass
 
-    def public_url(self, key: str) -> str | None:
+    def public_url(self, _key: str) -> str | None:
         # Implements [s3-document-storage:LocalStorageBackend/TS-02]
         return None
 

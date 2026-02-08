@@ -294,9 +294,7 @@ class TestAdvocacyGroupFromEnvironment:
             for key in ["ADVOCACY_GROUP_NAME", "ADVOCACY_GROUP_STYLISED", "ADVOCACY_GROUP_SHORT"]:
                 env[key] = ""
 
-            with patch.dict("os.environ", env, clear=False):
-                # Need to also clear them to ensure defaults are used
-                with patch("src.worker.letter_jobs._get_group_config") as mock_config:
+            with patch.dict("os.environ", env, clear=False), patch("src.worker.letter_jobs._get_group_config") as mock_config:
                     mock_config.return_value = (
                         "Bicester Bike Users' Group",
                         "Bicester BUG",

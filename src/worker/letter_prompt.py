@@ -13,7 +13,6 @@ Implements [response-letter:FR-010] - Produces prompt pair for Claude API
 from datetime import date
 from typing import Any
 
-
 # Stance-specific framing instructions
 _STANCE_INSTRUCTIONS = {
     "object": (

@@ -170,8 +170,7 @@ class MCPClientManager:
         state = self._states[server_type]
 
         try:
-            async with sse_client(config.sse_url) as (read, write):
-                async with ClientSession(read, write) as session:
+            async with sse_client(config.sse_url) as (read, write), ClientSession(read, write) as session:
                     await session.initialize()
                     tools_result = await session.list_tools()
                     state.connected = True

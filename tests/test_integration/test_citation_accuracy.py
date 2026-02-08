@@ -9,7 +9,7 @@ These tests verify that all policy citations in generated reviews
 are grounded in actual RAG results and follow correct format.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -321,7 +321,7 @@ class TestHallucinationPrevention:
 
         mock_mcp.call_tool.side_effect = search_side_effect
 
-        comparer = PolicyComparer(mock_mcp, "2025-01-20")
+        PolicyComparer(mock_mcp, "2025-01-20")
 
         # Would be called during compare()
         # All queried sources should be tracked in revisions_used

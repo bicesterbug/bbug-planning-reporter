@@ -10,7 +10,7 @@ Implements test scenarios:
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import fakeredis.aioredis
 import pytest
@@ -18,7 +18,6 @@ import pytest
 from src.shared.redis_client import RedisClient
 from src.worker.letter_jobs import letter_job
 from src.worker.letter_prompt import build_letter_prompt
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

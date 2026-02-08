@@ -6,7 +6,6 @@ Implements:
 - [foundation-api:CherwellScraperMCP/TS-07] Transient error retry
 """
 
-import asyncio
 import time
 
 import httpx
@@ -40,7 +39,7 @@ class TestRateLimiting:
         Then: Requests are spaced by rate limit delay
         """
         # Mock endpoints
-        route = respx.get(f"{base_url}/test").mock(return_value=httpx.Response(200, text="OK"))
+        respx.get(f"{base_url}/test").mock(return_value=httpx.Response(200, text="OK"))
 
         request_times = []
 
@@ -117,7 +116,7 @@ class TestRetryBehavior:
                 return httpx.Response(503, text="Service Unavailable")
             return httpx.Response(200, text="<html><body>Success</body></html>")
 
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/25/00001/FUL").mock(
             side_effect=server_error_then_ok
         )
 
@@ -137,7 +136,7 @@ class TestRetryBehavior:
         When: Make request
         Then: Fails after max retries with descriptive error
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/25/00001/FUL").mock(
             return_value=httpx.Response(503, text="Service Unavailable")
         )
 
@@ -188,7 +187,7 @@ class TestApplicationNotFound:
         When: Fetch application
         Then: Raises ApplicationNotFoundError
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/99/99999/XXX").mock(
             return_value=httpx.Response(404, text="Not Found")
         )
 
@@ -209,7 +208,7 @@ class TestApplicationNotFound:
         When: Fetch application
         Then: Raises ApplicationNotFoundError
         """
-        respx.get(f"{base_url}/online-applications/applicationDetails.do").mock(
+        respx.get(f"{base_url}/Planning/Display/99/99999/XXX").mock(
             return_value=httpx.Response(
                 200,
                 text="<html><body>Application not found. Please check the reference.</body></html>",

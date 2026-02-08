@@ -287,8 +287,7 @@ class TestTransientErrorRetry:
         async def mock_sleep(seconds):
             pass
 
-        with patch("asyncio.sleep", mock_sleep):
-            with pytest.raises(ClaudeClientError) as exc_info:
+        with patch("asyncio.sleep", mock_sleep), pytest.raises(ClaudeClientError) as exc_info:
                 await client.send_message(
                     messages=[{"role": "user", "content": "Hello"}],
                 )

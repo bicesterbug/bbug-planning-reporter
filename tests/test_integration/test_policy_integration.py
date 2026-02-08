@@ -6,9 +6,7 @@ Implements test scenarios from [policy-knowledge-base:ITS-01] through [ITS-08]
 
 import contextlib
 import json
-import uuid
 from datetime import UTC, date, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import chromadb

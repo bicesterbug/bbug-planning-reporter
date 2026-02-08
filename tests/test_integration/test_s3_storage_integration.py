@@ -16,11 +16,10 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from src.agent.orchestrator import AgentOrchestrator, ApplicationMetadata, DocumentIngestionResult
+from src.agent.orchestrator import AgentOrchestrator
 from src.shared.storage import InMemoryStorageBackend, LocalStorageBackend, StorageUploadError
 from src.worker.letter_jobs import letter_job
 from src.worker.review_jobs import process_review
-
 
 # ---------------------------------------------------------------------------
 # Helpers

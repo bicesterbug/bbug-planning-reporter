@@ -18,7 +18,6 @@ from src.agent.claude_client import ClaudeResponse, TokenUsage
 from src.agent.generator import ApplicationSummary, ReviewGenerator, ReviewMetadata
 from src.agent.policy_comparer import PolicyComparer, PolicyComparisonResult
 
-
 # Performance thresholds from specification
 MAX_REVIEW_TIME_SECONDS = 300  # 5 minutes
 MAX_TOKENS_PER_REVIEW = 50000
@@ -221,7 +220,7 @@ class TestTokenOptimization:
         mock_mcp = AsyncMock()
         mock_claude = AsyncMock()
 
-        assessor = ReviewAssessor(mock_mcp, mock_claude, "test_ref")
+        ReviewAssessor(mock_mcp, mock_claude, "test_ref")
 
         # The assessor should limit excerpts to top 10 results
         # This is verified by the implementation using [:10] slice

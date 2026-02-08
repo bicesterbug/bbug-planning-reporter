@@ -7,7 +7,6 @@ Verifies [review-output-fixes:DocumentFilter/TS-01] through [review-output-fixes
 Verifies [review-output-fixes:ITS-01]
 """
 
-from datetime import date
 from pathlib import Path
 
 import pytest

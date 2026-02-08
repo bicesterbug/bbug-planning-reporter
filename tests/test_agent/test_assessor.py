@@ -4,17 +4,14 @@ Tests for review assessor.
 Implements [agent-integration:ReviewAssessor/TS-01] through [TS-10]
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.agent.assessor import (
-    AspectAssessment,
     AspectName,
     AspectRating,
-    AssessmentResult,
     ReviewAssessor,
-    SearchResult,
 )
 
 
@@ -468,7 +465,7 @@ class TestCompleteAssessment:
 
         # Should have all 4 aspects assessed
         assert len(result.aspects) == 4
-        assert set(a.name for a in result.aspects) == {
+        assert {a.name for a in result.aspects} == {
             AspectName.CYCLE_PARKING,
             AspectName.CYCLE_ROUTES,
             AspectName.JUNCTION_DESIGN,

@@ -6,25 +6,6 @@ Phase 4 (agent-integration) implements the AI-powered review workflow
 that coordinates multiple MCP servers to produce cycling advocacy reviews.
 """
 
-from src.agent.claude_client import (
-    ClaudeClient,
-    ClaudeClientError,
-    ClaudeResponse,
-    TokenUsage,
-    ToolCall,
-)
-from src.agent.mcp_client import (
-    MCPClientManager,
-    MCPConnectionError,
-    MCPServerType,
-    MCPToolError,
-)
-from src.agent.progress import (
-    PHASE_WEIGHTS,
-    ProgressTracker,
-    ReviewPhase,
-    WorkflowState,
-)
 from src.agent.assessor import (
     AspectAssessment,
     AspectName,
@@ -33,6 +14,25 @@ from src.agent.assessor import (
     ReviewAssessor,
     SearchResult,
 )
+from src.agent.claude_client import (
+    ClaudeClient,
+    ClaudeClientError,
+    ClaudeResponse,
+    TokenUsage,
+    ToolCall,
+)
+from src.agent.generator import (
+    ApplicationSummary,
+    ReviewGenerator,
+    ReviewMetadata,
+    ReviewOutput,
+)
+from src.agent.mcp_client import (
+    MCPClientManager,
+    MCPConnectionError,
+    MCPServerType,
+    MCPToolError,
+)
 from src.agent.policy_comparer import (
     ComplianceItem,
     PolicyComparer,
@@ -40,11 +40,11 @@ from src.agent.policy_comparer import (
     PolicyRevision,
     PolicySearchResult,
 )
-from src.agent.generator import (
-    ApplicationSummary,
-    ReviewGenerator,
-    ReviewMetadata,
-    ReviewOutput,
+from src.agent.progress import (
+    PHASE_WEIGHTS,
+    ProgressTracker,
+    ReviewPhase,
+    WorkflowState,
 )
 from src.agent.templates import ReviewTemplates
 

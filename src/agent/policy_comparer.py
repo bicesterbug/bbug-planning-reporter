@@ -19,7 +19,6 @@ Implements:
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
 
 import structlog
 
@@ -155,7 +154,6 @@ class PolicyComparer:
     async def compare(
         self,
         assessments: list[AspectAssessment],
-        application_type: str | None = None,
     ) -> PolicyComparisonResult:
         """
         Compare assessment results against policy requirements.
@@ -165,7 +163,6 @@ class PolicyComparer:
 
         Args:
             assessments: List of aspect assessments from ReviewAssessor.
-            application_type: Type of application (affects which policies apply).
 
         Returns:
             PolicyComparisonResult with compliance matrix and revision tracking.
@@ -184,7 +181,7 @@ class PolicyComparer:
                 continue
 
             # Get policy requirements for this aspect
-            aspect_compliance = await self._compare_aspect(assessment, application_type)
+            aspect_compliance = await self._compare_aspect(assessment)
             result.compliance_matrix.extend(aspect_compliance)
 
         # Add revision tracking
@@ -201,7 +198,6 @@ class PolicyComparer:
     async def _compare_aspect(
         self,
         assessment: AspectAssessment,
-        application_type: str | None,
     ) -> list[ComplianceItem]:
         """
         Compare a single aspect against relevant policies.
@@ -237,7 +233,7 @@ class PolicyComparer:
                         policy_source=self._format_source(best_result.source),
                         policy_revision=best_result.revision_id,
                         compliant=compliant,
-                        notes=self._generate_compliance_notes(assessment, best_result),
+                        notes=self._generate_compliance_notes(assessment),
                         section_ref=best_result.section_ref,
                         evidence_chunk_id=best_result.chunk_id,
                     )
@@ -308,10 +304,10 @@ class PolicyComparer:
             self._revisions_used[key] = PolicyRevision(
                 source=result.source,
                 revision_id=result.revision_id,
-                version_label=self._get_version_label(result.source, result.revision_id),
+                version_label=self._get_version_label(result.revision_id),
             )
 
-    def _get_version_label(self, source: str, revision_id: str) -> str:
+    def _get_version_label(self, revision_id: str) -> str:
         """Generate a human-readable version label."""
         # Extract date from revision_id if present (e.g., rev_LTN120_2020_07 -> July 2020)
         if "_" in revision_id:
@@ -351,7 +347,6 @@ class PolicyComparer:
     def _generate_compliance_notes(
         self,
         assessment: AspectAssessment,
-        policy_result: PolicySearchResult,
     ) -> str:
         """Generate notes for a compliance item based on assessment."""
         if assessment.rating == AspectRating.GREEN:

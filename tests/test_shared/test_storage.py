@@ -24,7 +24,6 @@ from src.shared.storage import (
     create_storage_backend,
 )
 
-
 # ---------------------------------------------------------------------------
 # Protocol compliance
 # ---------------------------------------------------------------------------
@@ -174,8 +173,7 @@ class TestS3StorageBackend:
         mock_client.put_object.side_effect = Exception("Permanent failure")
         backend._client = mock_client
 
-        with patch("src.shared.storage.time.sleep"):
-            with pytest.raises(StorageUploadError) as exc_info:
+        with patch("src.shared.storage.time.sleep"), pytest.raises(StorageUploadError) as exc_info:
                 backend.upload(test_file, "key.pdf")
 
         assert exc_info.value.attempts == 3
@@ -209,30 +207,28 @@ class TestS3StorageBackend:
         mock_client = MagicMock()
         mock_client.head_bucket.side_effect = Exception("NoSuchBucket")
 
-        with patch("boto3.client", return_value=mock_client):
-            with pytest.raises(StorageConfigError, match="connectivity check failed"):
-                S3StorageBackend(
-                    endpoint_url="https://nyc3.digitaloceanspaces.com",
-                    bucket="nonexistent",
-                    access_key_id="key",
-                    secret_access_key="secret",
-                    validate_on_init=True,
-                )
+        with patch("boto3.client", return_value=mock_client), pytest.raises(StorageConfigError, match="connectivity check failed"):
+            S3StorageBackend(
+                endpoint_url="https://nyc3.digitaloceanspaces.com",
+                bucket="nonexistent",
+                access_key_id="key",
+                secret_access_key="secret",
+                validate_on_init=True,
+            )
 
     def test_startup_validation_unreachable(self):
         """Verifies [s3-document-storage:S3StorageBackend/TS-07] - Unreachable endpoint."""
         mock_client = MagicMock()
         mock_client.head_bucket.side_effect = ConnectionError("Could not connect")
 
-        with patch("boto3.client", return_value=mock_client):
-            with pytest.raises(StorageConfigError, match="connectivity check failed"):
-                S3StorageBackend(
-                    endpoint_url="https://bad-endpoint.example.com",
-                    bucket="bucket",
-                    access_key_id="key",
-                    secret_access_key="secret",
-                    validate_on_init=True,
-                )
+        with patch("boto3.client", return_value=mock_client), pytest.raises(StorageConfigError, match="connectivity check failed"):
+            S3StorageBackend(
+                endpoint_url="https://bad-endpoint.example.com",
+                bucket="bucket",
+                access_key_id="key",
+                secret_access_key="secret",
+                validate_on_init=True,
+            )
 
     def test_no_credentials_in_logs(self, tmp_path: Path):
         """Verifies [s3-document-storage:S3StorageBackend/TS-08] - No creds in error messages."""
@@ -402,11 +398,10 @@ class TestCreateStorageBackend:
             "S3_SECRET_ACCESS_KEY": "test-secret",
         }
 
-        with patch.dict(os.environ, env, clear=False):
-            with patch("boto3.client", return_value=mock_client):
-                backend = create_storage_backend()
-                assert isinstance(backend, S3StorageBackend)
-                assert backend.is_remote is True
+        with patch.dict(os.environ, env, clear=False), patch("boto3.client", return_value=mock_client):
+            backend = create_storage_backend()
+            assert isinstance(backend, S3StorageBackend)
+            assert backend.is_remote is True
 
     def test_partial_s3_config_raises(self):
         """Verifies [s3-document-storage:Factory/TS-03] - Partial config raises error."""
@@ -452,12 +447,11 @@ class TestCreateStorageBackend:
             "S3_KEY_PREFIX": "bbug-prod",
         }
 
-        with patch.dict(os.environ, env, clear=False):
-            with patch("boto3.client", return_value=mock_client):
-                backend = create_storage_backend()
-                assert isinstance(backend, S3StorageBackend)
-                url = backend.public_url("test.pdf")
-                assert "bbug-prod/test.pdf" in url
+        with patch.dict(os.environ, env, clear=False), patch("boto3.client", return_value=mock_client):
+            backend = create_storage_backend()
+            assert isinstance(backend, S3StorageBackend)
+            url = backend.public_url("test.pdf")
+            assert "bbug-prod/test.pdf" in url
 
     def test_default_prefix(self):
         """Factory uses 'planning' as default prefix."""

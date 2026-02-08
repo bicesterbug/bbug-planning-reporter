@@ -21,8 +21,7 @@ Implements:
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from enum import StrEnum
 
 import structlog
 
@@ -32,7 +31,7 @@ from src.agent.mcp_client import MCPClientManager, MCPToolError
 logger = structlog.get_logger(__name__)
 
 
-class AspectRating(str, Enum):
+class AspectRating(StrEnum):
     """Rating for a review aspect."""
 
     GREEN = "green"
@@ -41,7 +40,7 @@ class AspectRating(str, Enum):
     NOT_APPLICABLE = "n/a"
 
 
-class AspectName(str, Enum):
+class AspectName(StrEnum):
     """Names of review aspects."""
 
     CYCLE_PARKING = "Cycle Parking"
@@ -364,7 +363,7 @@ class ReviewAssessor:
                 if doc_type:
                     self._available_document_types.add(doc_type.lower())
 
-            result.documents_analysed = len(set(r.get("document_id") for r in results if r.get("document_id")))
+            result.documents_analysed = len({r.get("document_id") for r in results if r.get("document_id")})
 
         except MCPToolError as e:
             logger.warning("Could not check document types", error=str(e))

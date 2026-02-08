@@ -24,7 +24,7 @@ from typing import Any
 import structlog
 
 from src.agent.assessor import AspectAssessment, AspectName, AspectRating, AssessmentResult
-from src.agent.policy_comparer import ComplianceItem, PolicyComparisonResult, PolicyRevision
+from src.agent.policy_comparer import ComplianceItem, PolicyComparisonResult
 
 logger = structlog.get_logger(__name__)
 
@@ -148,7 +148,6 @@ class ReviewGenerator:
         suggested_conditions = self._generate_conditions(
             overall_rating,
             assessment_result.aspects,
-            policy_result.compliance_matrix,
         )
 
         # Build metadata
@@ -341,7 +340,6 @@ class ReviewGenerator:
         self,
         overall_rating: str,
         aspects: list[AspectAssessment],
-        compliance_matrix: list[ComplianceItem],
     ) -> list[str]:
         """
         Generate suggested planning conditions.

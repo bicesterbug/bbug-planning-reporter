@@ -118,6 +118,9 @@ ignore = [
     "B904",   # raise without from inside except
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ARG001", "ARG002"]  # pytest fixtures and callback signatures
+
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
 

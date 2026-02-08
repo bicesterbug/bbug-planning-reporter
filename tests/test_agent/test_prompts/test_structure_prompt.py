@@ -6,7 +6,6 @@ Verifies [structured-review-output:StructureCallPrompt/TS-01] through [TS-03]
 
 from src.agent.prompts.structure_prompt import build_structure_prompt
 
-
 APP_SUMMARY = (
     "Reference: 25/01178/REM\n"
     "Address: Land at Test Site, Bicester\n"

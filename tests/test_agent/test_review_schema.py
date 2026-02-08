@@ -11,11 +11,8 @@ from pydantic import ValidationError
 
 from src.agent.review_schema import (
     ComplianceItem,
-    KeyDocumentItem,
-    ReviewAspectItem,
     ReviewStructure,
 )
-
 
 VALID_STRUCTURE_JSON = {
     "overall_rating": "red",

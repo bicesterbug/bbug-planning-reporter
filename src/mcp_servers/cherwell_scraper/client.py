@@ -398,9 +398,7 @@ class CherwellClient:
         if any(indicator in lower_html for indicator in not_found_indicators):
             return True
         # New portal redirects to search page for invalid references
-        if "planning application search" in lower_html and "summaryTbl" not in lower_html:
-            return True
-        return False
+        return "planning application search" in lower_html and "summaryTbl" not in lower_html
 
     @property
     def base_url(self) -> str:

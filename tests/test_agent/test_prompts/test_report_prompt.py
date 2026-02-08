@@ -8,7 +8,6 @@ import json
 
 from src.agent.prompts.report_prompt import build_report_prompt
 
-
 SAMPLE_STRUCTURE = {
     "overall_rating": "red",
     "aspects": [

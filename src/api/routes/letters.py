@@ -8,7 +8,7 @@ Implements [response-letter:FR-008] - Retrieve generated letter
 Implements [response-letter:NFR-004] - Authentication (via middleware)
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -19,10 +19,8 @@ from src.api.dependencies import ArqPoolDep, RedisClientDep
 from src.api.schemas.letter import (
     LetterRequest,
     LetterResponse,
-    LetterStance,
     LetterStatus,
     LetterSubmitResponse,
-    LetterTone,
 )
 
 logger = structlog.get_logger(__name__)

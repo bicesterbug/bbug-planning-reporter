@@ -4,7 +4,6 @@ Tests for document filtering in MCP server.
 Verifies [document-filtering:CherwellScraperMCP/TS-01] through TS-04
 """
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

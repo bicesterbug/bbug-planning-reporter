@@ -11,8 +11,8 @@ Implements:
 - [agent-integration:ProgressTracker/TS-05] Persist state to Redis
 """
 
+import contextlib
 import json
-import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -495,10 +495,8 @@ class ProgressTracker:
 
         # Clean up Redis state
         if self._redis:
-            try:
+            with contextlib.suppress(Exception):
                 await self._redis.delete(self._state_key())
-            except Exception:
-                pass
 
         logger.info(
             "Workflow completed",

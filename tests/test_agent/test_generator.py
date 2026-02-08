@@ -11,7 +11,6 @@ from src.agent.generator import (
     ApplicationSummary,
     ReviewGenerator,
     ReviewMetadata,
-    ReviewOutput,
 )
 from src.agent.policy_comparer import ComplianceItem, PolicyComparisonResult, PolicyRevision
 

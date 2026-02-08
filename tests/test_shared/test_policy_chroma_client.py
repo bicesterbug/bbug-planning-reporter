@@ -21,10 +21,9 @@ def chroma_client():
     """Create an in-memory ChromaDB client for testing with fresh collection."""
     client = chromadb.Client(settings=Settings(anonymized_telemetry=False))
     # Delete collection if exists to ensure clean state
-    try:
+    import contextlib
+    with contextlib.suppress(Exception):
         client.delete_collection(PolicyChromaClient.COLLECTION_NAME)
-    except Exception:
-        pass
     return PolicyChromaClient(client=client)
 
 

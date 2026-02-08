@@ -11,11 +11,7 @@ import pytest
 
 from src.agent.assessor import AspectAssessment, AspectName, AspectRating
 from src.agent.policy_comparer import (
-    ComplianceItem,
     PolicyComparer,
-    PolicyComparisonResult,
-    PolicyRevision,
-    PolicySearchResult,
 )
 
 
@@ -406,12 +402,12 @@ class TestVersionLabeling:
 
     def test_version_label_from_revision_id(self, policy_comparer):
         """Test extracting human-readable version label from revision ID."""
-        label = policy_comparer._get_version_label("LTN_1_20", "rev_LTN120_2020_07")
+        label = policy_comparer._get_version_label("rev_LTN120_2020_07")
         assert "July" in label or "2020" in label
 
     def test_version_label_fallback(self, policy_comparer):
         """Test fallback when revision ID format is unexpected."""
-        label = policy_comparer._get_version_label("UNKNOWN", "some_revision")
+        label = policy_comparer._get_version_label("some_revision")
         assert label == "some_revision"
 
 

@@ -387,7 +387,7 @@ class TestFullReviewRendering:
 
         # Tables should have proper structure
         lines = result.split("\n")
-        table_lines = [l for l in lines if l.startswith("|")]
+        table_lines = [line for line in lines if line.startswith("|")]
         for table_line in table_lines:
             # Table lines should have matching pipes
             assert table_line.count("|") >= 2
