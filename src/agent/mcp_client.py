@@ -240,6 +240,11 @@ class MCPClientManager:
                     state.consecutive_failures = 0
                     return parsed
 
+            logger.warning(
+                "MCP tool returned empty content",
+                tool=tool_name,
+                server=server_type.value,
+            )
             state.connected = True
             state.consecutive_failures = 0
             return {}

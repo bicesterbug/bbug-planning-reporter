@@ -342,7 +342,7 @@ class AgentOrchestrator:
 
             if result.get("status") == "error":
                 raise OrchestratorError(
-                    f"Failed to fetch application: {result.get('message', 'Unknown error')}",
+                    f"Failed to fetch application: {result.get('message') or result.get('error') or 'Unknown error'}",
                     phase=ReviewPhase.FETCHING_METADATA,
                     recoverable=False,
                 )
@@ -534,7 +534,7 @@ class AgentOrchestrator:
                     else:
                         async with counter_lock:
                             failed_count += 1
-                        error_msg = result.get("message", "Unknown error")
+                        error_msg = result.get("message") or result.get("error") or "Unknown error"
                         await self._progress.record_error(
                             ReviewPhase.INGESTING_DOCUMENTS,
                             error_msg,

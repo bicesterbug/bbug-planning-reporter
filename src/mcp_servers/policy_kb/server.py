@@ -24,6 +24,7 @@ Implements:
 """
 
 import asyncio
+import json
 import os
 from datetime import date
 from pathlib import Path
@@ -214,11 +215,11 @@ class PolicyKBMCP:
                 else:
                     result = {"error": f"Unknown tool: {name}"}
 
-                return [TextContent(type="text", text=str(result))]
+                return [TextContent(type="text", text=json.dumps(result))]
 
             except Exception as e:
                 logger.exception("Tool call failed", tool=name, error=str(e))
-                return [TextContent(type="text", text=str({"error": str(e)}))]
+                return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
     async def _search_policy(self, input: SearchPolicyInput) -> dict[str, Any]:
         """

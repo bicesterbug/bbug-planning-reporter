@@ -4,6 +4,7 @@ Tests for DocumentStoreMCP server.
 Implements test scenarios from [document-processing:DocumentStoreMCP/TS-01] through [TS-12]
 """
 
+import json
 import uuid
 from pathlib import Path
 
@@ -481,3 +482,72 @@ class TestServerInitialization:
         # After getting clients, they should be initialized
         server._get_chroma_client()
         assert server._chroma_client is not None
+
+
+class TestCallToolJsonSerialization:
+    """Tests that the call_tool handler returns valid JSON strings."""
+
+    @pytest.mark.asyncio
+    async def test_ingest_success_returns_valid_json(
+        self, mcp_server: DocumentStoreMCP, sample_pdf: Path
+    ) -> None:
+        """
+        Given: A valid PDF is ingested via the call_tool handler
+        When: call_tool returns the result
+        Then: The TextContent text is valid JSON (not Python repr)
+        """
+        from mcp.types import CallToolRequest, CallToolRequestParams
+
+        handler = mcp_server.server.request_handlers.get(CallToolRequest)
+        assert handler is not None
+
+        request = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="ingest_document",
+                arguments={
+                    "file_path": str(sample_pdf),
+                    "application_ref": "25/99999/JSON",
+                    "document_type": "transport_assessment",
+                },
+            ),
+        )
+
+        server_result = await handler(request)
+        text = server_result.root.content[0].text
+
+        # Must be valid JSON
+        parsed = json.loads(text)
+        assert parsed["status"] == "success"
+        assert isinstance(parsed["chunks_created"], int)
+
+    @pytest.mark.asyncio
+    async def test_error_returns_valid_json(
+        self, mcp_server: DocumentStoreMCP
+    ) -> None:
+        """
+        Given: An invalid file path is provided
+        When: call_tool returns an error result
+        Then: The TextContent text is valid JSON
+        """
+        from mcp.types import CallToolRequest, CallToolRequestParams
+
+        handler = mcp_server.server.request_handlers.get(CallToolRequest)
+        assert handler is not None
+
+        request = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="ingest_document",
+                arguments={
+                    "file_path": "/nonexistent/file.pdf",
+                    "application_ref": "25/99999/JSON",
+                },
+            ),
+        )
+
+        server_result = await handler(request)
+        text = server_result.root.content[0].text
+
+        parsed = json.loads(text)
+        assert parsed["status"] == "error"

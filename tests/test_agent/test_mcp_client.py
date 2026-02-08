@@ -532,3 +532,25 @@ class TestAvailableTools:
             assert "search_policy" in tool_names
 
             await manager.close()
+
+
+class TestParseTextContent:
+    """Tests for MCPClientManager._parse_text_content static method."""
+
+    def test_parse_json_string(self):
+        """Valid JSON string is parsed into a dict."""
+        text = '{"status": "success", "chunks_created": 10}'
+        result = MCPClientManager._parse_text_content(text)
+        assert result == {"status": "success", "chunks_created": 10}
+
+    def test_parse_python_repr(self):
+        """Python repr string (single quotes, True/False/None) is parsed via ast.literal_eval."""
+        text = "{'status': 'success', 'contains_drawings': False, 'count': None}"
+        result = MCPClientManager._parse_text_content(text)
+        assert result == {"status": "success", "contains_drawings": False, "count": None}
+
+    def test_parse_plain_text_fallback(self):
+        """Non-parseable text falls back to {"text": ...}."""
+        text = "Something went wrong on the server"
+        result = MCPClientManager._parse_text_content(text)
+        assert result == {"text": "Something went wrong on the server"}

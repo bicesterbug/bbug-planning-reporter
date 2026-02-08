@@ -18,6 +18,7 @@ Implements:
 """
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -187,7 +188,7 @@ class CherwellScraperMCP:
                 else:
                     result = {"error": f"Unknown tool: {name}"}
 
-                return [TextContent(type="text", text=str(result))]
+                return [TextContent(type="text", text=json.dumps(result))]
 
             except ApplicationNotFoundError as e:
                 logger.warning(
@@ -198,7 +199,7 @@ class CherwellScraperMCP:
                 return [
                     TextContent(
                         type="text",
-                        text=str({
+                        text=json.dumps({
                             "status": "error",
                             "error_code": e.error_code,
                             "message": e.message,
@@ -216,7 +217,7 @@ class CherwellScraperMCP:
                 return [
                     TextContent(
                         type="text",
-                        text=str({
+                        text=json.dumps({
                             "status": "error",
                             "error_code": e.error_code,
                             "message": e.message,
@@ -229,7 +230,7 @@ class CherwellScraperMCP:
                 return [
                     TextContent(
                         type="text",
-                        text=str({
+                        text=json.dumps({
                             "status": "error",
                             "error_code": "internal_error",
                             "message": str(e),

@@ -8,6 +8,7 @@ Implements [document-processing:FR-009] - list_ingested_documents tool
 """
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -184,11 +185,11 @@ class DocumentStoreMCP:
                 else:
                     result = {"error": f"Unknown tool: {name}"}
 
-                return [TextContent(type="text", text=str(result))]
+                return [TextContent(type="text", text=json.dumps(result))]
 
             except Exception as e:
                 logger.exception("Tool call failed", tool=name, error=str(e))
-                return [TextContent(type="text", text=str({"error": str(e)}))]
+                return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
     async def _ingest_document(self, input: IngestDocumentInput) -> dict[str, Any]:
         """

@@ -2483,3 +2483,110 @@ class TestTwoPhaseReviewGeneration:
         assert content.full_markdown is not None
 
         await orchestrator.close()
+
+
+# ---------------------------------------------------------------------------
+# Error message extraction tests (document ingestion bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestErrorExtraction:
+    """Tests for improved error message extraction during document ingestion."""
+
+    @pytest.mark.asyncio
+    async def test_ingest_error_key_extraction(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_download_response,
+        sample_search_response,
+    ):
+        """
+        When call_tool returns {"error": "Connection lost"} (no "status"/"message"),
+        the orchestrator should record "Connection lost" as the error, not "Unknown error".
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_download_response,
+            {"error": "Connection lost"},                     # doc 1: error key only
+            {"status": "success", "chunks_created": 10},      # doc 2 succeeds
+            {"status": "success", "chunks_created": 5},       # doc 3 succeeds
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_error_key_test",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        assert orchestrator._ingestion_result.documents_ingested == 2
+
+        errors = orchestrator.progress.state.errors_encountered
+        assert len(errors) == 1
+        assert "Connection lost" in errors[0]["error"]
+        assert "Unknown error" not in errors[0]["error"]
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_ingest_empty_dict_response(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_download_response,
+        sample_search_response,
+    ):
+        """
+        When call_tool returns {} (empty dict, e.g. from transport failure),
+        the orchestrator should record "Unknown error" and count it as failed
+        without crashing.
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_download_response,
+            {},                                               # doc 1: empty dict
+            {"status": "success", "chunks_created": 10},      # doc 2 succeeds
+            {"status": "success", "chunks_created": 5},       # doc 3 succeeds
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_empty_dict_test",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        assert orchestrator._ingestion_result.documents_ingested == 2
+
+        errors = orchestrator.progress.state.errors_encountered
+        assert len(errors) == 1
+        assert "Unknown error" in errors[0]["error"]
+
+        await orchestrator.close()
