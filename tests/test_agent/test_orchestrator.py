@@ -8,8 +8,8 @@ Implements test scenarios from [key-documents:AgentOrchestrator._phase_generate_
 Implements test scenarios from [key-documents:ITS-01] through [ITS-02]
 Implements test scenarios from [s3-document-storage:AgentOrchestrator/TS-01] through [TS-05]
 Implements test scenarios from [s3-document-storage:DownloadPhase/TS-01] through [TS-02]
-Implements test scenarios from [review-output-fixes:AgentOrchestrator/TS-01] through [TS-03]
-Implements test scenarios from [review-output-fixes:ITS-02]
+Implements test scenarios from [structured-review-output:AgentOrchestrator/TS-01] through [TS-05]
+Implements test scenarios from [structured-review-output:ITS-01] through [ITS-03]
 """
 
 import json
@@ -145,21 +145,62 @@ def sample_search_response():
 
 
 def _make_claude_response(
-    markdown: str = "# Review\n## Application Summary\n...\n## Key Documents\n...",
-    key_documents_json: list | None = None,
+    text: str = "# Review\n## Application Summary\n...\n## Key Documents\n...",
     input_tokens: int = 1000,
     output_tokens: int = 2000,
 ):
     """Build a mock Anthropic Messages response."""
-    text = markdown
-    if key_documents_json is not None:
-        text += "\n\n```key_documents_json\n"
-        text += json.dumps(key_documents_json, indent=2)
-        text += "\n```"
-
     content_block = SimpleNamespace(text=text)
     usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
     return SimpleNamespace(content=[content_block], usage=usage)
+
+
+# Default structure call JSON used across tests
+SAMPLE_STRUCTURE_JSON = json.dumps({
+    "overall_rating": "amber",
+    "aspects": [
+        {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
+         "analysis": "Minimum spaces provided."},
+        {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
+         "analysis": "No off-site routes."},
+        {"name": "Junctions", "rating": "amber", "key_issue": "Limited detail",
+         "analysis": "Junction designs not provided."},
+        {"name": "Permeability", "rating": "amber", "key_issue": "Could improve",
+         "analysis": "Some permeability but gaps."},
+        {"name": "Policy Compliance", "rating": "amber", "key_issue": "Partial compliance",
+         "analysis": "Meets some but not all."},
+    ],
+    "policy_compliance": [
+        {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
+         "compliant": False, "notes": "Car-based design"},
+    ],
+    "recommendations": ["Provide cycle track"],
+    "suggested_conditions": [],
+    "key_documents": [
+        {"title": "Transport Assessment", "category": "Transport & Access",
+         "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
+    ],
+})
+
+
+def _make_two_phase_side_effect(
+    structure_json: str = SAMPLE_STRUCTURE_JSON,
+    markdown: str = "# Review\n## Application Summary\n...\n**Overall Rating:** AMBER",
+    structure_tokens: tuple[int, int] = (500, 1500),
+    report_tokens: tuple[int, int] = (1000, 3000),
+):
+    """Build side_effect for messages.create that handles structure + report calls."""
+    structure_resp = _make_claude_response(
+        text=structure_json,
+        input_tokens=structure_tokens[0],
+        output_tokens=structure_tokens[1],
+    )
+    report_resp = _make_claude_response(
+        text=markdown,
+        input_tokens=report_tokens[0],
+        output_tokens=report_tokens[1],
+    )
+    return [structure_resp, report_resp]
 
 
 def _search_side_effects(n: int = 7, response: dict | None = None):
@@ -230,14 +271,6 @@ class TestCompleteWorkflowExecution:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n## Application Summary\n...\n**Overall Rating:** AMBER\n## Key Documents\n...",
-            key_documents_json=[
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Analyses traffic impacts.", "url": "https://example.com/ta.pdf"},
-            ],
-        )
-
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,   # Phase 1
             sample_download_response,      # Phase 2
@@ -249,7 +282,7 @@ class TestCompleteWorkflowExecution:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -283,10 +316,6 @@ class TestCompleteWorkflowExecution:
         """Test workflow when application has no documents."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER\nNo transport documents available.",
-        )
-
         mock_mcp_client.call_tool.side_effect = [
             {
                 "status": "success",
@@ -302,7 +331,7 @@ class TestCompleteWorkflowExecution:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -412,10 +441,6 @@ class TestPartialDocumentIngestion:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER",
-        )
-
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
             sample_download_response,
@@ -427,7 +452,7 @@ class TestPartialDocumentIngestion:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -555,10 +580,6 @@ class TestStatePersistence:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** GREEN",
-        )
-
         # Simulate saved state from previous run
         saved_state = {
             "review_id": "rev_test123",
@@ -583,7 +604,7 @@ class TestStatePersistence:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -682,10 +703,6 @@ class TestReconnectionOnTransientFailure:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER",
-        )
-
         mock_mcp_client.call_tool.side_effect = [
             MCPConnectionError(MCPServerType.CHERWELL_SCRAPER, "Connection lost"),  # Phase 1 fails
             sample_download_response,  # Phase 2
@@ -697,7 +714,7 @@ class TestReconnectionOnTransientFailure:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -804,10 +821,6 @@ class TestGracefulDegradation:
         """Test workflow continues with partial download failures."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER",
-        )
-
         download_response = {
             "status": "success",
             "downloads": [
@@ -852,7 +865,7 @@ class TestGracefulDegradation:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -882,10 +895,6 @@ class TestGracefulDegradation:
         """Test handling of ingest_document returning error status."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER",
-        )
-
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
             sample_download_response,
@@ -897,7 +906,7 @@ class TestGracefulDegradation:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -931,10 +940,6 @@ class TestGracefulDegradation:
         """Test that already_ingested status is counted as success."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** GREEN",
-        )
-
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
             sample_download_response,
@@ -946,7 +951,7 @@ class TestGracefulDegradation:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -1141,7 +1146,10 @@ class TestDownloadPhaseMetadata:
 
 class TestGenerateReviewKeyDocuments:
     """
-    Tests for key_documents generation in _phase_generate_review.
+    Tests for key_documents generation in _phase_generate_review (two-phase approach).
+
+    Key documents now come from the structure call JSON, not from
+    inline markdown parsing.
 
     Implements [key-documents:AgentOrchestrator._phase_generate_review/TS-01] through [TS-04]
     """
@@ -1157,23 +1165,39 @@ class TestGenerateReviewKeyDocuments:
         """
         Verifies [key-documents:AgentOrchestrator._phase_generate_review/TS-01]
 
-        Given: Claude returns valid key_documents JSON
+        Given: Structure call returns JSON with key_documents array
         When: Phase 5 completes
-        Then: ReviewResult.review contains "key_documents" list
+        Then: ReviewResult.review contains "key_documents" list from structure JSON
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        key_docs = [
-            {"title": "Transport Assessment", "category": "Transport & Access",
-             "summary": "Analyses traffic impacts.", "url": "https://example.com/ta.pdf"},
-            {"title": "Design and Access Statement", "category": "Design & Layout",
-             "summary": "Describes site layout.", "url": "https://example.com/das.pdf"},
-        ]
-
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER\n## Key Documents\n...",
-            key_documents_json=key_docs,
-        )
+        structure_json = json.dumps({
+            "overall_rating": "amber",
+            "aspects": [
+                {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
+                 "analysis": "Minimum spaces provided."},
+                {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
+                 "analysis": "No off-site routes."},
+                {"name": "Junctions", "rating": "amber", "key_issue": "Limited detail",
+                 "analysis": "Junction designs not provided."},
+                {"name": "Permeability", "rating": "amber", "key_issue": "Could improve",
+                 "analysis": "Some permeability but gaps."},
+                {"name": "Policy Compliance", "rating": "amber", "key_issue": "Partial compliance",
+                 "analysis": "Meets some but not all."},
+            ],
+            "policy_compliance": [
+                {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
+                 "compliant": False, "notes": "Car-based design"},
+            ],
+            "recommendations": ["Provide cycle track"],
+            "suggested_conditions": [],
+            "key_documents": [
+                {"title": "Transport Assessment", "category": "Transport & Access",
+                 "summary": "Analyses traffic impacts.", "url": "https://example.com/ta.pdf"},
+                {"title": "Design and Access Statement", "category": "Design & Layout",
+                 "summary": "Describes site layout.", "url": "https://example.com/das.pdf"},
+            ],
+        })
 
         # Pre-populate orchestrator state for Phase 5
         orchestrator = AgentOrchestrator(
@@ -1201,7 +1225,9 @@ class TestGenerateReviewKeyDocuments:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+                structure_json=structure_json,
+            )
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
@@ -1224,7 +1250,7 @@ class TestGenerateReviewKeyDocuments:
         """
         Verifies [key-documents:AgentOrchestrator._phase_generate_review/TS-02]
 
-        Given: Claude returns markdown with Key Documents section
+        Given: Report call returns markdown with Key Documents section
         When: Phase 5 completes
         Then: full_markdown contains "## Key Documents" section
         """
@@ -1239,14 +1265,6 @@ class TestGenerateReviewKeyDocuments:
             "## Assessment Summary\n**Overall Rating:** AMBER"
         )
 
-        claude_resp = _make_claude_response(
-            markdown=markdown,
-            key_documents_json=[
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Analyses traffic impacts.", "url": "https://example.com/ta.pdf"},
-            ],
-        )
-
         orchestrator = AgentOrchestrator(
             review_id="rev_test123",
             application_ref="25/01178/REM",
@@ -1260,20 +1278,20 @@ class TestGenerateReviewKeyDocuments:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+                markdown=markdown,
+            )
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
 
         full_md = orchestrator._review_result.review["full_markdown"]
         assert "## Key Documents" in full_md
-        # The key_documents_json block should be stripped from the markdown
-        assert "```key_documents_json" not in full_md
 
         await orchestrator.close()
 
     @pytest.mark.asyncio
-    async def test_graceful_fallback_on_parse_failure(
+    async def test_graceful_fallback_on_structure_failure(
         self,
         mock_mcp_client,
         mock_redis,
@@ -1282,16 +1300,11 @@ class TestGenerateReviewKeyDocuments:
         """
         Verifies [key-documents:AgentOrchestrator._phase_generate_review/TS-03]
 
-        Given: Claude response does not contain valid key_documents JSON
-        When: Phase 5 completes
+        Given: Structure call returns invalid JSON (no key_documents available)
+        When: Phase 5 falls back to single markdown call
         Then: ReviewResult.review["key_documents"] is None, review still succeeds
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
-
-        # No key_documents_json block in the response
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** RED\nNo key documents found.",
-        )
 
         orchestrator = AgentOrchestrator(
             review_id="rev_test123",
@@ -1306,7 +1319,11 @@ class TestGenerateReviewKeyDocuments:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            # First call (structure) returns invalid JSON, second call (fallback) returns markdown
+            mock_client_inst.messages.create.side_effect = [
+                _make_claude_response(text="This is not valid JSON"),
+                _make_claude_response(text="# Review\n**Overall Rating:** RED\nNo key documents found."),
+            ]
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
@@ -1334,10 +1351,6 @@ class TestGenerateReviewKeyDocuments:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER",
-        )
-
         orchestrator = AgentOrchestrator(
             review_id="rev_test123",
             application_ref="25/01178/REM",
@@ -1362,14 +1375,14 @@ class TestGenerateReviewKeyDocuments:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
 
-            # Check that the user prompt included the URL
-            call_args = mock_client_inst.messages.create.call_args
-            user_msg = call_args.kwargs["messages"][0]["content"]
+            # Check that the first (structure) call's user prompt included the URL
+            first_call_args = mock_client_inst.messages.create.call_args_list[0]
+            user_msg = first_call_args.kwargs["messages"][0]["content"]
             assert "planningregister.cherwell.gov.uk" in user_msg
             assert "Transport Assessment" in user_msg
 
@@ -1379,6 +1392,8 @@ class TestGenerateReviewKeyDocuments:
 class TestKeyDocumentsIntegration:
     """
     Integration tests for key documents flowing through the pipeline.
+
+    Key documents now come from the structure call JSON in the two-phase approach.
 
     Implements [key-documents:ITS-01] and [key-documents:ITS-02]
     """
@@ -1398,27 +1413,43 @@ class TestKeyDocumentsIntegration:
         Verifies [key-documents:ITS-01] - Key documents flow through pipeline
 
         Given: A review is submitted for an application with transport and design documents
-        When: Review completes
+        When: Review completes (two-phase: structure call returns key_documents in JSON)
         Then: ReviewResult.review contains key_documents with correct titles, categories, summaries, urls
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        key_docs = [
-            {"title": "Transport Assessment", "category": "Transport & Access",
-             "summary": "Analyses traffic impacts of the proposed development.",
-             "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1"},
-            {"title": "Design and Access Statement", "category": "Design & Layout",
-             "summary": "Describes site layout including cycle parking locations.",
-             "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3"},
-            {"title": "Site Plan", "category": "Design & Layout",
-             "summary": "Shows proposed layout with access roads.",
-             "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2"},
-        ]
-
-        claude_resp = _make_claude_response(
-            markdown="# Cycle Advocacy Review: 25/01178/REM\n\n## Application Summary\n...\n## Key Documents\n### Transport & Access\n- [Transport Assessment](https://...)\n  Analyses traffic impacts.\n\n## Assessment Summary\n**Overall Rating:** AMBER",
-            key_documents_json=key_docs,
-        )
+        structure_json = json.dumps({
+            "overall_rating": "amber",
+            "aspects": [
+                {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
+                 "analysis": "Minimum spaces."},
+                {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
+                 "analysis": "No routes."},
+                {"name": "Junctions", "rating": "amber", "key_issue": "Limited detail",
+                 "analysis": "Not provided."},
+                {"name": "Permeability", "rating": "amber", "key_issue": "Could improve",
+                 "analysis": "Gaps."},
+                {"name": "Policy Compliance", "rating": "amber", "key_issue": "Partial",
+                 "analysis": "Partial."},
+            ],
+            "policy_compliance": [
+                {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
+                 "compliant": False, "notes": "Car-based design"},
+            ],
+            "recommendations": ["Provide cycle track"],
+            "suggested_conditions": [],
+            "key_documents": [
+                {"title": "Transport Assessment", "category": "Transport & Access",
+                 "summary": "Analyses traffic impacts of the proposed development.",
+                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1"},
+                {"title": "Design and Access Statement", "category": "Design & Layout",
+                 "summary": "Describes site layout including cycle parking locations.",
+                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3"},
+                {"title": "Site Plan", "category": "Design & Layout",
+                 "summary": "Shows proposed layout with access roads.",
+                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2"},
+            ],
+        })
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
@@ -1431,7 +1462,9 @@ class TestKeyDocumentsIntegration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+                structure_json=structure_json,
+            )
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -1471,21 +1504,11 @@ class TestKeyDocumentsIntegration:
         """
         Verifies [key-documents:ITS-02] - Key documents in stored result
 
-        Given: A review completes with key_documents
+        Given: A review completes with key_documents from structure call
         When: Result is stored
         Then: Result JSON includes review.key_documents array with expected structure
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
-
-        key_docs = [
-            {"title": "Transport Assessment", "category": "Transport & Access",
-             "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
-        ]
-
-        claude_resp = _make_claude_response(
-            markdown="# Review\n**Overall Rating:** AMBER\n## Key Documents\n...",
-            key_documents_json=key_docs,
-        )
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
@@ -1498,7 +1521,8 @@ class TestKeyDocumentsIntegration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            # Default SAMPLE_STRUCTURE_JSON includes 1 key_document
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -1567,7 +1591,7 @@ class TestOrchestratorPassesToggleFlags:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
             mock_client_instance = MagicMock()
-            mock_client_instance.messages.create.return_value = _make_claude_response()
+            mock_client_instance.messages.create.side_effect = _make_two_phase_side_effect()
             mock_anthropic_cls.return_value = mock_client_instance
 
             orchestrator = AgentOrchestrator(
@@ -1616,7 +1640,7 @@ class TestOrchestratorPassesToggleFlags:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
             mock_client_instance = MagicMock()
-            mock_client_instance.messages.create.return_value = _make_claude_response()
+            mock_client_instance.messages.create.side_effect = _make_two_phase_side_effect()
             mock_anthropic_cls.return_value = mock_client_instance
 
             orchestrator = AgentOrchestrator(
@@ -2026,260 +2050,439 @@ class TestS3StorageIngestionPhase:
         await orchestrator.close()
 
 
-class TestStructuredReviewFieldParsing:
+class TestTwoPhaseReviewGeneration:
     """
-    Tests for structured review field parsing in _phase_generate_review.
+    Tests for two-phase review generation.
 
-    Implements [review-output-fixes:AgentOrchestrator/TS-01] through [TS-03]
-    Implements [review-output-fixes:ITS-02]
+    Implements [structured-review-output:AgentOrchestrator/TS-01] through [TS-05]
+    Implements [structured-review-output:ITS-01] through [ITS-03]
     """
 
     @pytest.mark.asyncio
-    async def test_structured_fields_populated(
-        self,
-        mock_mcp_client,
-        mock_redis,
-        monkeypatch,
-        sample_search_response,
+    async def test_two_phase_success(
+        self, mock_mcp_client, mock_redis, monkeypatch,
     ):
         """
-        Verifies [review-output-fixes:AgentOrchestrator/TS-01] - Structured fields populated.
+        Verifies [structured-review-output:AgentOrchestrator/TS-01] - Two-phase success.
 
-        Given: Claude returns markdown containing Assessment Summary table,
-               Policy Compliance Matrix, and Recommendations section
+        Given: Claude returns valid JSON for structure call, valid markdown for report call
         When: _phase_generate_review() completes
-        Then: result.review dict includes non-null aspects, policy_compliance,
-              and recommendations
+        Then: All structured fields populated from JSON; full_markdown from report call
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        markdown = (
-            "# Cycle Advocacy Review\n\n"
-            "## Assessment Summary\n"
-            "**Overall Rating:** RED\n\n"
-            "| Aspect | Rating | Key Issue |\n"
-            "|--------|--------|----------|\n"
-            "| Cycle Parking | AMBER | Design unverified |\n"
-            "| Cycle Routes | RED | No off-site connections |\n\n"
-            "## Policy Compliance Matrix\n\n"
-            "| Requirement | Policy Source | Compliant? | Notes |\n"
-            "|---|---|---|---|\n"
-            "| Prioritise sustainable transport | NPPF para 115 | ❌ NO | Car-based design |\n"
-            "| Facilitate public transport | NPPF para 117 | ⚠️ PARTIAL | Bus contribution only |\n\n"
-            "## Recommendations\n\n"
-            "1. **A41 Cycle Route**\n"
-            "   - Provide segregated cycle track\n\n"
-            "2. **Green Lane Connection**\n"
-            "   - Remove bollards\n"
-        )
+        structure_json = json.dumps({
+            "overall_rating": "red",
+            "aspects": [
+                {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
+                 "analysis": "Minimum spaces."},
+                {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
+                 "analysis": "No routes."},
+                {"name": "Junctions", "rating": "red", "key_issue": "No priority",
+                 "analysis": "Cars only."},
+                {"name": "Permeability", "rating": "red", "key_issue": "Car-only",
+                 "analysis": "No permeability."},
+                {"name": "Policy Compliance", "rating": "red", "key_issue": "Fails NPPF",
+                 "analysis": "Non-compliant."},
+            ],
+            "policy_compliance": [
+                {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
+                 "compliant": False, "notes": "Car-based"},
+                {"requirement": "Safe access", "policy_source": "NPPF 115(b)",
+                 "compliant": False, "notes": None},
+            ],
+            "recommendations": ["Provide cycle track", "Add Sheffield stands"],
+            "suggested_conditions": ["Submit cycle parking details"],
+            "key_documents": [
+                {"title": "Transport Assessment", "category": "Transport & Access",
+                 "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
+            ],
+        })
 
-        claude_resp = _make_claude_response(
-            markdown=markdown,
-            key_documents_json=[{"title": "TA", "category": "Transport", "summary": "S", "url": None}],
-        )
+        report_md = "# Cycle Advocacy Review: 25/01178/REM\n## Assessment Summary\n**Overall Rating:** RED"
 
         orchestrator = AgentOrchestrator(
-            review_id="rev_structured_test",
+            review_id="rev_2phase_test",
             application_ref="25/01178/REM",
             mcp_client=mock_mcp_client,
             redis_client=mock_redis,
         )
         await orchestrator.initialize()
-
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM",
-            address="Test Site",
-            proposal="Test proposal",
+            reference="25/01178/REM", address="Test", proposal="Test",
         )
         orchestrator._ingestion_result = DocumentIngestionResult(
-            documents_fetched=1,
-            documents_ingested=1,
+            documents_fetched=1, documents_ingested=1,
             document_paths=["/data/ta.pdf"],
             document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
         )
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+                structure_json=structure_json, markdown=report_md,
+            )
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
 
         review = orchestrator._review_result.review
 
-        # Aspects
+        # Structured fields from JSON
+        assert review["overall_rating"] == "red"
         assert review["aspects"] is not None
-        assert len(review["aspects"]) == 2
+        assert len(review["aspects"]) == 5
         assert review["aspects"][0]["name"] == "Cycle Parking"
         assert review["aspects"][0]["rating"] == "amber"
-        assert review["aspects"][1]["name"] == "Cycle Routes"
         assert review["aspects"][1]["rating"] == "red"
-
-        # Policy compliance
         assert review["policy_compliance"] is not None
         assert len(review["policy_compliance"]) == 2
         assert review["policy_compliance"][0]["compliant"] is False
-        assert review["policy_compliance"][1]["compliant"] is False
+        assert review["recommendations"] == ["Provide cycle track", "Add Sheffield stands"]
+        assert review["suggested_conditions"] == ["Submit cycle parking details"]
+        assert review["key_documents"] is not None
+        assert len(review["key_documents"]) == 1
+        assert review["key_documents"][0]["title"] == "Transport Assessment"
 
-        # Recommendations
-        assert review["recommendations"] is not None
-        assert len(review["recommendations"]) == 2
-        assert review["recommendations"][0] == "A41 Cycle Route"
-        assert review["recommendations"][1] == "Green Lane Connection"
-
-        # Suggested conditions (not in this review)
-        assert review["suggested_conditions"] is None
+        # Markdown from report call
+        assert review["full_markdown"] == report_md
+        assert "RED" in review["full_markdown"]
 
         await orchestrator.close()
 
     @pytest.mark.asyncio
-    async def test_parser_failure_graceful(
-        self,
-        mock_mcp_client,
-        mock_redis,
-        monkeypatch,
-        sample_search_response,
+    async def test_structure_call_invalid_json_fallback(
+        self, mock_mcp_client, mock_redis, monkeypatch,
     ):
         """
-        Verifies [review-output-fixes:AgentOrchestrator/TS-02] - Parser failure graceful.
+        Verifies [structured-review-output:AgentOrchestrator/TS-02] - Structure call invalid JSON.
 
-        Given: Claude returns markdown that doesn't contain recognisable tables
-        When: _phase_generate_review() completes
-        Then: result.review dict has null for aspects, policy_compliance,
-              recommendations, suggested_conditions; no exception raised
+        Given: Claude returns non-JSON text for structure call
+        When: Structure call parsing fails
+        Then: Falls back to single markdown call; structured fields are None
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        markdown = (
-            "# Cycle Advocacy Review\n\n"
-            "## Assessment Summary\n"
-            "**Overall Rating:** AMBER\n\n"
-            "This review has no tables or structured sections.\n"
-        )
-
-        claude_resp = _make_claude_response(markdown=markdown)
+        fallback_md = "# Review\n**Overall Rating:** AMBER\nSome review content."
 
         orchestrator = AgentOrchestrator(
-            review_id="rev_parse_fail_test",
+            review_id="rev_fallback_test",
             application_ref="25/01178/REM",
             mcp_client=mock_mcp_client,
             redis_client=mock_redis,
         )
         await orchestrator.initialize()
-
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM",
-            address="Test Site",
-            proposal="Test proposal",
+            reference="25/01178/REM", address="Test", proposal="Test",
         )
-        orchestrator._ingestion_result = DocumentIngestionResult(
-            documents_fetched=1,
-            documents_ingested=1,
-            document_paths=["/data/ta.pdf"],
-            document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
-        )
+        orchestrator._ingestion_result = DocumentIngestionResult()
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            # First call (structure) returns invalid JSON, second call (fallback) returns markdown
+            mock_client_inst.messages.create.side_effect = [
+                _make_claude_response(text="This is not JSON at all"),
+                _make_claude_response(text=fallback_md),
+            ]
             MockAnthropic.return_value = mock_client_inst
 
-            # Should not raise
             await orchestrator._phase_generate_review()
 
         review = orchestrator._review_result.review
 
+        assert review["full_markdown"] == fallback_md
+        assert review["overall_rating"] == "amber"
+        # Structured fields are None in fallback
         assert review["aspects"] is None
         assert review["policy_compliance"] is None
         assert review["recommendations"] is None
         assert review["suggested_conditions"] is None
-
-        # Existing fields should still be populated
-        assert review["overall_rating"] is not None
-        assert review["full_markdown"] is not None
-        assert review["summary"] is not None
+        assert review["key_documents"] is None
+        assert orchestrator._review_result.success is True
 
         await orchestrator.close()
 
     @pytest.mark.asyncio
-    async def test_existing_fields_preserved(
-        self,
-        mock_mcp_client,
-        mock_redis,
-        monkeypatch,
-        sample_search_response,
+    async def test_structure_call_api_error_fallback(
+        self, mock_mcp_client, mock_redis, monkeypatch,
     ):
         """
-        Verifies [review-output-fixes:AgentOrchestrator/TS-03] - Existing fields preserved.
-        Verifies [review-output-fixes:ITS-02] - End-to-end review parsing.
+        Verifies [structured-review-output:AgentOrchestrator/TS-03] - Structure call API error.
 
-        Given: Claude returns valid markdown with structured sections
-        When: _phase_generate_review() completes
-        Then: full_markdown, overall_rating, key_documents, summary are unchanged
+        Given: Claude API raises error on structure call
+        When: Structure call fails
+        Then: Falls back to single markdown call; review still completes
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        markdown = (
-            "# Cycle Advocacy Review\n\n"
-            "## Assessment Summary\n"
-            "**Overall Rating:** RED\n\n"
-            "| Aspect | Rating | Key Issue |\n"
-            "|--------|--------|----------|\n"
-            "| Parking | GREEN | Meets standards |\n\n"
-            "## Recommendations\n\n"
-            "1. **Improve routes**\n"
-        )
+        import anthropic as anthropic_mod
 
-        key_docs = [
-            {"title": "TA", "category": "Transport & Access",
-             "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
-        ]
-
-        claude_resp = _make_claude_response(
-            markdown=markdown,
-            key_documents_json=key_docs,
-        )
+        fallback_md = "# Review\n**Overall Rating:** RED\nFallback review."
 
         orchestrator = AgentOrchestrator(
-            review_id="rev_preserve_test",
+            review_id="rev_api_err_test",
             application_ref="25/01178/REM",
             mcp_client=mock_mcp_client,
             redis_client=mock_redis,
         )
         await orchestrator.initialize()
-
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM",
-            address="Test Site",
-            proposal="Test proposal",
+            reference="25/01178/REM", address="Test", proposal="Test",
         )
-        orchestrator._ingestion_result = DocumentIngestionResult(
-            documents_fetched=1,
-            documents_ingested=1,
-            document_paths=["/data/ta.pdf"],
-            document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
-        )
+        orchestrator._ingestion_result = DocumentIngestionResult()
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.return_value = claude_resp
+            # First call raises API error, second call (fallback) works
+            mock_client_inst.messages.create.side_effect = [
+                anthropic_mod.APIStatusError(
+                    message="Rate limited",
+                    response=MagicMock(status_code=429),
+                    body=None,
+                ),
+                _make_claude_response(text=fallback_md),
+            ]
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
 
         review = orchestrator._review_result.review
-
-        # Existing fields preserved
+        assert review["full_markdown"] == fallback_md
         assert review["overall_rating"] == "red"
-        assert review["key_documents"] is not None
-        assert len(review["key_documents"]) == 1
-        assert review["key_documents"][0]["title"] == "TA"
-        assert review["full_markdown"] is not None
-        assert "## Assessment Summary" in review["full_markdown"]
-        assert review["summary"] is not None
+        assert review["aspects"] is None  # Fallback has no structured fields
+        assert orchestrator._review_result.success is True
 
-        # New fields also populated
-        assert review["aspects"] is not None
-        assert review["recommendations"] is not None
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_token_usage_tracked(
+        self, mock_mcp_client, mock_redis, monkeypatch,
+    ):
+        """
+        Verifies [structured-review-output:AgentOrchestrator/TS-04] - Token usage tracked.
+
+        Given: Both calls complete successfully
+        When: Review result metadata examined
+        Then: input_tokens and output_tokens are the sum of both calls
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_token_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+        orchestrator._application = ApplicationMetadata(
+            reference="25/01178/REM", address="Test", proposal="Test",
+        )
+        orchestrator._ingestion_result = DocumentIngestionResult()
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+                structure_tokens=(500, 1500),
+                report_tokens=(1000, 3000),
+            )
+            MockAnthropic.return_value = mock_client_inst
+
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+        assert review["input_tokens"] == 500 + 1000  # sum of both
+        assert review["output_tokens"] == 1500 + 3000
+
+        metadata = orchestrator._review_result.metadata
+        assert metadata["total_tokens_used"] == 500 + 1500 + 1000 + 3000
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_review_dict_shape_preserved(
+        self, mock_mcp_client, mock_redis, monkeypatch,
+    ):
+        """
+        Verifies [structured-review-output:AgentOrchestrator/TS-05] - Review dict shape preserved.
+
+        Given: Two-phase completes
+        When: Review dict examined
+        Then: Contains all expected keys
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_shape_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+        orchestrator._application = ApplicationMetadata(
+            reference="25/01178/REM", address="Test", proposal="Test",
+        )
+        orchestrator._ingestion_result = DocumentIngestionResult()
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+        expected_keys = {
+            "overall_rating", "key_documents", "aspects", "policy_compliance",
+            "recommendations", "suggested_conditions", "full_markdown",
+            "summary", "model", "input_tokens", "output_tokens",
+        }
+        assert set(review.keys()) == expected_keys
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_structure_to_report_consistency(
+        self, mock_mcp_client, mock_redis, monkeypatch,
+    ):
+        """
+        Verifies [structured-review-output:ITS-01] - Structure-to-report consistency.
+
+        Given: Structure call returns JSON with known data
+        When: Report call generates markdown
+        Then: Structured fields and markdown both populated from same source
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        structure_json = json.dumps({
+            "overall_rating": "green",
+            "aspects": [
+                {"name": "Cycle Parking", "rating": "green", "key_issue": "Meets standards",
+                 "analysis": "Good provision."},
+                {"name": "Cycle Routes", "rating": "green", "key_issue": "Connected",
+                 "analysis": "Well connected."},
+                {"name": "Junctions", "rating": "green", "key_issue": "Safe design",
+                 "analysis": "Good junctions."},
+                {"name": "Permeability", "rating": "green", "key_issue": "Excellent",
+                 "analysis": "Fully permeable."},
+                {"name": "Policy Compliance", "rating": "green", "key_issue": "Compliant",
+                 "analysis": "Meets all policies."},
+            ],
+            "policy_compliance": [
+                {"requirement": "Cycle parking", "policy_source": "LTN 1/20",
+                 "compliant": True, "notes": "Sheffield stands provided"},
+            ],
+            "recommendations": ["Consider covered cycle parking"],
+            "suggested_conditions": [],
+            "key_documents": [],
+        })
+
+        report_md = "# Cycle Advocacy Review\n**Overall Rating:** GREEN\n## Assessment Summary\n..."
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_consistency_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+        orchestrator._application = ApplicationMetadata(reference="25/01178/REM")
+        orchestrator._ingestion_result = DocumentIngestionResult()
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+                structure_json=structure_json, markdown=report_md,
+            )
+            MockAnthropic.return_value = mock_client_inst
+
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+        assert review["overall_rating"] == "green"
+        assert review["aspects"][0]["rating"] == "green"
+        assert review["policy_compliance"][0]["compliant"] is True
+        assert review["full_markdown"] == report_md
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_fallback_produces_valid_review(
+        self, mock_mcp_client, mock_redis, monkeypatch,
+    ):
+        """
+        Verifies [structured-review-output:ITS-02] - Fallback produces valid review.
+
+        Given: Structure call mocked to return invalid JSON
+        When: Full _phase_generate_review() executes
+        Then: Review completes with full_markdown; structured fields are None
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_fallback_valid_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+        orchestrator._application = ApplicationMetadata(reference="25/01178/REM")
+        orchestrator._ingestion_result = DocumentIngestionResult()
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = [
+                _make_claude_response(text="not json"),
+                _make_claude_response(text="# Review\n**Overall Rating:** GREEN\nContent."),
+            ]
+            MockAnthropic.return_value = mock_client_inst
+
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+        assert review["full_markdown"] is not None
+        assert review["overall_rating"] is not None
+        assert review["aspects"] is None
+        assert orchestrator._review_result.success is True
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_review_dict_matches_api_schema(
+        self, mock_mcp_client, mock_redis, monkeypatch,
+    ):
+        """
+        Verifies [structured-review-output:ITS-03] - Review dict matches API schema.
+
+        Given: Two-phase completes
+        When: Review dict passed to ReviewContent Pydantic model
+        Then: Model validates without error
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        from src.api.schemas import ReviewContent
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_schema_test",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+        orchestrator._application = ApplicationMetadata(reference="25/01178/REM")
+        orchestrator._ingestion_result = DocumentIngestionResult()
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            await orchestrator._phase_generate_review()
+
+        review = orchestrator._review_result.review
+        # Should validate without error
+        content = ReviewContent.model_validate(review)
+        assert content.overall_rating is not None
+        assert content.aspects is not None
+        assert content.full_markdown is not None
 
         await orchestrator.close()

@@ -5,12 +5,12 @@ Implements [agent-integration:FR-001] - Establishes and maintains MCP server con
 Implements [agent-integration:FR-002] - Orchestrates complete review workflow
 Implements [agent-integration:NFR-001] - Workflow completes within time limits
 Implements [agent-integration:NFR-005] - Handles partial failures gracefully
-Implements [review-output-fixes:FR-003] - Parse aspects from markdown
-Implements [review-output-fixes:FR-004] - Parse policy compliance from markdown
-Implements [review-output-fixes:FR-005] - Parse recommendations from markdown
-Implements [review-output-fixes:FR-006] - Parse suggested conditions from markdown
-Implements [review-output-fixes:NFR-001] - Parsing failures must not break review generation
-Implements [review-output-fixes:NFR-003] - Existing fields preserved
+Implements [structured-review-output:FR-001] - Two-phase review generation
+Implements [structured-review-output:FR-004] - Structured fields from structure call JSON
+Implements [structured-review-output:FR-005] - ReviewMarkdownParser removed
+Implements [structured-review-output:FR-007] - Fallback on structure call failure
+Implements [structured-review-output:NFR-001] - Token budget split
+Implements [structured-review-output:NFR-002] - Duration logging per call
 
 Implements:
 - [agent-integration:AgentOrchestrator/TS-01] Successful MCP connections
@@ -21,28 +21,31 @@ Implements:
 - [agent-integration:AgentOrchestrator/TS-06] Cancellation handling
 - [agent-integration:AgentOrchestrator/TS-07] State persistence
 - [agent-integration:AgentOrchestrator/TS-08] All servers unavailable
-- [review-output-fixes:AgentOrchestrator/TS-01] Structured fields populated
-- [review-output-fixes:AgentOrchestrator/TS-02] Parser failure graceful
-- [review-output-fixes:AgentOrchestrator/TS-03] Existing fields preserved
+- [structured-review-output:AgentOrchestrator/TS-01] Two-phase success
+- [structured-review-output:AgentOrchestrator/TS-02] Structure call invalid JSON fallback
+- [structured-review-output:AgentOrchestrator/TS-03] Structure call API error fallback
+- [structured-review-output:AgentOrchestrator/TS-04] Token usage tracked
+- [structured-review-output:AgentOrchestrator/TS-05] Review dict shape preserved
 """
 
 import asyncio
 import json
 import os
-import re
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import anthropic
 import redis.asyncio as redis
 import structlog
+from pydantic import ValidationError
 
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPToolError
 from src.agent.progress import ProgressTracker, ReviewPhase
-from src.agent.review_parser import ReviewMarkdownParser
+from src.agent.prompts.report_prompt import build_report_prompt
+from src.agent.prompts.structure_prompt import build_structure_prompt
+from src.agent.review_schema import ReviewStructure
 from src.shared.storage import LocalStorageBackend, StorageBackend, StorageUploadError
 
 logger = structlog.get_logger(__name__)
@@ -665,11 +668,13 @@ class AgentOrchestrator:
             evidence_chunks=len(self._evidence_chunks),
         )
 
-    async def _phase_generate_review(self) -> None:
-        """Phase 5: Generate the review using Claude."""
-        await self._progress.update_sub_progress("Generating review with Claude")
+    def _build_evidence_context(self) -> tuple[str, str, str, str]:
+        """
+        Build the evidence context strings used by both the structure and report calls.
 
-        # Build context from gathered evidence
+        Returns:
+            Tuple of (app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text).
+        """
         app_summary = "No application metadata available."
         if self._application:
             app_summary = (
@@ -682,7 +687,6 @@ class AgentOrchestrator:
                 f"Documents Fetched: {len(self._application.documents)}"
             )
 
-        # Build evidence text
         app_evidence = []
         policy_evidence = []
         for chunk in getattr(self, "_evidence_chunks", []):
@@ -710,151 +714,21 @@ class AgentOrchestrator:
             if doc_lines:
                 ingested_docs_text = "\n".join(doc_lines)
 
-        system_prompt = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
+        return app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text
 
-For each application you review, you should:
+    async def _phase_generate_review(self) -> None:
+        """
+        Phase 5: Generate the review using two sequential Claude API calls.
 
-1. UNDERSTAND THE PROPOSAL — Summarise what is being proposed, its location, and scale.
+        Implements [structured-review-output:FR-001] - Two-phase generation
+        Implements [structured-review-output:FR-004] - Structured fields from JSON
+        Implements [structured-review-output:FR-005] - No ReviewMarkdownParser
+        Implements [structured-review-output:FR-007] - Fallback on structure call failure
+        Implements [structured-review-output:NFR-001] - Token budget split
+        Implements [structured-review-output:NFR-002] - Duration logging
+        """
+        await self._progress.update_sub_progress("Generating review with Claude")
 
-2. ASSESS TRANSPORT & MOVEMENT — Evaluate:
-   - Cycle parking provision (quantity, type, location, security, accessibility)
-   - Cycle route provision (on-site and connections to existing network)
-   - Whether cycle infrastructure meets LTN 1/20 standards
-   - Pedestrian permeability and filtered permeability for cycles
-   - Impact on existing cycle routes and rights of way
-   - Trip generation and modal split assumptions in any Transport Assessment
-
-3. COMPARE AGAINST POLICY — Reference specific policies:
-   - LTN 1/20 design standards (especially Table 5-2 on segregation triggers, Chapter 5 on geometric design, Chapter 6 on junctions)
-   - Cherwell Local Plan policies on sustainable transport
-   - NPPF paragraphs on sustainable transport
-   - Oxfordshire LCWIP route proposals
-   - Manual for Streets design principles
-
-4. IDENTIFY ISSUES — Flag:
-   - Non-compliance with LTN 1/20
-   - Missing or inadequate cycle parking
-   - Missed opportunities for active travel connections
-   - Hostile junction designs for cyclists
-   - Failure to provide filtered permeability
-   - Inadequate width or shared-use paths where segregation is warranted
-
-5. MAKE RECOMMENDATIONS — Suggest specific, constructive improvements with policy justification.
-
-Always cite specific policy references. Be constructive and evidence-based.
-Your review should be suitable for submission as a formal consultation response.
-
-Output your review in the following markdown format:
-
-# Cycle Advocacy Review: [Application Reference]
-
-## Application Summary
-- **Reference:** [ref]
-- **Site:** [address]
-- **Proposal:** [description]
-- **Applicant:** [name]
-- **Status:** [current status]
-
-## Key Documents
-
-Group the ingested documents by category (Transport & Access first, then Design & Layout, then Application Core) and list each as a markdown link with a 1-2 sentence summary:
-
-### Transport & Access
-- [Document Title](download_url)
-  Summary of content and cycling relevance...
-
-### Design & Layout
-- [Document Title](download_url)
-  Summary of content and cycling relevance...
-
-### Application Core
-- [Document Title](download_url)
-  Summary of content and cycling relevance...
-
-For documents with no download URL, render without a link: `- Document Title (no download available)`.
-Within each category, order documents by relevance to cycling advocacy (most relevant first).
-
-## Assessment Summary
-**Overall Rating:** RED / AMBER / GREEN
-
-| Aspect | Rating | Key Issue |
-|--------|--------|-----------|
-| Cycle Parking | ... | ... |
-| Cycle Routes | ... | ... |
-| Junctions | ... | ... |
-| Permeability | ... | ... |
-| Policy Compliance | ... | ... |
-
-## Detailed Assessment
-
-### 1. Cycle Parking
-[Analysis]
-
-### 2. Cycle Route Provision
-[Analysis]
-
-### 3. Junction Design
-[Analysis]
-
-### 4. Pedestrian & Cycle Permeability
-[Analysis]
-
-### 5. Transport Assessment Review
-[Analysis]
-
-## Policy Compliance Matrix
-
-| Requirement | Policy Source | Compliant? | Notes |
-|---|---|---|---|
-| ... | ... | ... | ... |
-
-## Recommendations
-1. [Specific recommendations with policy justification]
-
-## Suggested Conditions
-If the council is minded to approve, the following conditions are recommended:
-1. ...
-
----
-
-After the markdown review, also output the key documents as a JSON array in a fenced code block with the language tag `key_documents_json`. Example format:
-
-```key_documents_json
-[
-  {"title": "Transport Assessment", "category": "Transport & Access", "summary": "Assesses trip generation and modal split for the development. Proposes 5% cycling mode share.", "url": "https://..."},
-  {"title": "Design and Access Statement", "category": "Design & Layout", "summary": "Describes site layout including internal roads. No mention of cycle permeability.", "url": "https://..."}
-]
-```
-
-Rules for the key_documents_json block:
-- category MUST be one of: "Transport & Access", "Design & Layout", "Application Core"
-- Only include documents that are relevant to the cycling advocacy review
-- title should match the document title from the ingested documents list
-- url should be the download URL from the ingested documents list (use null if not available)
-- summary should be 1-2 sentences describing the document's content and its relevance to cycling/active travel
-- Order by relevance within each category
-"""
-
-        user_prompt = f"""Please review the following planning application from a cycling advocacy perspective.
-
-## Application Details
-{app_summary}
-
-## Ingested Documents
-The following documents were downloaded and ingested from the planning portal. Use this list to populate the Key Documents section and key_documents_json block in your response:
-{ingested_docs_text}
-
-## Evidence from Application Documents
-{app_evidence_text}
-
-## Relevant Policy Extracts
-{policy_evidence_text}
-
-Please provide a comprehensive cycle advocacy review based on the above information. If the application documents don't contain enough transport/cycling information, note this as a concern and base your review on what is available. Use the policy extracts to ground your assessment in specific policy requirements.
-
-Remember to include the key_documents_json code block after the markdown review."""
-
-        # Call Claude API
         model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
         api_key = os.getenv("ANTHROPIC_API_KEY")
 
@@ -865,83 +739,192 @@ Remember to include the key_documents_json code block after the markdown review.
                 recoverable=False,
             )
 
-        await self._progress.update_sub_progress("Calling Claude API")
+        app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text = (
+            self._build_evidence_context()
+        )
 
         try:
             client = anthropic.Anthropic(api_key=api_key)
-            message = client.messages.create(
-                model=model,
-                max_tokens=8000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
 
-            review_markdown = message.content[0].text
+            # --- Phase 5a: Structure call ---
+            structure: ReviewStructure | None = None
+            structure_json_str: str | None = None
+            structure_input_tokens = 0
+            structure_output_tokens = 0
 
-            # Parse overall rating from the markdown
-            overall_rating = "amber"  # default
-            rating_lower = review_markdown.lower()
-            if "overall rating:** red" in rating_lower or "overall rating:** 🔴" in rating_lower:
-                overall_rating = "red"
-            elif "overall rating:** green" in rating_lower or "overall rating:** 🟢" in rating_lower:
-                overall_rating = "green"
+            await self._progress.update_sub_progress("Structure call: getting JSON assessment")
 
-            # Implements [key-documents:FR-001] - Parse key_documents JSON from response
-            key_documents = None
-            kd_match = re.search(
-                r"```key_documents_json\s*\n(.*?)```",
-                review_markdown,
-                re.DOTALL,
-            )
-            if kd_match:
-                try:
-                    key_documents = json.loads(kd_match.group(1).strip())
-                    # Strip the JSON block from the markdown output
-                    review_markdown = review_markdown[:kd_match.start()].rstrip() + \
-                        review_markdown[kd_match.end():]
-                    review_markdown = review_markdown.rstrip()
-                    logger.info(
-                        "Parsed key_documents",
-                        review_id=self._review_id,
-                        count=len(key_documents),
-                    )
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(
-                        "Failed to parse key_documents JSON",
-                        review_id=self._review_id,
-                        error=str(e),
-                    )
-
-            # Implements [review-output-fixes:FR-003] through [FR-006]
-            # Parse structured fields from the markdown review
-            aspects = None
-            policy_compliance = None
-            recommendations = None
-            suggested_conditions = None
+            structure_start = time.monotonic()
             try:
-                review_parser = ReviewMarkdownParser()
-                aspects = review_parser.parse_aspects(review_markdown)
-                policy_compliance = review_parser.parse_policy_compliance(review_markdown)
-                recommendations = review_parser.parse_recommendations(review_markdown)
-                suggested_conditions = review_parser.parse_suggested_conditions(review_markdown)
+                system_prompt, user_prompt = build_structure_prompt(
+                    app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text
+                )
+                structure_msg = client.messages.create(
+                    model=model,
+                    max_tokens=4000,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                )
+                structure_input_tokens = structure_msg.usage.input_tokens
+                structure_output_tokens = structure_msg.usage.output_tokens
+
+                raw_text = structure_msg.content[0].text.strip()
+                # Strip markdown code fence if present
+                if raw_text.startswith("```"):
+                    lines = raw_text.split("\n")
+                    # Remove first and last lines (```json and ```)
+                    lines = lines[1:]
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    raw_text = "\n".join(lines)
+
+                structure = ReviewStructure.model_validate_json(raw_text)
+                structure_json_str = raw_text
 
                 logger.info(
-                    "Parsed structured review fields",
+                    "Structure call succeeded",
                     review_id=self._review_id,
-                    aspects_count=len(aspects) if aspects else 0,
-                    compliance_count=len(policy_compliance) if policy_compliance else 0,
-                    recommendations_count=len(recommendations) if recommendations else 0,
-                    conditions_count=len(suggested_conditions) if suggested_conditions else 0,
-                )
-            except Exception as e:
-                # Implements [review-output-fixes:NFR-001] - never break review generation
-                logger.warning(
-                    "Failed to parse structured review fields",
-                    review_id=self._review_id,
-                    error=str(e),
+                    structure_call_seconds=round(time.monotonic() - structure_start, 2),
+                    structure_call_tokens=structure_input_tokens + structure_output_tokens,
+                    aspects_count=len(structure.aspects),
+                    compliance_count=len(structure.policy_compliance),
+                    recommendations_count=len(structure.recommendations),
                 )
 
-            # Store review result on the ReviewResult object
+            except (ValidationError, json.JSONDecodeError, ValueError) as e:
+                logger.warning(
+                    "Structure call returned invalid JSON, falling back to single-call",
+                    review_id=self._review_id,
+                    error=str(e),
+                    structure_call_seconds=round(time.monotonic() - structure_start, 2),
+                )
+                structure = None
+
+            except anthropic.APIError as e:
+                logger.warning(
+                    "Structure call API error, falling back to single-call",
+                    review_id=self._review_id,
+                    error=str(e),
+                    structure_call_seconds=round(time.monotonic() - structure_start, 2),
+                )
+                structure = None
+
+            # --- Phase 5b: Report call (or fallback) ---
+            report_input_tokens = 0
+            report_output_tokens = 0
+
+            if structure is not None:
+                # Two-phase: report call with JSON as outline
+                await self._progress.update_sub_progress("Report call: writing markdown report")
+
+                report_start = time.monotonic()
+                report_system, report_user = build_report_prompt(
+                    structure_json_str, app_summary, ingested_docs_text,
+                    app_evidence_text, policy_evidence_text,
+                )
+                report_msg = client.messages.create(
+                    model=model,
+                    max_tokens=12000,
+                    system=report_system,
+                    messages=[{"role": "user", "content": report_user}],
+                )
+                report_input_tokens = report_msg.usage.input_tokens
+                report_output_tokens = report_msg.usage.output_tokens
+
+                review_markdown = report_msg.content[0].text
+
+                logger.info(
+                    "Report call succeeded",
+                    review_id=self._review_id,
+                    report_call_seconds=round(time.monotonic() - report_start, 2),
+                    report_call_tokens=report_input_tokens + report_output_tokens,
+                )
+
+                # Build structured fields from the validated structure call
+                overall_rating = structure.overall_rating
+                aspects = [
+                    {"name": a.name, "rating": a.rating, "key_issue": a.key_issue}
+                    for a in structure.aspects
+                ]
+                policy_compliance = [
+                    {
+                        "requirement": c.requirement,
+                        "policy_source": c.policy_source,
+                        "compliant": c.compliant,
+                        "notes": c.notes,
+                    }
+                    for c in structure.policy_compliance
+                ]
+                recommendations = list(structure.recommendations)
+                suggested_conditions = list(structure.suggested_conditions)
+                key_documents = [
+                    {
+                        "title": d.title,
+                        "category": d.category,
+                        "summary": d.summary,
+                        "url": d.url,
+                    }
+                    for d in structure.key_documents
+                ]
+
+            else:
+                # Fallback: single markdown call (no structured field extraction)
+                # Implements [structured-review-output:FR-007]
+                await self._progress.update_sub_progress(
+                    "Fallback: generating markdown review"
+                )
+
+                fallback_system, fallback_user = build_report_prompt(
+                    "{}",  # empty JSON — report call will just produce a review
+                    app_summary, ingested_docs_text,
+                    app_evidence_text, policy_evidence_text,
+                )
+                # Override the system prompt for fallback — don't reference JSON
+                fallback_system = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
+
+Write a comprehensive cycle advocacy review in markdown format with these sections:
+1. # Cycle Advocacy Review: [Reference]
+2. ## Application Summary
+3. ## Key Documents
+4. ## Assessment Summary (with Overall Rating and aspect table)
+5. ## Detailed Assessment (subsections per aspect)
+6. ## Policy Compliance Matrix (table)
+7. ## Recommendations (numbered list)
+8. ## Suggested Conditions (numbered list, if any)
+
+Always cite specific policy references. Be constructive and evidence-based."""
+
+                fallback_msg = client.messages.create(
+                    model=model,
+                    max_tokens=12000,
+                    system=fallback_system,
+                    messages=[{"role": "user", "content": fallback_user}],
+                )
+                report_input_tokens = fallback_msg.usage.input_tokens
+                report_output_tokens = fallback_msg.usage.output_tokens
+
+                review_markdown = fallback_msg.content[0].text
+
+                # Parse overall rating from the markdown (best effort)
+                overall_rating = "amber"
+                rating_lower = review_markdown.lower()
+                if "overall rating:** red" in rating_lower or "overall rating:** 🔴" in rating_lower:
+                    overall_rating = "red"
+                elif "overall rating:** green" in rating_lower or "overall rating:** 🟢" in rating_lower:
+                    overall_rating = "green"
+
+                # No structured fields available in fallback
+                aspects = None
+                policy_compliance = None
+                recommendations = None
+                suggested_conditions = None
+                key_documents = None
+
+            # Combined token tracking
+            total_input = structure_input_tokens + report_input_tokens
+            total_output = structure_output_tokens + report_output_tokens
+
+            # Store review result
             result = ReviewResult(
                 review_id=self._review_id,
                 application_ref=self._application_ref,
@@ -956,12 +939,12 @@ Remember to include the key_documents_json code block after the markdown review.
                     "full_markdown": review_markdown,
                     "summary": review_markdown[:500],
                     "model": model,
-                    "input_tokens": message.usage.input_tokens,
-                    "output_tokens": message.usage.output_tokens,
+                    "input_tokens": total_input,
+                    "output_tokens": total_output,
                 },
                 metadata={
                     "model": model,
-                    "total_tokens_used": message.usage.input_tokens + message.usage.output_tokens,
+                    "total_tokens_used": total_input + total_output,
                     "evidence_chunks_used": len(getattr(self, "_evidence_chunks", [])),
                     "documents_analysed": (
                         self._ingestion_result.documents_ingested
@@ -972,14 +955,16 @@ Remember to include the key_documents_json code block after the markdown review.
                 success=True,
             )
 
-            # Store on self so the run() method can access it
             self._review_result = result
 
             logger.info(
                 "Review generated",
                 review_id=self._review_id,
                 overall_rating=overall_rating,
-                tokens_used=message.usage.input_tokens + message.usage.output_tokens,
+                two_phase=structure is not None,
+                structure_call_tokens=structure_input_tokens + structure_output_tokens,
+                report_call_tokens=report_input_tokens + report_output_tokens,
+                total_tokens=total_input + total_output,
             )
 
         except anthropic.APIError as e:
