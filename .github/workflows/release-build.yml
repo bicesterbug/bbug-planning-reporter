@@ -111,13 +111,6 @@ jobs:
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
-      # Pull the base image we just built so the FROM directive resolves
-      - name: Pull base image
-        run: |
-          VERSION=${{ steps.version.outputs.tag }}
-          docker pull ${{ env.IMAGE_PREFIX }}/base:${VERSION}
-          docker tag ${{ env.IMAGE_PREFIX }}/base:${VERSION} cherwell-base:latest
-
       - name: Build and push ${{ matrix.service }}
         uses: docker/build-push-action@v6
         with:
@@ -125,3 +118,7 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # Resolve FROM cherwell-base:latest via GHCR instead of local daemon
+          # (buildx docker-container driver cannot see locally tagged images)
+          build-contexts: |
+            cherwell-base:latest=docker-image://${{ env.IMAGE_PREFIX }}/base:${{ steps.version.outputs.tag }}
