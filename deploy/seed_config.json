@@ -1,0 +1,94 @@
+{
+  "policies": [
+    {
+      "source": "LTN_1_20",
+      "title": "Cycle Infrastructure Design (LTN 1/20)",
+      "description": "Local Transport Note 1/20 - Cycle Infrastructure Design. National guidance on designing high-quality cycle infrastructure.",
+      "category": "national_guidance",
+      "revisions": [
+        {
+          "version_label": "July 2020",
+          "effective_from": "2020-07-27",
+          "effective_to": null,
+          "file": "ltn_1_20.pdf"
+        }
+      ]
+    },
+    {
+      "source": "NPPF",
+      "title": "National Planning Policy Framework",
+      "description": "The National Planning Policy Framework sets out the Government's planning policies for England.",
+      "category": "national_policy",
+      "revisions": [
+        {
+          "version_label": "December 2024",
+          "effective_from": "2024-12-12",
+          "effective_to": null,
+          "file": "nppf_2024_12.pdf"
+        },
+        {
+          "version_label": "September 2023",
+          "effective_from": "2023-09-05",
+          "effective_to": "2024-12-11",
+          "file": "nppf_2023_09.pdf"
+        }
+      ]
+    },
+    {
+      "source": "MANUAL_FOR_STREETS",
+      "title": "Manual for Streets",
+      "description": "Guidance on the design, construction, adoption and maintenance of streets.",
+      "category": "national_guidance",
+      "revisions": [
+        {
+          "version_label": "March 2007",
+          "effective_from": "2007-03-29",
+          "effective_to": null,
+          "file": "manual_for_streets.pdf"
+        }
+      ]
+    },
+    {
+      "source": "CHERWELL_LP_2015",
+      "title": "Cherwell Local Plan 2011-2031 (Part 1)",
+      "description": "The adopted Local Plan for Cherwell District Council.",
+      "category": "local_plan",
+      "revisions": [
+        {
+          "version_label": "July 2015",
+          "effective_from": "2015-07-20",
+          "effective_to": null,
+          "file": "cherwell_local_plan_2015.pdf"
+        }
+      ]
+    },
+    {
+      "source": "OCC_LTCP",
+      "title": "Oxfordshire Local Transport and Connectivity Plan",
+      "description": "Oxfordshire County Council's transport strategy.",
+      "category": "county_strategy",
+      "revisions": [
+        {
+          "version_label": "July 2022",
+          "effective_from": "2022-07-12",
+          "effective_to": null,
+          "file": "occ_ltcp_2022.pdf"
+        }
+      ]
+    },
+    {
+      "source": "BICESTER_LCWIP",
+      "title": "Bicester Local Cycling and Walking Infrastructure Plan",
+      "description": "LCWIP for Bicester identifying cycling and walking improvements.",
+      "category": "local_guidance",
+      "revisions": [
+        {
+          "version_label": "March 2020",
+          "effective_from": "2020-03-01",
+          "effective_to": null,
+          "file": "bicester_lcwip.pdf"
+        }
+      ]
+    }
+  ]
+}
