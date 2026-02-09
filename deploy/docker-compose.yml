@@ -176,6 +176,7 @@ services:
   fetch-policies:
     image: curlimages/curl:latest
     profiles: [seed]
+    user: "0:0"
     volumes:
       - policy-data:/data/policy
       - ./seed_config.json:/seed_config.json:ro
