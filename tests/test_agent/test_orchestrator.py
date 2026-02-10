@@ -1697,7 +1697,7 @@ def sample_s3_download_response():
         "downloads": [
             {
                 "document_id": "doc1",
-                "file_path": "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
                 "file_size": 150000,
                 "success": True,
                 "description": "Transport Assessment",
@@ -1706,7 +1706,7 @@ def sample_s3_download_response():
             },
             {
                 "document_id": "doc2",
-                "file_path": "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
+                "file_path": "/data/raw/25_01178_REM/002_Site Plan.pdf",
                 "file_size": 80000,
                 "success": True,
                 "description": "Site Plan",
@@ -1715,7 +1715,7 @@ def sample_s3_download_response():
             },
             {
                 "document_id": "doc3",
-                "file_path": "/tmp/raw/25_01178_REM/003_Design Statement.pdf",
+                "file_path": "/data/raw/25_01178_REM/003_Design Statement.pdf",
                 "file_size": 120000,
                 "success": True,
                 "description": "Design and Access Statement",
@@ -1770,21 +1770,21 @@ class TestS3StorageDownloadPhase:
 
         # Verify output_dir was /tmp/raw
         download_call = mock_mcp_client.call_tool.call_args_list[1]
-        assert download_call[0][1]["output_dir"] == "/tmp/raw"
+        assert download_call[0][1]["output_dir"] == "/data/raw"
 
         # Verify upload was called for each file
         assert backend.upload.call_count == 3
         upload_calls = backend.upload.call_args_list
         assert upload_calls[0][0] == (
-            Path("/tmp/raw/25_01178_REM/001_Transport Assessment.pdf"),
+            Path("/data/raw/25_01178_REM/001_Transport Assessment.pdf"),
             "25_01178_REM/001_Transport Assessment.pdf",
         )
         assert upload_calls[1][0] == (
-            Path("/tmp/raw/25_01178_REM/002_Site Plan.pdf"),
+            Path("/data/raw/25_01178_REM/002_Site Plan.pdf"),
             "25_01178_REM/002_Site Plan.pdf",
         )
         assert upload_calls[2][0] == (
-            Path("/tmp/raw/25_01178_REM/003_Design Statement.pdf"),
+            Path("/data/raw/25_01178_REM/003_Design Statement.pdf"),
             "25_01178_REM/003_Design Statement.pdf",
         )
 
@@ -1840,13 +1840,13 @@ class TestS3StorageDownloadPhase:
         meta = orchestrator._ingestion_result.document_metadata
 
         # doc1 and doc3 should have S3 URLs
-        doc1_path = "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf"
-        doc3_path = "/tmp/raw/25_01178_REM/003_Design Statement.pdf"
+        doc1_path = "/data/raw/25_01178_REM/001_Transport Assessment.pdf"
+        doc3_path = "/data/raw/25_01178_REM/003_Design Statement.pdf"
         assert "test-bucket.nyc3.digitaloceanspaces.com" in meta[doc1_path]["url"]
         assert "test-bucket.nyc3.digitaloceanspaces.com" in meta[doc3_path]["url"]
 
         # doc2 should keep Cherwell URL (upload failed)
-        doc2_path = "/tmp/raw/25_01178_REM/002_Site Plan.pdf"
+        doc2_path = "/data/raw/25_01178_REM/002_Site Plan.pdf"
         assert "cherwell.gov.uk" in meta[doc2_path]["url"]
 
         await orchestrator.close()
@@ -1940,8 +1940,8 @@ class TestS3StorageIngestionPhase:
         orchestrator._ingestion_result = DocumentIngestionResult(
             documents_fetched=2,
             document_paths=[
-                "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
-                "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
+                "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "/data/raw/25_01178_REM/002_Site Plan.pdf",
             ],
         )
 
@@ -1950,8 +1950,8 @@ class TestS3StorageIngestionPhase:
         # Verify delete_local was called for each successfully ingested file
         assert backend.delete_local.call_count == 2
         delete_paths = [str(c[0][0]) for c in backend.delete_local.call_args_list]
-        assert "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf" in delete_paths
-        assert "/tmp/raw/25_01178_REM/002_Site Plan.pdf" in delete_paths
+        assert "/data/raw/25_01178_REM/001_Transport Assessment.pdf" in delete_paths
+        assert "/data/raw/25_01178_REM/002_Site Plan.pdf" in delete_paths
 
         await orchestrator.close()
 
@@ -1988,8 +1988,8 @@ class TestS3StorageIngestionPhase:
         orchestrator._ingestion_result = DocumentIngestionResult(
             documents_fetched=2,
             document_paths=[
-                "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
-                "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
+                "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "/data/raw/25_01178_REM/002_Site Plan.pdf",
             ],
         )
 

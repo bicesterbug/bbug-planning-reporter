@@ -389,3 +389,147 @@ class TestSubmitReviewScopeControl:
         assert stored_job.options is not None
         assert stored_job.options.include_consultation_responses is True
         assert stored_job.options.include_public_comments is True
+
+
+class TestReviewProgressIntegration:
+    """
+    Integration tests for progress visibility on status endpoint.
+
+    Verifies [review-progress:ITS-01] and [review-progress:ITS-02]
+    """
+
+    def test_status_endpoint_returns_full_progress(self, client, mock_redis):
+        """
+        Verifies [review-progress:ITS-01] - Progress visible on status endpoint
+
+        Given: Review job with progress data in Redis (as synced by ProgressTracker)
+        When: GET /api/v1/reviews/{id}/status
+        Then: Response contains full progress object
+        """
+        job = ReviewJob(
+            review_id="rev_progress_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.PROCESSING,
+            created_at=datetime.now(UTC),
+            started_at=datetime.now(UTC),
+            progress=ReviewProgress(
+                phase=ProcessingPhase.DOWNLOADING_DOCUMENTS,
+                phase_number=2,
+                total_phases=5,
+                percent_complete=27,
+                detail="Downloaded 5 of 12 documents",
+            ),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_progress_test/status")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "processing"
+        assert data["progress"] is not None
+        assert data["progress"]["phase"] == "downloading_documents"
+        assert data["progress"]["phase_number"] == 2
+        assert data["progress"]["total_phases"] == 5
+        assert data["progress"]["percent_complete"] == 27
+        assert data["progress"]["detail"] == "Downloaded 5 of 12 documents"
+
+    def test_full_review_endpoint_returns_progress(self, client, mock_redis):
+        """
+        Verifies [review-progress:FR-002] - Progress on full review endpoint
+
+        Given: Review job with progress data in Redis
+        When: GET /api/v1/reviews/{id}
+        Then: Response contains full progress object
+        """
+        job = ReviewJob(
+            review_id="rev_progress_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.PROCESSING,
+            created_at=datetime.now(UTC),
+            started_at=datetime.now(UTC),
+            progress=ReviewProgress(
+                phase=ProcessingPhase.INGESTING_DOCUMENTS,
+                phase_number=3,
+                total_phases=5,
+                percent_complete=42,
+                detail="Ingesting document 8 of 22",
+            ),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_progress_test")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "processing"
+        assert data["progress"] is not None
+        assert data["progress"]["phase"] == "ingesting_documents"
+        assert data["progress"]["phase_number"] == 3
+        assert data["progress"]["percent_complete"] == 42
+        assert data["progress"]["detail"] == "Ingesting document 8 of 22"
+
+    def test_progress_null_after_completion(self, client, mock_redis):
+        """
+        Verifies [review-progress:ITS-02] - Progress null after completion
+
+        Given: Review job that has completed (progress cleared by ProgressTracker)
+        When: GET /api/v1/reviews/{id}/status
+        Then: Response contains progress: null
+        """
+        job = ReviewJob(
+            review_id="rev_done_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+            progress=None,
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_done_test/status")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "completed"
+        assert data["progress"] is None
+
+    def test_progress_null_for_queued_review(self, client, mock_redis):
+        """
+        Verifies [review-progress:FR-004] - Progress null for queued status
+
+        Given: Review job with status queued (not yet started)
+        When: GET /api/v1/reviews/{id}/status
+        Then: Response contains progress: null
+        """
+        job = ReviewJob(
+            review_id="rev_queued_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.QUEUED,
+            created_at=datetime.now(UTC),
+            progress=None,
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_queued_test/status")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "queued"
+        assert data["progress"] is None

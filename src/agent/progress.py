@@ -43,6 +43,15 @@ PHASE_WEIGHTS: dict[ReviewPhase, int] = {
     ReviewPhase.GENERATING_REVIEW: 15,
 }
 
+# Implements [review-progress:FR-001] - Phase to 1-based number mapping
+PHASE_NUMBER_MAP: dict[ReviewPhase, int] = {
+    ReviewPhase.FETCHING_METADATA: 1,
+    ReviewPhase.DOWNLOADING_DOCUMENTS: 2,
+    ReviewPhase.INGESTING_DOCUMENTS: 3,
+    ReviewPhase.ANALYSING_APPLICATION: 4,
+    ReviewPhase.GENERATING_REVIEW: 5,
+}
+
 
 @dataclass
 class PhaseInfo:
@@ -254,6 +263,49 @@ class ProgressTracker:
                 error=str(e),
             )
 
+    async def _sync_job_progress(self, progress: dict[str, Any] | None = None) -> None:
+        """
+        Sync progress data into the ReviewJob record so the API can read it.
+
+        Implements [review-progress:FR-001] - Populate progress on status endpoint
+        Implements [review-progress:FR-003] - Progress reflects current phase
+        Implements [review-progress:NFR-001] - Synchronous with phase updates
+
+        Args:
+            progress: Progress dict matching ReviewProgress schema, or None to clear.
+        """
+        if self._redis is None:
+            return
+
+        job_key = f"review:{self._review_id}"
+        try:
+            raw = await self._redis.get(job_key)
+            if raw is None:
+                return
+
+            job_data = json.loads(raw)
+            job_data["progress"] = progress
+
+            await self._redis.set(job_key, json.dumps(job_data))
+        except Exception as e:
+            logger.warning(
+                "Failed to sync job progress",
+                review_id=self._review_id,
+                error=str(e),
+            )
+
+    def _build_progress_dict(self) -> dict[str, Any]:
+        """Build a ReviewProgress-shaped dict from current state."""
+        phase = self._state.current_phase
+        detail = self._current_phase_info.sub_progress if self._current_phase_info else None
+        return {
+            "phase": phase.value if phase else None,
+            "phase_number": PHASE_NUMBER_MAP.get(phase, 1) if phase else 1,
+            "total_phases": 5,
+            "percent_complete": self.calculate_percent_complete(),
+            "detail": detail,
+        }
+
     async def start_workflow(self) -> None:
         """Start tracking the workflow."""
         self._state.started_at = datetime.now(UTC)
@@ -304,6 +356,9 @@ class ProgressTracker:
                 "percent_complete": self.calculate_percent_complete(),
             },
         )
+
+        # Implements [review-progress:FR-001] - Sync progress to ReviewJob
+        await self._sync_job_progress(self._build_progress_dict())
 
         logger.info(
             "Phase started",
@@ -384,6 +439,9 @@ class ProgressTracker:
                 "percent_complete": self.calculate_percent_complete(),
             },
         )
+
+        # Implements [review-progress:FR-003] - Sync sub-progress to ReviewJob
+        await self._sync_job_progress(self._build_progress_dict())
 
     def calculate_percent_complete(self) -> int:
         """
@@ -492,6 +550,9 @@ class ProgressTracker:
                 **metadata,
             },
         )
+
+        # Implements [review-progress:FR-004] - Clear progress on completion
+        await self._sync_job_progress(None)
 
         # Clean up Redis state
         if self._redis:

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.agent.progress import (
+    PHASE_NUMBER_MAP,
     PHASE_WEIGHTS,
     ProgressTracker,
     ReviewPhase,
@@ -470,3 +471,186 @@ class TestWorkflowState:
         assert state.current_phase == ReviewPhase.INGESTING_DOCUMENTS
         assert state.completed_phases == ["fetching_metadata"]
         assert state.documents_processed == 5
+
+
+class TestPhaseNumberMap:
+    """
+    Verifies [review-progress:PhaseNumberMap/TS-01] - All phases have sequential numbers.
+    """
+
+    def test_all_phases_have_sequential_numbers(self):
+        """
+        Verifies [review-progress:PhaseNumberMap/TS-01]
+
+        Given: PHASE_NUMBER_MAP constant
+        When: Inspect all entries
+        Then: 5 entries, values 1 through 5, matching ReviewPhase enum order
+        """
+        assert len(PHASE_NUMBER_MAP) == 5
+        assert set(PHASE_NUMBER_MAP.values()) == {1, 2, 3, 4, 5}
+
+        assert PHASE_NUMBER_MAP[ReviewPhase.FETCHING_METADATA] == 1
+        assert PHASE_NUMBER_MAP[ReviewPhase.DOWNLOADING_DOCUMENTS] == 2
+        assert PHASE_NUMBER_MAP[ReviewPhase.INGESTING_DOCUMENTS] == 3
+        assert PHASE_NUMBER_MAP[ReviewPhase.ANALYSING_APPLICATION] == 4
+        assert PHASE_NUMBER_MAP[ReviewPhase.GENERATING_REVIEW] == 5
+
+
+class TestSyncJobProgress:
+    """
+    Tests for _sync_job_progress writing progress into ReviewJob.
+
+    Implements [review-progress:ProgressTracker/TS-01] through [TS-05]
+    """
+
+    @pytest.fixture
+    def tracker_with_job(self, mock_redis):
+        """Create a ProgressTracker with a pre-existing ReviewJob in Redis."""
+        job_data = json.dumps({
+            "review_id": "rev_test123",
+            "application_ref": "25/01178/REM",
+            "status": "processing",
+            "progress": None,
+            "created_at": "2026-02-10T10:00:00+00:00",
+            "started_at": "2026-02-10T10:00:01+00:00",
+            "completed_at": None,
+            "error": None,
+            "result_key": None,
+            "options": None,
+            "webhook": None,
+        })
+
+        async def mock_get(key):
+            if key == "review:rev_test123":
+                return job_data
+            if key.startswith("workflow_state:"):
+                return None
+            return None
+
+        mock_redis.get = AsyncMock(side_effect=mock_get)
+
+        # Track what gets written back
+        mock_redis.written_data = {}
+
+        original_set = mock_redis.set
+
+        async def mock_set(key, value, **kwargs):
+            mock_redis.written_data[key] = value
+            # Update the mock_get to return the new value for job key
+            if key == "review:rev_test123":
+                nonlocal job_data
+                job_data = value
+
+        mock_redis.set = AsyncMock(side_effect=mock_set)
+
+        return ProgressTracker(
+            review_id="rev_test123",
+            application_ref="25/01178/REM",
+            redis_client=mock_redis,
+        )
+
+    @pytest.mark.asyncio
+    async def test_start_phase_syncs_progress_to_job(self, tracker_with_job, mock_redis):
+        """
+        Verifies [review-progress:ProgressTracker/TS-01]
+
+        Given: ProgressTracker with Redis, review job exists in Redis
+        When: start_phase(DOWNLOADING_DOCUMENTS) called
+        Then: review:{review_id} JSON contains progress with correct phase info
+        """
+        await tracker_with_job.start_phase(ReviewPhase.DOWNLOADING_DOCUMENTS)
+
+        # Check what was written to review:rev_test123
+        assert "review:rev_test123" in mock_redis.written_data
+        job = json.loads(mock_redis.written_data["review:rev_test123"])
+
+        assert job["progress"] is not None
+        assert job["progress"]["phase"] == "downloading_documents"
+        assert job["progress"]["phase_number"] == 2
+        assert job["progress"]["total_phases"] == 5
+        assert job["progress"]["percent_complete"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_sub_progress_syncs_to_job(self, tracker_with_job, mock_redis):
+        """
+        Verifies [review-progress:ProgressTracker/TS-02]
+
+        Given: ProgressTracker in DOWNLOADING_DOCUMENTS phase
+        When: update_sub_progress("Downloaded 5 of 12", current=5, total=12) called
+        Then: review:{review_id} JSON contains progress with detail
+        """
+        await tracker_with_job.start_phase(ReviewPhase.DOWNLOADING_DOCUMENTS)
+        await tracker_with_job.update_sub_progress(
+            "Downloaded 5 of 12 documents", current=5, total=12
+        )
+
+        job = json.loads(mock_redis.written_data["review:rev_test123"])
+
+        assert job["progress"] is not None
+        assert job["progress"]["detail"] == "Downloaded 5 of 12 documents"
+        assert job["progress"]["percent_complete"] > 0
+
+    @pytest.mark.asyncio
+    async def test_complete_workflow_clears_progress(self, tracker_with_job, mock_redis):
+        """
+        Verifies [review-progress:ProgressTracker/TS-03]
+
+        Given: ProgressTracker in final phase
+        When: complete_workflow(success=True) called
+        Then: review:{review_id} JSON contains progress = null
+        """
+        await tracker_with_job.start_phase(ReviewPhase.GENERATING_REVIEW)
+        await tracker_with_job.complete_workflow(success=True)
+
+        job = json.loads(mock_redis.written_data["review:rev_test123"])
+
+        assert job["progress"] is None
+
+    @pytest.mark.asyncio
+    async def test_sync_tolerates_missing_job_key(self, mock_redis):
+        """
+        Verifies [review-progress:ProgressTracker/TS-04]
+
+        Given: ProgressTracker with Redis
+        When: start_phase() called but review:{review_id} key does not exist
+        Then: No error raised, sync silently skipped
+        """
+        mock_redis.get = AsyncMock(return_value=None)
+
+        tracker = ProgressTracker(
+            review_id="rev_nonexistent",
+            application_ref="25/00001/F",
+            redis_client=mock_redis,
+        )
+
+        # Should not raise
+        await tracker.start_phase(ReviewPhase.FETCHING_METADATA)
+
+    @pytest.mark.asyncio
+    async def test_sync_tolerates_redis_failure(self, mock_redis):
+        """
+        Verifies [review-progress:ProgressTracker/TS-05]
+
+        Given: ProgressTracker with Redis that raises on GET
+        When: start_phase() called
+        Then: No error raised, sync failure logged as warning
+        """
+        call_count = 0
+
+        async def failing_get(key):
+            nonlocal call_count
+            call_count += 1
+            if key.startswith("review:"):
+                raise ConnectionError("Redis connection lost")
+            return None
+
+        mock_redis.get = AsyncMock(side_effect=failing_get)
+
+        tracker = ProgressTracker(
+            review_id="rev_test_fail",
+            application_ref="25/00001/F",
+            redis_client=mock_redis,
+        )
+
+        # Should not raise despite Redis failure
+        await tracker.start_phase(ReviewPhase.FETCHING_METADATA)

@@ -266,11 +266,15 @@ async def get_review_status(
             ),
         )
 
+    # Implements [review-progress:FR-001] - Return full progress on status endpoint
     progress = None
     if job.progress:
         progress = ReviewProgressResponse(
             phase=job.progress.phase.value if hasattr(job.progress.phase, 'value') else job.progress.phase,
+            phase_number=job.progress.phase_number,
+            total_phases=job.progress.total_phases,
             percent_complete=job.progress.percent_complete,
+            detail=job.progress.detail,
         )
 
     return ReviewStatusResponse(
