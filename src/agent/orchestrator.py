@@ -392,7 +392,9 @@ class AgentOrchestrator:
             # At 1 req/sec, can download up to 1800 documents before timeout
             # Implements [review-scope-control:FR-004] - Pass toggle flags to MCP tool
             # Implements [s3-document-storage:DownloadPhase/TS-01] and [TS-02]
-            output_dir = "/tmp/raw" if self._storage.is_remote else "/data/raw"
+            # Always use /data/raw — the scraper MCP downloads to the shared
+            # volume, so the path must be accessible from both containers.
+            output_dir = "/data/raw"
             download_args: dict[str, Any] = {
                 "application_ref": self._application_ref,
                 "output_dir": output_dir,
