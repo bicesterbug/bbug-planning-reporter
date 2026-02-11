@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import re
+
 import fitz  # PyMuPDF
 import structlog
 
@@ -96,6 +98,15 @@ class DocumentProcessor:
     # Supported file extensions
     SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp"}
 
+    # Filename patterns for architectural renderings where OCR is pointless
+    # (3D renders, CGIs, perspectives, bird's eye views, etc.)
+    _RENDERING_PATTERN = re.compile(
+        r"(?:bird.?s?\s*eye|perspective|aerial\s*view|cgi|"
+        r"3d\s*visual|artist.?s?\s*impression|photomontage|"
+        r"street\s*scene|render(?:ing)?(?:\s*\d+)?)",
+        re.IGNORECASE,
+    )
+
     def __init__(self, enable_ocr: bool = True) -> None:
         """
         Initialize the document processor.
@@ -105,6 +116,10 @@ class DocumentProcessor:
         """
         self.enable_ocr = enable_ocr
         self._ocr_available: bool | None = None
+
+    def _is_rendering(self, path: Path) -> bool:
+        """Return True if the filename indicates an architectural rendering."""
+        return bool(self._RENDERING_PATTERN.search(path.stem))
 
     def _check_ocr_available(self) -> bool:
         """Check if Tesseract OCR is available."""
@@ -167,6 +182,12 @@ class DocumentProcessor:
 
         Implements [document-processing:DocumentProcessor/TS-01] - Text layer extraction
         """
+        # Skip OCR for architectural renderings (perspectives, bird's eye views, etc.)
+        # These are 3D renders that produce no useful text via OCR.
+        skip_ocr = self._is_rendering(path)
+        if skip_ocr:
+            logger.info("Skipping OCR for rendering", file_path=str(path))
+
         try:
             doc = fitz.open(str(path))
         except Exception as e:
@@ -181,7 +202,7 @@ class DocumentProcessor:
         try:
             for page_num in range(len(doc)):
                 page = doc[page_num]
-                page_extraction = self._extract_page(page, page_num + 1)
+                page_extraction = self._extract_page(page, page_num + 1, skip_ocr=skip_ocr)
                 pages.append(page_extraction)
 
                 total_chars += page_extraction.char_count
@@ -224,7 +245,7 @@ class DocumentProcessor:
             total_word_count=total_words,
         )
 
-    def _extract_page(self, page: fitz.Page, page_number: int) -> PageExtraction:
+    def _extract_page(self, page: fitz.Page, page_number: int, *, skip_ocr: bool = False) -> PageExtraction:
         """
         Extract text from a single PDF page.
 
@@ -243,7 +264,7 @@ class DocumentProcessor:
         ocr_confidence = None
 
         # If minimal text extracted and OCR is enabled, try OCR
-        if char_count < self.MIN_CHARS_PER_PAGE and self.enable_ocr and self._check_ocr_available():
+        if not skip_ocr and char_count < self.MIN_CHARS_PER_PAGE and self.enable_ocr and self._check_ocr_available():
             ocr_text, confidence = self._ocr_page(page)
             if len(ocr_text.strip()) > char_count:
                 text = ocr_text

@@ -46,7 +46,9 @@ class ComplianceItem(BaseModel):
     @field_validator("compliant", mode="before")
     @classmethod
     def coerce_compliant(cls, v):
-        """Coerce string booleans to actual booleans."""
+        """Coerce string booleans and None to actual booleans."""
+        if v is None:
+            return False
         if isinstance(v, str):
             if v.lower() in ("true", "yes", "1"):
                 return True

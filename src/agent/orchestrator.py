@@ -519,6 +519,7 @@ class AgentOrchestrator:
                             "file_path": doc_path,
                             "application_ref": self._application_ref,
                         },
+                        timeout=float(os.getenv("INGEST_TIMEOUT", "600")),
                     )
 
                     if result.get("status") in ("success", "already_ingested"):
