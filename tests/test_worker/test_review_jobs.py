@@ -13,6 +13,7 @@ import pytest
 
 from src.shared.models import ReviewStatus
 from src.shared.storage import StorageUploadError
+from src.shared.models import ReviewJob, ReviewOptions, WebhookConfig
 from src.worker.review_jobs import (
     _handle_failure,
     _handle_success,
@@ -636,3 +637,99 @@ class TestProcessReviewPassesStorageBackend:
             # Verify orchestrator received storage_backend kwarg
             call_kwargs = mock_orch_cls.call_args[1]
             assert call_kwargs["storage_backend"] is mock_backend
+
+
+class TestWebhookFiring:
+    """Tests that webhook events are fired at the right points in the review lifecycle."""
+
+    @pytest.fixture
+    def webhook_config(self):
+        return WebhookConfig(
+            url="https://example.com/hook",
+            secret="test-secret",
+            events=["review.started", "review.completed", "review.failed"],
+        )
+
+    @pytest.fixture
+    def job_with_webhook(self, webhook_config):
+        return ReviewJob(
+            review_id="rev_wh_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.PROCESSING,
+            webhook=webhook_config,
+            created_at=datetime.now(UTC),
+        )
+
+    @pytest.mark.asyncio
+    async def test_started_and_completed_fired_on_success(
+        self, mock_redis_wrapper, sample_success_result, job_with_webhook,
+    ):
+        """Verify review.started + review.completed are fired on success path."""
+        mock_redis_wrapper.get_job = AsyncMock(return_value=job_with_webhook)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls, \
+             patch("src.worker.review_jobs.fire_webhook") as mock_fire:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            ctx = {"redis": AsyncMock(), "redis_client": mock_redis_wrapper}
+            await process_review(ctx=ctx, review_id="rev_wh_test", application_ref="25/01178/REM")
+
+            events_fired = [call.args[1] for call in mock_fire.call_args_list]
+            assert "review.started" in events_fired
+            assert "review.completed" in events_fired
+            assert "review.failed" not in events_fired
+
+    @pytest.mark.asyncio
+    async def test_failed_fired_on_exception(
+        self, mock_redis_wrapper, job_with_webhook,
+    ):
+        """Verify review.failed is fired when orchestrator raises."""
+        mock_redis_wrapper.get_job = AsyncMock(return_value=job_with_webhook)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls, \
+             patch("src.worker.review_jobs.fire_webhook") as mock_fire:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.side_effect = RuntimeError("boom")
+
+            ctx = {"redis": AsyncMock(), "redis_client": mock_redis_wrapper}
+            await process_review(ctx=ctx, review_id="rev_wh_test", application_ref="25/01178/REM")
+
+            events_fired = [call.args[1] for call in mock_fire.call_args_list]
+            assert "review.started" in events_fired
+            assert "review.failed" in events_fired
+
+    @pytest.mark.asyncio
+    async def test_webhook_none_when_job_has_no_webhook(
+        self, mock_redis_wrapper, sample_success_result,
+    ):
+        """Verify webhook=None is passed through when job has no webhook config."""
+        job_no_webhook = ReviewJob(
+            review_id="rev_no_wh",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.PROCESSING,
+            webhook=None,
+            created_at=datetime.now(UTC),
+        )
+        mock_redis_wrapper.get_job = AsyncMock(return_value=job_no_webhook)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls, \
+             patch("src.worker.review_jobs.fire_webhook") as mock_fire:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            ctx = {"redis": AsyncMock(), "redis_client": mock_redis_wrapper}
+            await process_review(ctx=ctx, review_id="rev_no_wh", application_ref="25/01178/REM")
+
+            # All fire_webhook calls should have webhook=None as first arg
+            for call in mock_fire.call_args_list:
+                assert call.args[0] is None

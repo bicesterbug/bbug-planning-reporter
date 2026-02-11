@@ -17,9 +17,10 @@ import redis.asyncio as redis
 import structlog
 
 from src.agent.orchestrator import AgentOrchestrator, ReviewResult
-from src.shared.models import ReviewStatus
+from src.shared.models import ReviewStatus, WebhookConfig
 from src.shared.redis_client import RedisClient
 from src.shared.storage import StorageBackend, create_storage_backend
+from src.worker.webhook import fire_webhook
 
 logger = structlog.get_logger(__name__)
 
@@ -64,16 +65,21 @@ async def process_review(
 
     # Implements [review-scope-control:FR-004] - Read options from Redis job
     options = None
+    webhook: WebhookConfig | None = None
     if redis_wrapper:
         job = await redis_wrapper.get_job(review_id)
-        if job and job.options:
-            options = job.options
-            logger.info(
-                "Review options loaded",
-                review_id=review_id,
-                include_consultation_responses=getattr(options, "include_consultation_responses", False),
-                include_public_comments=getattr(options, "include_public_comments", False),
-            )
+        if job:
+            if job.options:
+                options = job.options
+                logger.info(
+                    "Review options loaded",
+                    review_id=review_id,
+                    include_consultation_responses=getattr(options, "include_consultation_responses", False),
+                    include_public_comments=getattr(options, "include_public_comments", False),
+                )
+            webhook = job.webhook
+
+    fire_webhook(webhook, "review.started", review_id, {"application_ref": application_ref})
 
     # Implements [s3-document-storage:FR-001] - Create storage backend from environment
     storage = create_storage_backend()
@@ -91,9 +97,9 @@ async def process_review(
 
         # Store result
         if result.success:
-            return await _handle_success(result, redis_wrapper, storage)
+            return await _handle_success(result, redis_wrapper, storage, webhook)
         else:
-            return await _handle_failure(result, redis_wrapper)
+            return await _handle_failure(result, redis_wrapper, webhook)
 
     except Exception as e:
         logger.exception(
@@ -113,6 +119,11 @@ async def process_review(
                 completed_at=datetime.now(UTC),
             )
 
+        fire_webhook(webhook, "review.failed", review_id, {
+            "application_ref": application_ref,
+            "error": str(e),
+        })
+
         return {
             "review_id": review_id,
             "status": "failed",
@@ -127,6 +138,7 @@ async def _handle_success(
     result: ReviewResult,
     redis_wrapper: RedisClient | None,
     storage: StorageBackend | None = None,
+    webhook: WebhookConfig | None = None,
 ) -> dict[str, Any]:
     """Handle successful review completion."""
     logger.info(
@@ -152,6 +164,13 @@ async def _handle_success(
     # Implements [s3-document-storage:FR-005] - Upload review output to S3
     if storage and storage.is_remote:
         _upload_review_output(result, review_data, storage)
+
+    overall_rating = (result.review or {}).get("overall_rating")
+    fire_webhook(webhook, "review.completed", result.review_id, {
+        "application_ref": result.application_ref,
+        "overall_rating": overall_rating,
+        "review_url": f"/api/reviews/{result.review_id}",
+    })
 
     return review_data
 
@@ -199,6 +218,7 @@ def _upload_review_output(
 async def _handle_failure(
     result: ReviewResult,
     redis_wrapper: RedisClient | None,
+    webhook: WebhookConfig | None = None,
 ) -> dict[str, Any]:
     """Handle failed review."""
     logger.warning(
@@ -229,6 +249,11 @@ async def _handle_failure(
             error=error_data,
             completed_at=datetime.now(UTC),
         )
+
+    fire_webhook(webhook, "review.failed", result.review_id, {
+        "application_ref": result.application_ref,
+        "error": error_data.get("message", "Unknown error"),
+    })
 
     return {
         "review_id": result.review_id,
