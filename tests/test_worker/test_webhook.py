@@ -1,8 +1,6 @@
 """Tests for webhook delivery module."""
 
 import asyncio
-import hashlib
-import hmac
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -14,33 +12,8 @@ from src.shared.models import WebhookConfig
 from src.worker.webhook import (
     _build_payload,
     _deliver_webhook,
-    _sign_payload,
     fire_webhook,
 )
-
-
-class TestSignPayload:
-    """Tests for HMAC-SHA256 payload signing."""
-
-    def test_produces_correct_hmac(self):
-        payload = b'{"event": "test"}'
-        secret = "my-secret"
-        result = _sign_payload(payload, secret)
-
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        assert result == expected
-
-    def test_different_secrets_produce_different_sigs(self):
-        payload = b'{"event": "test"}'
-        sig1 = _sign_payload(payload, "secret-a")
-        sig2 = _sign_payload(payload, "secret-b")
-        assert sig1 != sig2
-
-    def test_different_payloads_produce_different_sigs(self):
-        secret = "same-secret"
-        sig1 = _sign_payload(b"payload-1", secret)
-        sig2 = _sign_payload(b"payload-2", secret)
-        assert sig1 != sig2
 
 
 class TestBuildPayload:
@@ -88,33 +61,15 @@ class TestDeliverWebhook:
         payload = json.dumps({"event": "test"}).encode()
 
         await _deliver_webhook(
-            "https://example.com/hook", "secret", "review.started", "del-1", payload
+            "https://example.com/hook", "my-secret", "review.started", "del-1", payload
         )
 
         request = route.calls[0].request
         assert request.headers["X-Webhook-Event"] == "review.started"
         assert request.headers["X-Webhook-Delivery-Id"] == "del-1"
-        assert "X-Webhook-Signature" in request.headers
+        assert request.headers["X-Webhook-Secret"] == "my-secret"
         assert "X-Webhook-Timestamp" in request.headers
         assert request.headers["Content-Type"] == "application/json"
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_signature_matches_body(self):
-        route = respx.post("https://example.com/hook").mock(
-            return_value=httpx.Response(200)
-        )
-        payload = json.dumps({"event": "test"}).encode()
-        secret = "test-secret"
-
-        await _deliver_webhook(
-            "https://example.com/hook", secret, "review.started", "del-1", payload
-        )
-
-        request = route.calls[0].request
-        sig_header = request.headers["X-Webhook-Signature"]
-        expected = _sign_payload(request.content, secret)
-        assert sig_header == expected
 
     @pytest.mark.asyncio
     @respx.mock

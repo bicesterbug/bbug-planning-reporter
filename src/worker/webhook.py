@@ -1,14 +1,12 @@
 """
 Webhook delivery for review job lifecycle events.
 
-Delivers HTTP POST callbacks with HMAC-SHA256 signatures and exponential
-backoff retries.  All errors are caught and logged — delivery never blocks
-or crashes the worker.
+Delivers HTTP POST callbacks with a static shared-secret header and
+exponential backoff retries.  All errors are caught and logged — delivery
+never blocks or crashes the worker.
 """
 
 import asyncio
-import hashlib
-import hmac
 import os
 import time
 import uuid
@@ -21,12 +19,6 @@ logger = structlog.get_logger(__name__)
 
 WEBHOOK_MAX_RETRIES = int(os.environ.get("WEBHOOK_MAX_RETRIES", "5"))
 WEBHOOK_TIMEOUT = float(os.environ.get("WEBHOOK_TIMEOUT", "10"))
-
-
-def _sign_payload(payload_bytes: bytes, secret: str) -> str:
-    """Return hex HMAC-SHA256 signature for *payload_bytes*."""
-    mac = hmac.new(secret.encode(), payload_bytes, hashlib.sha256)
-    return mac.hexdigest()
 
 
 def _build_payload(event: str, review_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -51,10 +43,9 @@ async def _deliver_webhook(
 
     Never raises — all errors are logged and swallowed.
     """
-    signature = _sign_payload(payload, secret)
     headers = {
         "Content-Type": "application/json",
-        "X-Webhook-Signature": signature,
+        "X-Webhook-Secret": secret,
         "X-Webhook-Event": event,
         "X-Webhook-Delivery-Id": delivery_id,
         "X-Webhook-Timestamp": str(int(time.time())),
