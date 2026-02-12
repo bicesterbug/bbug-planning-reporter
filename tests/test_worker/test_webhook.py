@@ -28,7 +28,7 @@ class TestSignPayload:
         result = _sign_payload(payload, secret)
 
         expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        assert result == f"sha256={expected}"
+        assert result == expected
 
     def test_different_secrets_produce_different_sigs(self):
         payload = b'{"event": "test"}'
@@ -94,7 +94,7 @@ class TestDeliverWebhook:
         request = route.calls[0].request
         assert request.headers["X-Webhook-Event"] == "review.started"
         assert request.headers["X-Webhook-Delivery-Id"] == "del-1"
-        assert "X-Webhook-Signature-256" in request.headers
+        assert "X-Webhook-Signature" in request.headers
         assert "X-Webhook-Timestamp" in request.headers
         assert request.headers["Content-Type"] == "application/json"
 
@@ -112,7 +112,7 @@ class TestDeliverWebhook:
         )
 
         request = route.calls[0].request
-        sig_header = request.headers["X-Webhook-Signature-256"]
+        sig_header = request.headers["X-Webhook-Signature"]
         expected = _sign_payload(request.content, secret)
         assert sig_header == expected
 

@@ -24,9 +24,9 @@ WEBHOOK_TIMEOUT = float(os.environ.get("WEBHOOK_TIMEOUT", "10"))
 
 
 def _sign_payload(payload_bytes: bytes, secret: str) -> str:
-    """Return ``sha256={hex}`` HMAC signature for *payload_bytes*."""
+    """Return hex HMAC-SHA256 signature for *payload_bytes*."""
     mac = hmac.new(secret.encode(), payload_bytes, hashlib.sha256)
-    return f"sha256={mac.hexdigest()}"
+    return mac.hexdigest()
 
 
 def _build_payload(event: str, review_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -54,7 +54,7 @@ async def _deliver_webhook(
     signature = _sign_payload(payload, secret)
     headers = {
         "Content-Type": "application/json",
-        "X-Webhook-Signature-256": signature,
+        "X-Webhook-Signature": signature,
         "X-Webhook-Event": event,
         "X-Webhook-Delivery-Id": delivery_id,
         "X-Webhook-Timestamp": str(int(time.time())),
