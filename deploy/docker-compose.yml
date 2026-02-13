@@ -23,11 +23,18 @@ services:
       - ADVOCACY_GROUP_SHORT=${ADVOCACY_GROUP_SHORT:-BBUG}
     ports:
       - "${API_PORT:-8080}:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bbug-api.rule=Host(`bbug-planning.mmsio.com`)"
+      - "traefik.http.routers.bbug-api.entrypoints=websecure"
+      - "traefik.http.routers.bbug-api.tls.certresolver=myresolver"
+      - "traefik.http.services.bbug-api.loadbalancer.server.port=8080"
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - agent-net
+      - traefik_default
     restart: unless-stopped
     deploy:
       resources:
@@ -254,6 +261,8 @@ services:
 networks:
   agent-net:
     driver: bridge
+  traefik_default:
+    external: true
 
 # ==========================================================================
 # Volumes - named Docker volumes (portable across hosts)
