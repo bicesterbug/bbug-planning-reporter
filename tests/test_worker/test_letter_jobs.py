@@ -580,3 +580,105 @@ class TestS3LetterOutputUpload:
         # Verify paths are Path objects
         assert isinstance(backend.upload.call_args_list[0][0][0], Path)
         assert isinstance(backend.upload.call_args_list[1][0][0], Path)
+
+
+# ---------------------------------------------------------------------------
+# Global webhook tests
+# ---------------------------------------------------------------------------
+
+
+class TestLetterCompletedWebhook:
+    """
+    Tests for letter.completed webhook.
+
+    Verifies [global-webhooks:letter_job/TS-01], [TS-02]
+    Verifies [global-webhooks:ITS-03]
+    """
+
+    @pytest.mark.asyncio
+    async def test_fires_letter_completed_on_success(
+        self,
+        mock_redis_client,
+        sample_letter_record,
+        sample_review_result,
+        mock_anthropic_response,
+    ):
+        """
+        Verifies [global-webhooks:letter_job/TS-01] - Fires letter.completed on success
+        Verifies [global-webhooks:ITS-03] - End-to-end letter completed webhook
+
+        Given: Letter generates successfully
+        When: letter_job completes
+        Then: fire_webhook called with letter.completed and data containing
+              letter_id, review_id, application_ref, stance, tone, content, metadata
+        """
+        mock_redis_client.get_letter.return_value = sample_letter_record
+        mock_redis_client.get_result.return_value = sample_review_result
+
+        ctx = {"redis_client": mock_redis_client}
+
+        with patch("src.worker.letter_jobs.anthropic") as mock_anthropic_mod, \
+             patch("src.worker.letter_jobs.fire_webhook") as mock_fire:
+            mock_client = MagicMock()
+            mock_anthropic_mod.Anthropic.return_value = mock_client
+            mock_client.messages.create.return_value = mock_anthropic_response
+
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+                result = await letter_job(
+                    ctx=ctx,
+                    letter_id="ltr_01HQXK7V3WNPB8MTJF2R5ADGX9",
+                    review_id="rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+                )
+
+        assert result["status"] == "completed"
+
+        mock_fire.assert_called_once()
+        call_args = mock_fire.call_args
+        assert call_args.args[0] == "letter.completed"
+        assert call_args.args[1] == "rev_01HQXK7V3WNPB8MTJF2R5ADGX9"
+
+        data = call_args.args[2]
+        assert data["letter_id"] == "ltr_01HQXK7V3WNPB8MTJF2R5ADGX9"
+        assert data["review_id"] == "rev_01HQXK7V3WNPB8MTJF2R5ADGX9"
+        assert data["application_ref"] == "25/01178/REM"
+        assert data["stance"] == "object"
+        assert data["tone"] == "formal"
+        assert "Response Letter" in data["content"]
+        assert data["metadata"]["input_tokens"] == 3000
+        assert data["metadata"]["output_tokens"] == 1500
+
+    @pytest.mark.asyncio
+    async def test_no_webhook_on_letter_failure(
+        self,
+        mock_redis_client,
+        sample_letter_record,
+        sample_review_result,
+    ):
+        """
+        Verifies [global-webhooks:letter_job/TS-02] - No webhook on letter failure
+
+        Given: Letter generation fails
+        When: letter_job catches exception
+        Then: No fire_webhook call is made
+        """
+        mock_redis_client.get_letter.return_value = sample_letter_record
+        mock_redis_client.get_result.return_value = sample_review_result
+
+        ctx = {"redis_client": mock_redis_client}
+
+        with patch("src.worker.letter_jobs.anthropic") as mock_anthropic_mod, \
+             patch("src.worker.letter_jobs.fire_webhook") as mock_fire:
+            mock_client = MagicMock()
+            mock_anthropic_mod.Anthropic.return_value = mock_client
+            mock_anthropic_mod.APIError = Exception
+            mock_client.messages.create.side_effect = Exception("API error")
+
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+                result = await letter_job(
+                    ctx=ctx,
+                    letter_id="ltr_fail",
+                    review_id="rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+                )
+
+        assert result["status"] == "failed"
+        mock_fire.assert_not_called()

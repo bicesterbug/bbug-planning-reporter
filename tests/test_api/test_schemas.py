@@ -14,7 +14,6 @@ from src.api.schemas import (
     ReviewContent,
     ReviewOptionsRequest,
     ReviewRequest,
-    WebhookConfigRequest,
 )
 from src.shared.models import ReviewOptions
 
@@ -73,83 +72,13 @@ class TestApplicationReferenceValidation:
         assert any(e["loc"] == ("application_ref",) for e in errors)
 
 
-class TestWebhookConfigValidation:
-    """Tests for webhook configuration validation."""
-
-    def test_valid_https_url(self) -> None:
-        """
-        Verifies [foundation-api:ReviewRequestModels/TS-03]
-
-        Given: HTTPS URL
-        When: Create webhook config
-        Then: Passes validation
-        """
-        config = WebhookConfigRequest(
-            url="https://example.com/hooks/cherwell",
-            secret="test_secret",
-        )
-        assert config.url == "https://example.com/hooks/cherwell"
-
-    def test_valid_http_url(self) -> None:
-        """
-        Given: HTTP URL (allowed for local dev)
-        When: Create webhook config
-        Then: Passes validation
-        """
-        config = WebhookConfigRequest(
-            url="http://localhost:8080/hooks",
-            secret="test_secret",
-        )
-        assert config.url == "http://localhost:8080/hooks"
-
-    def test_invalid_url_scheme(self) -> None:
-        """
-        Given: Invalid URL scheme
-        When: Create webhook config
-        Then: Fails validation
-        """
-        with pytest.raises(ValidationError) as exc_info:
-            WebhookConfigRequest(
-                url="ftp://example.com/hooks",
-                secret="test_secret",
-            )
-
-        errors = exc_info.value.errors()
-        assert any("url" in str(e["loc"]) for e in errors)
-
-    def test_valid_events(self) -> None:
-        """
-        Given: Valid event names
-        When: Create webhook config
-        Then: Passes validation
-        """
-        config = WebhookConfigRequest(
-            url="https://example.com/hooks",
-            secret="test_secret",
-            events=["review.started", "review.completed"],
-        )
-        assert len(config.events) == 2
-
-    def test_invalid_event_name(self) -> None:
-        """
-        Given: Invalid event name
-        When: Create webhook config
-        Then: Fails validation
-        """
-        with pytest.raises(ValidationError):
-            WebhookConfigRequest(
-                url="https://example.com/hooks",
-                secret="test_secret",
-                events=["review.invalid_event"],
-            )
-
-
 class TestReviewRequestOptionalFields:
     """Tests for optional fields handling."""
 
     def test_minimal_request(self) -> None:
         """
         Verifies [foundation-api:ReviewRequestModels/TS-04]
+        Verifies [global-webhooks:ReviewRequest/TS-01] - No webhook field
 
         Given: Minimal request with only required fields
         When: Parse request body
@@ -159,11 +88,11 @@ class TestReviewRequestOptionalFields:
 
         assert request.application_ref == "25/01178/REM"
         assert request.options is None
-        assert request.webhook is None
+        assert not hasattr(request, "webhook")
 
     def test_full_request(self) -> None:
         """
-        Given: Request with all fields
+        Given: Request with all optional fields
         When: Parse request body
         Then: All fields populated
         """
@@ -173,18 +102,30 @@ class TestReviewRequestOptionalFields:
                 "focus_areas": ["cycle_parking", "cycle_routes"],
                 "output_format": "markdown",
             },
-            webhook={
-                "url": "https://example.com/hooks",
-                "secret": "test_secret",
-                "events": ["review.completed"],
-            },
         )
 
         assert request.application_ref == "25/01178/REM"
         assert request.options is not None
         assert request.options.focus_areas == ["cycle_parking", "cycle_routes"]
-        assert request.webhook is not None
-        assert request.webhook.url == "https://example.com/hooks"
+
+    def test_webhook_field_silently_ignored(self) -> None:
+        """
+        Verifies [global-webhooks:ReviewRequest/TS-02] - Unknown webhook field silently ignored.
+
+        Given: A review submitted with a webhook field (old client)
+        When: Request is parsed
+        Then: Request is accepted; webhook is ignored
+        """
+        request = ReviewRequest(
+            application_ref="25/01178/REM",
+            webhook={
+                "url": "https://example.com/hooks",
+                "secret": "test_secret",
+            },
+        )
+
+        assert request.application_ref == "25/01178/REM"
+        assert not hasattr(request, "webhook")
 
 
 class TestKeyDocument:

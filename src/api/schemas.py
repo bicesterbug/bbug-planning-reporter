@@ -17,39 +17,6 @@ from pydantic import BaseModel, Field, field_validator
 APPLICATION_REF_PATTERN = re.compile(r"^\d{2}/\d{4,5}/[A-Z]{1,4}$")
 
 
-class WebhookConfigRequest(BaseModel):
-    """
-    Webhook configuration in a review request.
-
-    Implements [foundation-api:FR-007] - Webhook configuration
-    """
-
-    url: str = Field(..., description="URL to receive webhook callbacks")
-    secret: str = Field(..., description="Secret for HMAC-SHA256 signing")
-    events: list[str] = Field(
-        default=["review.started", "review.progress", "review.completed", "review.failed"],
-        description="Events to subscribe to",
-    )
-
-    @field_validator("url")
-    @classmethod
-    def validate_url(cls, v: str) -> str:
-        """Validate webhook URL format."""
-        if not v.startswith(("http://", "https://")):
-            raise ValueError("Webhook URL must start with http:// or https://")
-        return v
-
-    @field_validator("events")
-    @classmethod
-    def validate_events(cls, v: list[str]) -> list[str]:
-        """Validate event names."""
-        valid_events = {"review.started", "review.progress", "review.completed", "review.failed"}
-        for event in v:
-            if event not in valid_events:
-                raise ValueError(f"Invalid event: {event}. Valid events: {valid_events}")
-        return v
-
-
 class ReviewOptionsRequest(BaseModel):
     """Options for a review request."""
 
@@ -91,9 +58,6 @@ class ReviewRequest(BaseModel):
     )
     options: ReviewOptionsRequest | None = Field(
         default=None, description="Optional review configuration"
-    )
-    webhook: WebhookConfigRequest | None = Field(
-        default=None, description="Optional webhook configuration for callbacks"
     )
 
     @field_validator("application_ref")

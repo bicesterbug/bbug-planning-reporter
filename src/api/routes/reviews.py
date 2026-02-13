@@ -29,7 +29,7 @@ from src.api.schemas import (
     ReviewSubmitResponse,
     ReviewSummary,
 )
-from src.shared.models import ReviewJob, ReviewOptions, ReviewStatus, WebhookConfig
+from src.shared.models import ReviewJob, ReviewOptions, ReviewStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -78,7 +78,6 @@ async def submit_review(
     logger.info(
         "Review submission received",
         application_ref=request.application_ref,
-        has_webhook=request.webhook is not None,
     )
 
     # Check for existing active review (FR-014)
@@ -113,21 +112,12 @@ async def submit_review(
             include_public_comments=request.options.include_public_comments,
         )
 
-    webhook = None
-    if request.webhook:
-        webhook = WebhookConfig(
-            url=request.webhook.url,
-            secret=request.webhook.secret,
-            events=request.webhook.events,
-        )
-
     # Create job record
     job = ReviewJob(
         review_id=review_id,
         application_ref=request.application_ref,
         status=ReviewStatus.QUEUED,
         options=options,
-        webhook=webhook,
         created_at=now,
     )
 

@@ -10,6 +10,8 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-13 | [global-webhooks](global-webhooks/) | [spec](global-webhooks/specification.md) | [design](global-webhooks/design.md) | Implementation Complete | Enhancement |
+| 2026-02-13 | [webhook-review-data](webhook-review-data/) | [spec](webhook-review-data/specification.md) | [design](webhook-review-data/design.md) | Superseded by global-webhooks | Bugfix |
 | 2026-02-10 | [review-progress](review-progress/) | [spec](review-progress/specification.md) | [design](review-progress/design.md) | Implementation Complete | Bugfix |
 | 2026-02-08 | [ci-cd-github-actions](ci-cd-github-actions/) | [spec](ci-cd-github-actions/specification.md) | [design](ci-cd-github-actions/design.md) | Implementation Complete | Infrastructure |
 | 2026-02-08 | [structured-review-output](structured-review-output/) | [spec](structured-review-output/specification.md) | [design](structured-review-output/design.md) | Implementation Complete | Enhancement |

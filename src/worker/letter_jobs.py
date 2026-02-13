@@ -23,6 +23,7 @@ import structlog
 from src.shared.redis_client import RedisClient
 from src.shared.storage import StorageBackend, create_storage_backend
 from src.worker.letter_prompt import build_letter_prompt
+from src.worker.webhook import fire_webhook
 
 logger = structlog.get_logger(__name__)
 
@@ -190,6 +191,17 @@ async def letter_job(
                 metadata=metadata,
                 storage=storage,
             )
+
+        # Implements [global-webhooks:FR-005] - letter.completed webhook
+        fire_webhook("letter.completed", review_id, {
+            "letter_id": letter_id,
+            "review_id": review_id,
+            "application_ref": review_result.get("application_ref", "unknown"),
+            "stance": stance,
+            "tone": tone,
+            "content": letter_content,
+            "metadata": metadata,
+        })
 
         return {
             "letter_id": letter_id,

@@ -62,7 +62,6 @@ ReviewResponse = _module.ReviewResponse
 ReviewStatusResponse = _module.ReviewStatusResponse
 ReviewSubmitResponse = _module.ReviewSubmitResponse
 ReviewSummary = _module.ReviewSummary
-WebhookConfigRequest = _module.WebhookConfigRequest
 ReviewOptionsRequest = _module.ReviewOptionsRequest
 ApplicationInfo = _module.ApplicationInfo
 ReviewAspect = _module.ReviewAspect
@@ -93,7 +92,6 @@ __all__ = [
     "ReviewStatusResponse",
     "ReviewSubmitResponse",
     "ReviewSummary",
-    "WebhookConfigRequest",
     "ReviewOptionsRequest",
     "ApplicationInfo",
     "ReviewAspect",

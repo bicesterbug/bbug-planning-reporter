@@ -17,7 +17,7 @@ import redis.asyncio as redis
 import structlog
 
 from src.agent.orchestrator import AgentOrchestrator, ReviewResult
-from src.shared.models import ReviewStatus, WebhookConfig
+from src.shared.models import ReviewStatus
 from src.shared.redis_client import RedisClient
 from src.shared.storage import StorageBackend, create_storage_backend
 from src.worker.webhook import fire_webhook
@@ -34,6 +34,7 @@ async def process_review(
     Process a review job using the agent orchestrator.
 
     Implements [agent-integration:ITS-01] - Complete workflow with mocked MCP
+    Implements [global-webhooks:FR-001] - No per-request webhook config
 
     This is the main entry point for review processing from the arq worker.
 
@@ -65,21 +66,16 @@ async def process_review(
 
     # Implements [review-scope-control:FR-004] - Read options from Redis job
     options = None
-    webhook: WebhookConfig | None = None
     if redis_wrapper:
         job = await redis_wrapper.get_job(review_id)
-        if job:
-            if job.options:
-                options = job.options
-                logger.info(
-                    "Review options loaded",
-                    review_id=review_id,
-                    include_consultation_responses=getattr(options, "include_consultation_responses", False),
-                    include_public_comments=getattr(options, "include_public_comments", False),
-                )
-            webhook = job.webhook
-
-    fire_webhook(webhook, "review.started", review_id, {"application_ref": application_ref})
+        if job and job.options:
+            options = job.options
+            logger.info(
+                "Review options loaded",
+                review_id=review_id,
+                include_consultation_responses=getattr(options, "include_consultation_responses", False),
+                include_public_comments=getattr(options, "include_public_comments", False),
+            )
 
     # Implements [s3-document-storage:FR-001] - Create storage backend from environment
     storage = create_storage_backend()
@@ -97,9 +93,9 @@ async def process_review(
 
         # Store result
         if result.success:
-            return await _handle_success(result, redis_wrapper, storage, webhook)
+            return await _handle_success(result, redis_wrapper, storage)
         else:
-            return await _handle_failure(result, redis_wrapper, webhook)
+            return await _handle_failure(result, redis_wrapper)
 
     except Exception as e:
         logger.exception(
@@ -119,9 +115,10 @@ async def process_review(
                 completed_at=datetime.now(UTC),
             )
 
-        fire_webhook(webhook, "review.failed", review_id, {
+        # Implements [global-webhooks:FR-006] - Structured error in webhook
+        fire_webhook("review.failed", review_id, {
             "application_ref": application_ref,
-            "error": str(e),
+            "error": {"code": "internal_error", "message": str(e)},
         })
 
         return {
@@ -138,9 +135,12 @@ async def _handle_success(
     result: ReviewResult,
     redis_wrapper: RedisClient | None,
     storage: StorageBackend | None = None,
-    webhook: WebhookConfig | None = None,
 ) -> dict[str, Any]:
-    """Handle successful review completion."""
+    """Handle successful review completion.
+
+    Implements [global-webhooks:FR-003] - review.completed with full data
+    Implements [global-webhooks:FR-004] - review.completed.markdown with markdown
+    """
     logger.info(
         "Review completed successfully",
         review_id=result.review_id,
@@ -165,11 +165,22 @@ async def _handle_success(
     if storage and storage.is_remote:
         _upload_review_output(result, review_data, storage)
 
+    # Implements [global-webhooks:FR-003] - review.completed with full review data
     overall_rating = (result.review or {}).get("overall_rating")
-    fire_webhook(webhook, "review.completed", result.review_id, {
+    fire_webhook("review.completed", result.review_id, {
         "application_ref": result.application_ref,
         "overall_rating": overall_rating,
         "review_url": f"/api/reviews/{result.review_id}",
+        "application": review_data.get("application"),
+        "review": review_data.get("review"),
+        "metadata": review_data.get("metadata"),
+    })
+
+    # Implements [global-webhooks:FR-004] - review.completed.markdown
+    full_markdown = (result.review or {}).get("full_markdown")
+    fire_webhook("review.completed.markdown", result.review_id, {
+        "application_ref": result.application_ref,
+        "full_markdown": full_markdown,
     })
 
     return review_data
@@ -218,9 +229,11 @@ def _upload_review_output(
 async def _handle_failure(
     result: ReviewResult,
     redis_wrapper: RedisClient | None,
-    webhook: WebhookConfig | None = None,
 ) -> dict[str, Any]:
-    """Handle failed review."""
+    """Handle failed review.
+
+    Implements [global-webhooks:FR-006] - review.failed with structured error
+    """
     logger.warning(
         "Review failed",
         review_id=result.review_id,
@@ -250,9 +263,10 @@ async def _handle_failure(
             completed_at=datetime.now(UTC),
         )
 
-    fire_webhook(webhook, "review.failed", result.review_id, {
+    # Implements [global-webhooks:FR-006] - Structured error in webhook
+    fire_webhook("review.failed", result.review_id, {
         "application_ref": result.application_ref,
-        "error": error_data.get("message", "Unknown error"),
+        "error": error_data,
     })
 
     return {

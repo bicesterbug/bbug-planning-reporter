@@ -41,16 +41,6 @@ class ReviewProgress(BaseModel):
     detail: str | None = None
 
 
-class WebhookConfig(BaseModel):
-    """Webhook configuration for a review."""
-
-    url: str
-    secret: str
-    events: list[str] = Field(
-        default=["review.started", "review.progress", "review.completed", "review.failed"]
-    )
-
-
 class ReviewOptions(BaseModel):
     """Options for a review."""
 
@@ -70,7 +60,6 @@ class ReviewJob(BaseModel):
     application_ref: str
     status: ReviewStatus = ReviewStatus.QUEUED
     options: ReviewOptions | None = None
-    webhook: WebhookConfig | None = None
     progress: ReviewProgress | None = None
     created_at: datetime
     started_at: datetime | None = None

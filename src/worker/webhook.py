@@ -1,12 +1,16 @@
 """
-Webhook delivery for review job lifecycle events.
+Webhook delivery for review and letter lifecycle events.
 
-Delivers HTTP POST callbacks with a static shared-secret header and
+Implements [global-webhooks:FR-001] - Global webhook URL from WEBHOOK_URL env var
+Implements [global-webhooks:FR-008] - No authentication headers
+
+Delivers HTTP POST callbacks to a globally-configured URL with
 exponential backoff retries.  All errors are caught and logged — delivery
 never blocks or crashes the worker.
 """
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -17,6 +21,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").strip() or None
 WEBHOOK_MAX_RETRIES = int(os.environ.get("WEBHOOK_MAX_RETRIES", "5"))
 WEBHOOK_TIMEOUT = float(os.environ.get("WEBHOOK_TIMEOUT", "10"))
 
@@ -34,18 +39,19 @@ def _build_payload(event: str, review_id: str, data: dict[str, Any]) -> dict[str
 
 async def _deliver_webhook(
     url: str,
-    secret: str,
     event: str,
     delivery_id: str,
     payload: bytes,
 ) -> None:
     """POST *payload* to *url* with retries and exponential backoff.
 
+    Implements [global-webhooks:FR-008] - No authentication headers
+    Implements [global-webhooks:NFR-001] - Retry with backoff, never raises
+
     Never raises — all errors are logged and swallowed.
     """
     headers = {
         "Content-Type": "application/json",
-        "X-Webhook-Secret": secret,
         "X-Webhook-Event": event,
         "X-Webhook-Delivery-Id": delivery_id,
         "X-Webhook-Timestamp": str(int(time.time())),
@@ -57,6 +63,7 @@ async def _deliver_webhook(
                 resp = await client.post(url, content=payload, headers=headers)
 
             if resp.status_code < 300:
+                # Implements [global-webhooks:NFR-003] - Log payload size
                 logger.info(
                     "Webhook delivered",
                     url=url,
@@ -64,6 +71,7 @@ async def _deliver_webhook(
                     delivery_id=delivery_id,
                     status=resp.status_code,
                     attempt=attempt,
+                    payload_size_bytes=len(payload),
                 )
                 return
 
@@ -99,33 +107,24 @@ async def _deliver_webhook(
 
 
 def fire_webhook(
-    webhook: Any | None,
     event: str,
     review_id: str,
     data: dict[str, Any],
 ) -> None:
     """Fire a webhook event as a background task (fire-and-forget).
 
-    Does nothing if *webhook* is ``None`` or the event is not in the
-    webhook's subscribed events list.
-    """
-    if webhook is None:
-        return
+    Implements [global-webhooks:FR-001] - Reads WEBHOOK_URL from environment
+    Implements [global-webhooks:FR-007] - Consistent envelope structure
 
-    if event not in (webhook.events or []):
-        logger.debug(
-            "Webhook event not subscribed, skipping",
-            webhook_event=event,
-            subscribed=webhook.events,
-        )
+    Does nothing if WEBHOOK_URL is not configured.
+    """
+    if WEBHOOK_URL is None:
         return
 
     payload_dict = _build_payload(event, review_id, data)
-    import json
-
     payload_bytes = json.dumps(payload_dict, default=str).encode()
     delivery_id = payload_dict["delivery_id"]
 
     asyncio.create_task(
-        _deliver_webhook(webhook.url, webhook.secret, event, delivery_id, payload_bytes),
+        _deliver_webhook(WEBHOOK_URL, event, delivery_id, payload_bytes),
     )

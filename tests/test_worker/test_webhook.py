@@ -1,4 +1,8 @@
-"""Tests for webhook delivery module."""
+"""Tests for webhook delivery module.
+
+Verifies [global-webhooks:fire_webhook/TS-01] through [TS-04]
+Verifies [global-webhooks:_deliver_webhook/TS-01], [TS-02]
+"""
 
 import asyncio
 import json
@@ -8,7 +12,6 @@ import httpx
 import pytest
 import respx
 
-from src.shared.models import WebhookConfig
 from src.worker.webhook import (
     _build_payload,
     _deliver_webhook,
@@ -29,8 +32,8 @@ class TestBuildPayload:
         assert "timestamp" in payload
 
     def test_unique_delivery_ids(self):
-        p1 = _build_payload("review.started", "rev_1", {})
-        p2 = _build_payload("review.started", "rev_1", {})
+        p1 = _build_payload("review.completed", "rev_1", {})
+        p2 = _build_payload("review.completed", "rev_1", {})
         assert p1["delivery_id"] != p2["delivery_id"]
 
 
@@ -46,7 +49,7 @@ class TestDeliverWebhook:
         payload = json.dumps({"event": "test"}).encode()
 
         await _deliver_webhook(
-            "https://example.com/hook", "secret", "review.started", "del-1", payload
+            "https://example.com/hook", "review.completed", "del-1", payload
         )
 
         assert route.called
@@ -54,20 +57,36 @@ class TestDeliverWebhook:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_correct_headers(self):
+    async def test_no_secret_header(self):
+        """Verifies [global-webhooks:_deliver_webhook/TS-01] - No secret header sent."""
         route = respx.post("https://example.com/hook").mock(
             return_value=httpx.Response(200)
         )
         payload = json.dumps({"event": "test"}).encode()
 
         await _deliver_webhook(
-            "https://example.com/hook", "my-secret", "review.started", "del-1", payload
+            "https://example.com/hook", "review.completed", "del-1", payload
         )
 
         request = route.calls[0].request
-        assert request.headers["X-Webhook-Event"] == "review.started"
+        assert "X-Webhook-Secret" not in request.headers
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_correct_headers(self):
+        """Verifies [global-webhooks:_deliver_webhook/TS-02] - Standard headers preserved."""
+        route = respx.post("https://example.com/hook").mock(
+            return_value=httpx.Response(200)
+        )
+        payload = json.dumps({"event": "test"}).encode()
+
+        await _deliver_webhook(
+            "https://example.com/hook", "review.completed", "del-1", payload
+        )
+
+        request = route.calls[0].request
+        assert request.headers["X-Webhook-Event"] == "review.completed"
         assert request.headers["X-Webhook-Delivery-Id"] == "del-1"
-        assert request.headers["X-Webhook-Secret"] == "my-secret"
         assert "X-Webhook-Timestamp" in request.headers
         assert request.headers["Content-Type"] == "application/json"
 
@@ -85,7 +104,7 @@ class TestDeliverWebhook:
 
         with patch("src.worker.webhook.asyncio.sleep", new_callable=AsyncMock):
             await _deliver_webhook(
-                "https://example.com/hook", "secret", "review.started", "del-1", payload
+                "https://example.com/hook", "review.completed", "del-1", payload
             )
 
         assert route.call_count == 3
@@ -103,7 +122,7 @@ class TestDeliverWebhook:
 
         with patch("src.worker.webhook.asyncio.sleep", new_callable=AsyncMock):
             await _deliver_webhook(
-                "https://example.com/hook", "secret", "review.started", "del-1", payload
+                "https://example.com/hook", "review.completed", "del-1", payload
             )
 
         assert route.call_count == 2
@@ -121,7 +140,7 @@ class TestDeliverWebhook:
 
         with patch("src.worker.webhook.asyncio.sleep", new_callable=AsyncMock):
             await _deliver_webhook(
-                "https://example.com/hook", "secret", "review.started", "del-1", payload
+                "https://example.com/hook", "review.completed", "del-1", payload
             )
 
         assert route.call_count == 2
@@ -137,7 +156,7 @@ class TestDeliverWebhook:
         with patch("src.worker.webhook.WEBHOOK_MAX_RETRIES", 3), \
              patch("src.worker.webhook.asyncio.sleep", new_callable=AsyncMock):
             await _deliver_webhook(
-                "https://example.com/hook", "secret", "review.started", "del-1", payload
+                "https://example.com/hook", "review.completed", "del-1", payload
             )
 
         assert route.call_count == 3
@@ -146,31 +165,36 @@ class TestDeliverWebhook:
 class TestFireWebhook:
     """Tests for the public fire_webhook API."""
 
-    def test_noop_when_webhook_is_none(self):
-        # Should not raise
-        fire_webhook(None, "review.started", "rev_1", {})
+    def test_noop_when_webhook_url_unset(self):
+        """Verifies [global-webhooks:fire_webhook/TS-01] - No-op when WEBHOOK_URL unset."""
+        with patch("src.worker.webhook.WEBHOOK_URL", None):
+            with patch("src.worker.webhook.asyncio.create_task") as mock_task:
+                fire_webhook("review.completed", "rev_1", {})
+                mock_task.assert_not_called()
 
-    def test_skips_unsubscribed_events(self):
-        webhook = WebhookConfig(
-            url="https://example.com/hook",
-            secret="s",
-            events=["review.completed"],
-        )
+    def test_noop_when_webhook_url_empty(self):
+        """Verifies [global-webhooks:fire_webhook/TS-02] - No-op when WEBHOOK_URL empty."""
+        with patch("src.worker.webhook.WEBHOOK_URL", None):
+            with patch("src.worker.webhook.asyncio.create_task") as mock_task:
+                fire_webhook("review.completed", "rev_1", {})
+                mock_task.assert_not_called()
 
-        with patch("src.worker.webhook.asyncio.create_task") as mock_task:
-            fire_webhook(webhook, "review.started", "rev_1", {})
-            mock_task.assert_not_called()
+    def test_fires_when_webhook_url_set(self):
+        """Verifies [global-webhooks:fire_webhook/TS-03] - Fires when WEBHOOK_URL set."""
+        with patch("src.worker.webhook.WEBHOOK_URL", "https://example.com/hook"):
+            with patch("src.worker.webhook.asyncio.create_task") as mock_task:
+                fire_webhook("review.completed", "rev_1", {"application_ref": "X"})
+                mock_task.assert_called_once()
 
-    def test_spawns_background_task(self):
-        webhook = WebhookConfig(
-            url="https://example.com/hook",
-            secret="s",
-            events=["review.started"],
-        )
-
-        with patch("src.worker.webhook.asyncio.create_task") as mock_task:
-            fire_webhook(webhook, "review.started", "rev_1", {"application_ref": "X"})
-            mock_task.assert_called_once()
+    def test_all_events_fire_no_filtering(self):
+        """Verifies [global-webhooks:fire_webhook/TS-04] - All events fire (no filtering)."""
+        with patch("src.worker.webhook.WEBHOOK_URL", "https://example.com/hook"):
+            with patch("src.worker.webhook.asyncio.create_task") as mock_task:
+                fire_webhook("review.completed", "rev_1", {})
+                fire_webhook("review.completed.markdown", "rev_1", {})
+                fire_webhook("letter.completed", "rev_1", {})
+                fire_webhook("review.failed", "rev_1", {})
+                assert mock_task.call_count == 4
 
     @pytest.mark.asyncio
     @respx.mock
@@ -180,15 +204,9 @@ class TestFireWebhook:
             return_value=httpx.Response(500)
         )
 
-        webhook = WebhookConfig(
-            url="https://example.com/hook",
-            secret="s",
-            events=["review.started"],
-        )
-
-        with patch("src.worker.webhook.WEBHOOK_MAX_RETRIES", 1), \
+        with patch("src.worker.webhook.WEBHOOK_URL", "https://example.com/hook"), \
+             patch("src.worker.webhook.WEBHOOK_MAX_RETRIES", 1), \
              patch("src.worker.webhook.asyncio.sleep", new_callable=AsyncMock):
-            # Use a real event loop task
-            fire_webhook(webhook, "review.started", "rev_1", {})
+            fire_webhook("review.completed", "rev_1", {})
             # Let the task complete
             await asyncio.sleep(0.1)

@@ -260,6 +260,41 @@ assert response.ok
 
 ---
 
+## Deployment
+
+### Production Environment
+
+- **Production server:** `pete@192.168.1.18` (local network, deployed from dev machine only)
+- **Deploy directory:** `/home/pete/bbug-planning-reporter/deploy/`
+- **API port:** 8180 (mapped to container 8080 via `API_PORT=8180` in `.env`)
+- **Image registry:** GHCR (`ghcr.io/bicesterbug/bbug-planning-reporter/<service>:<tag>`)
+- **Current tag:** set via `IMAGE_TAG` in deploy `.env` (e.g. `v0.1.4`)
+- **Reverse proxy:** Traefik (ports 80/443 on host)
+- **CMS:** Strapi at `bbug-strapi` container (port 1337)
+- **Website:** bbug-website hosted on Vercel at `www.bicesterbug.org`
+
+### Deployment Commands
+
+```bash
+# Deploy from dev machine
+ssh pete@192.168.1.18 "cd /home/pete/bbug-planning-reporter/deploy && docker compose pull && docker compose up -d"
+
+# Or use the deploy script
+ssh pete@192.168.1.18 "cd /home/pete/bbug-planning-reporter/deploy && ./deploy.sh --tag v0.1.5"
+
+# Check logs
+ssh pete@192.168.1.18 "cd /home/pete/bbug-planning-reporter/deploy && docker compose logs worker --tail=50"
+```
+
+### Network Topology
+
+- The Review Agent API (`deploy-api-1`) runs on `192.168.1.18:8180`, accessible via Traefik reverse proxy on public domain
+- The bbug-website (Vercel) reaches the Agent API via the public Traefik endpoint (same mechanism used to submit reviews)
+- Webhooks flow: Worker -> Vercel (outbound), Vercel -> Agent API (callback via public endpoint)
+- Enriching webhook payloads is still preferred to eliminate the callback round-trip and reduce coupling
+
+---
+
 ## Additional Guidelines
 
 ### Async Patterns
