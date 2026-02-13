@@ -74,10 +74,10 @@ services:
       - S3_KEY_PREFIX=${S3_KEY_PREFIX:-planning}
       - S3_REGION=${S3_REGION:-}
     volumes:
-      - chroma-data:/data/chroma
-      - raw-docs:/data/raw
-      - output-data:/data/output
-      - policy-data:/data/policy
+      - ${DATA_DIR:-./data}/chroma:/data/chroma
+      - ${DATA_DIR:-./data}/raw:/data/raw
+      - ${DATA_DIR:-./data}/output:/data/output
+      - ${DATA_DIR:-./data}/policy:/data/policy
     depends_on:
       redis:
         condition: service_healthy
@@ -97,7 +97,7 @@ services:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes:
-      - redis-data:/data
+      - ${DATA_DIR:-./data}/redis:/data
     networks:
       - agent-net
     healthcheck:
@@ -123,7 +123,7 @@ services:
       - SCRAPER_USER_AGENT=${SCRAPER_USER_AGENT:-CherwellCycleReview/1.0}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - raw-docs:/data/raw
+      - ${DATA_DIR:-./data}/raw:/data/raw
     networks:
       - agent-net
     restart: unless-stopped
@@ -143,8 +143,8 @@ services:
       - ENABLE_OCR=${ENABLE_OCR:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - chroma-data:/data/chroma
-      - raw-docs:/data/raw
+      - ${DATA_DIR:-./data}/chroma:/data/chroma
+      - ${DATA_DIR:-./data}/raw:/data/raw
     networks:
       - agent-net
     restart: unless-stopped
@@ -164,8 +164,8 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - chroma-data:/data/chroma
-      - policy-data:/data/policy
+      - ${DATA_DIR:-./data}/chroma:/data/chroma
+      - ${DATA_DIR:-./data}/policy:/data/policy
     depends_on:
       redis:
         condition: service_healthy
@@ -185,7 +185,7 @@ services:
     profiles: [seed]
     user: "0:0"
     volumes:
-      - policy-data:/data/policy
+      - ${DATA_DIR:-./data}/policy:/data/policy
       - ./seed_config.json:/seed_config.json:ro
     entrypoint: /bin/sh
     command:
@@ -246,8 +246,8 @@ services:
       - SEED_DIR=/data/policy/seed
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - chroma-data:/data/chroma
-      - policy-data:/data/policy
+      - ${DATA_DIR:-./data}/chroma:/data/chroma
+      - ${DATA_DIR:-./data}/policy:/data/policy
     depends_on:
       redis:
         condition: service_healthy
@@ -263,13 +263,3 @@ networks:
     driver: bridge
   traefik_default:
     external: true
-
-# ==========================================================================
-# Volumes - named Docker volumes (portable across hosts)
-# ==========================================================================
-volumes:
-  chroma-data:
-  raw-docs:
-  output-data:
-  redis-data:
-  policy-data:
