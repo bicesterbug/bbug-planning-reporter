@@ -97,6 +97,16 @@ class DownloadAllDocumentsInput(BaseModel):
         default=False,
         description="Include public comments in download (default: False)",
     )
+    selected_document_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "When provided, only download documents whose document_id is in "
+            "this list. Documents are still subject to the pattern-based "
+            "filter unless skip_filter is True. Pass this after an LLM-based "
+            "relevance filter to avoid downloading hundreds of irrelevant "
+            "documents."
+        ),
+    )
 
 
 class CherwellScraperMCP:
@@ -401,6 +411,19 @@ class CherwellScraperMCP:
                 "downloads": [],
                 "filtered_documents": [],
             }
+
+        # Pre-filter by selected_document_ids when provided (LLM filter stage)
+        if input.selected_document_ids is not None:
+            selected_set = set(input.selected_document_ids)
+            all_documents = [
+                doc for doc in all_documents if doc.document_id in selected_set
+            ]
+            logger.info(
+                "Pre-filtered to selected document IDs",
+                application_ref=input.application_ref,
+                selected_count=len(all_documents),
+                requested_ids=len(selected_set),
+            )
 
         # Apply document filter
         # Implements [document-filtering:FR-001], [FR-002], [FR-003], [FR-004], [FR-005]

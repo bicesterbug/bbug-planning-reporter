@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from src.agent.llm_document_filter import LLMFilterResult
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPServerType, MCPToolError
 from src.agent.orchestrator import (
     AgentOrchestrator,
@@ -37,6 +38,47 @@ from src.shared.storage import StorageUploadError
 def _sequential_ingestion(monkeypatch):
     """Force sequential ingestion in tests so side_effect lists are consumed in order."""
     monkeypatch.setenv("INGEST_CONCURRENCY", "1")
+
+
+@pytest.fixture(autouse=True)
+def _mock_llm_filter():
+    """Mock the LLM document filter to return fallback (allow-all) in all tests.
+
+    This prevents real Anthropic API calls during unit tests and preserves
+    backward-compatible behaviour: download_all_documents is called without
+    ``selected_document_ids``, so it lists + downloads everything.
+    """
+    with patch("src.agent.orchestrator.LLMDocumentFilter") as mock_cls:
+        instance = mock_cls.return_value
+        instance.filter_documents = AsyncMock(
+            return_value=LLMFilterResult(fallback_used=True),
+        )
+        yield mock_cls
+
+
+# Reusable list-documents response matching the sample download fixtures.
+# Used to satisfy the new ``list_application_documents`` MCP call that the
+# orchestrator issues before downloading.
+SAMPLE_LIST_RESPONSE = {
+    "status": "success",
+    "application_ref": "25/01178/REM",
+    "document_count": 3,
+    "documents": [
+        {"document_id": "doc1", "description": "Transport Assessment",
+         "document_type": "Transport Assessment"},
+        {"document_id": "doc2", "description": "Site Plan",
+         "document_type": "Plans - Site Plan"},
+        {"document_id": "doc3", "description": "Design and Access Statement",
+         "document_type": "Design and Access Statement"},
+    ],
+}
+
+EMPTY_LIST_RESPONSE = {
+    "status": "success",
+    "application_ref": "25/01178/REM",
+    "document_count": 0,
+    "documents": [],
+}
 
 
 @pytest.fixture
@@ -270,7 +312,8 @@ class TestCompleteWorkflowExecution:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,   # Phase 1
-            sample_download_response,      # Phase 2
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
+            sample_download_response,      # Phase 2: download
             sample_ingest_response,        # Phase 3 doc 1
             sample_ingest_response,        # Phase 3 doc 2
             sample_ingest_response,        # Phase 3 doc 3
@@ -322,7 +365,7 @@ class TestCompleteWorkflowExecution:
                     "documents": [],
                 },
             },
-            {"status": "success", "downloads": []},  # Phase 2: no downloads
+            EMPTY_LIST_RESPONSE,  # Phase 2: list returns empty → no download call
             *_search_side_effects(7, sample_search_response),  # Phase 4
         ]
 
@@ -440,6 +483,7 @@ class TestPartialDocumentIngestion:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             sample_ingest_response,  # doc 1 succeeds
             MCPToolError("ingest_document", "OCR failed - corrupt file"),  # doc 2 fails
@@ -480,6 +524,7 @@ class TestPartialDocumentIngestion:
         """Test that workflow fails if all documents fail to ingest."""
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             MCPToolError("ingest_document", "Failed"),
             MCPToolError("ingest_document", "Failed"),
@@ -702,8 +747,9 @@ class TestReconnectionOnTransientFailure:
 
         mock_mcp_client.call_tool.side_effect = [
             MCPConnectionError(MCPServerType.CHERWELL_SCRAPER, "Connection lost"),  # Phase 1 fails
-            sample_download_response,  # Phase 2
-            sample_ingest_response,    # Phase 3 (1 downloaded doc)
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
+            sample_download_response,      # Phase 2: download
+            sample_ingest_response,        # Phase 3 (1 downloaded doc)
             sample_ingest_response,
             sample_ingest_response,
             *_search_side_effects(7, sample_search_response),
@@ -855,6 +901,7 @@ class TestGracefulDegradation:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             download_response,
             sample_ingest_response,  # Only 1 doc to ingest
             *_search_side_effects(7, sample_search_response),
@@ -894,6 +941,7 @@ class TestGracefulDegradation:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             {"status": "error", "message": "Corrupt PDF"},  # doc 1 fails
             {"status": "success", "chunks_created": 10},    # doc 2 succeeds
@@ -939,6 +987,7 @@ class TestGracefulDegradation:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             {"status": "already_ingested", "document_id": "doc_123"},
             {"status": "already_ingested", "document_id": "doc_456"},
@@ -1051,6 +1100,7 @@ class TestDownloadPhaseMetadata:
         """
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
         ]
 
@@ -1119,6 +1169,7 @@ class TestDownloadPhaseMetadata:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             download_response,
         ]
 
@@ -1450,6 +1501,7 @@ class TestKeyDocumentsIntegration:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             sample_ingest_response,
             sample_ingest_response,
@@ -1509,6 +1561,7 @@ class TestKeyDocumentsIntegration:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             sample_ingest_response,
             sample_ingest_response,
@@ -1580,6 +1633,7 @@ class TestOrchestratorPassesToggleFlags:
 
         mock_mcp_client.call_tool = AsyncMock(side_effect=[
             sample_application_response,  # Phase 1: get_application_details
+            SAMPLE_LIST_RESPONSE,         # Phase 2: list_application_documents
             sample_download_response,     # Phase 2: download_all_documents
             sample_ingest_response,       # Phase 3: ingest doc1
             sample_ingest_response,       # Phase 3: ingest doc2
@@ -1603,8 +1657,9 @@ class TestOrchestratorPassesToggleFlags:
 
         assert result.success is True
 
-        # Verify the download_all_documents call (second call_tool invocation)
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        # Verify the download_all_documents call (third call_tool invocation,
+        # after get_application_details and list_application_documents)
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][0] == "download_all_documents"
         download_args = download_call[0][1]
         assert download_args["include_consultation_responses"] is True
@@ -1629,6 +1684,7 @@ class TestOrchestratorPassesToggleFlags:
 
         mock_mcp_client.call_tool = AsyncMock(side_effect=[
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,         # Phase 2: list_application_documents
             sample_download_response,
             sample_ingest_response,
             sample_ingest_response,
@@ -1653,7 +1709,7 @@ class TestOrchestratorPassesToggleFlags:
         assert result.success is True
 
         # Verify the download_all_documents call has no toggle flags
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][0] == "download_all_documents"
         download_args = download_call[0][1]
         assert "include_consultation_responses" not in download_args
@@ -1753,6 +1809,7 @@ class TestS3StorageDownloadPhase:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_s3_download_response,
         ]
 
@@ -1768,8 +1825,8 @@ class TestS3StorageDownloadPhase:
         await orchestrator._phase_fetch_metadata()
         await orchestrator._phase_download_documents()
 
-        # Verify output_dir was /tmp/raw
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        # Verify output_dir was /data/raw (download_all_documents is 3rd call)
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][1]["output_dir"] == "/data/raw"
 
         # Verify upload was called for each file
@@ -1822,6 +1879,7 @@ class TestS3StorageDownloadPhase:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_s3_download_response,
         ]
 
@@ -1870,6 +1928,7 @@ class TestS3StorageDownloadPhase:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
         ]
 
@@ -1885,8 +1944,8 @@ class TestS3StorageDownloadPhase:
         await orchestrator._phase_fetch_metadata()
         await orchestrator._phase_download_documents()
 
-        # Verify output_dir was /data/raw
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        # Verify output_dir was /data/raw (download_all_documents is 3rd call)
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][1]["output_dir"] == "/data/raw"
 
         # Verify no upload calls
@@ -2511,6 +2570,7 @@ class TestIngestErrorExtraction:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             {"error": "Connection lost"},                     # doc 1: error key only
             {"status": "success", "chunks_created": 10},      # doc 2 succeeds
@@ -2561,6 +2621,7 @@ class TestIngestErrorExtraction:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,          # Phase 2: list docs
             sample_download_response,
             {},                                               # doc 1: empty dict
             {"status": "success", "chunks_created": 10},      # doc 2 succeeds
