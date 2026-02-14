@@ -533,3 +533,301 @@ class TestReviewProgressIntegration:
         data = response.json()
         assert data["status"] == "queued"
         assert data["progress"] is None
+
+
+class TestSiteBoundaryEndpoint:
+    """
+    Tests for GET /api/v1/reviews/{review_id}/site-boundary.
+
+    Verifies [cycle-route-assessment:SiteBoundaryEndpoint/TS-01] through TS-03.
+    """
+
+    def _make_geojson(self):
+        """Create a sample GeoJSON FeatureCollection."""
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[-1.15, 51.9], [-1.14, 51.9], [-1.14, 51.91], [-1.15, 51.91], [-1.15, 51.9]]],
+                    },
+                    "properties": {"application_ref": "21/03267/OUT"},
+                },
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-1.145, 51.905],
+                    },
+                    "properties": {"type": "centroid"},
+                },
+            ],
+        }
+
+    def test_boundary_returned_for_completed_review(self, client, mock_redis):
+        """
+        Verifies [cycle-route-assessment:SiteBoundaryEndpoint/TS-01]
+
+        Given: Review with site_boundary in result
+        When: GET /api/v1/reviews/{id}/site-boundary
+        Then: 200 with GeoJSON FeatureCollection
+        """
+        job = ReviewJob(
+            review_id="rev_boundary",
+            application_ref="21/03267/OUT",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "amber"},
+            "metadata": {"site_boundary": self._make_geojson()},
+        })
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_boundary/site-boundary")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/geo+json"
+        data = response.json()
+        assert data["type"] == "FeatureCollection"
+        assert len(data["features"]) == 2
+        # First feature is polygon, second is centroid point
+        assert data["features"][0]["geometry"]["type"] == "Polygon"
+        assert data["features"][1]["geometry"]["type"] == "Point"
+
+    def test_404_when_no_boundary(self, client, mock_redis):
+        """
+        Verifies [cycle-route-assessment:SiteBoundaryEndpoint/TS-02]
+
+        Given: Review completed but boundary lookup failed
+        When: GET /api/v1/reviews/{id}/site-boundary
+        Then: 404 with site_boundary_not_found
+        """
+        job = ReviewJob(
+            review_id="rev_no_boundary",
+            application_ref="21/03267/OUT",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "amber"},
+            "metadata": {"model": "claude-3-sonnet"},
+        })
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_no_boundary/site-boundary")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 404
+        data = response.json()
+        assert data["error"]["code"] == "site_boundary_not_found"
+
+    def test_404_for_unknown_review(self, client, mock_redis):
+        """
+        Verifies [cycle-route-assessment:SiteBoundaryEndpoint/TS-03]
+
+        Given: No review with this ID
+        When: GET /api/v1/reviews/{id}/site-boundary
+        Then: 404 with review_not_found
+        """
+        mock_redis.get_job = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_nonexistent/site-boundary")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 404
+        data = response.json()
+        assert data["error"]["code"] == "review_not_found"
+
+
+class TestReviewContentRouteAssessments:
+    """
+    Tests for route_assessments in ReviewContent schema.
+
+    Verifies [cycle-route-assessment:ReviewContent/TS-01] and TS-02.
+    """
+
+    def test_review_with_route_assessments(self, client, mock_redis):
+        """
+        Verifies [cycle-route-assessment:ReviewContent/TS-01]
+
+        Given: Completed review with route_assessments array
+        When: GET /api/v1/reviews/{id}
+        Then: route_assessments populated in response
+        """
+        job = ReviewJob(
+            review_id="rev_routes",
+            application_ref="21/03267/OUT",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {
+                "overall_rating": "amber",
+                "summary": "Needs cycle improvements",
+                "route_assessments": [
+                    {
+                        "destination": "Bicester North",
+                        "destination_id": "dest_001",
+                        "distance_m": 2500,
+                        "duration_minutes": 10.0,
+                        "provision_breakdown": {"segregated": 1500, "none": 1000},
+                        "score": {"score": 55, "rating": "amber"},
+                        "issues": [{"severity": "high", "problem": "No cycle lane"}],
+                        "s106_suggestions": [{"suggestion": "Fund cycleway"}],
+                    }
+                ],
+            },
+            "application": {"reference": "21/03267/OUT"},
+            "metadata": {"model": "claude-3-sonnet"},
+        })
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_routes")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["review"]["route_assessments"] is not None
+        assert len(data["review"]["route_assessments"]) == 1
+        route = data["review"]["route_assessments"][0]
+        assert route["destination"] == "Bicester North"
+        assert route["destination_id"] == "dest_001"
+        assert route["distance_m"] == 2500
+        assert route["score"]["rating"] == "amber"
+
+    def test_review_without_route_assessments(self, client, mock_redis):
+        """
+        Verifies [cycle-route-assessment:ReviewContent/TS-02]
+
+        Given: Completed review without route_assessments
+        When: GET /api/v1/reviews/{id}
+        Then: route_assessments is None, no error
+        """
+        job = ReviewJob(
+            review_id="rev_no_routes",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "green", "summary": "Good provision"},
+            "application": {"reference": "25/01178/REM"},
+            "metadata": {"model": "claude-3-sonnet"},
+        })
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_no_routes")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["review"]["overall_rating"] == "green"
+        # route_assessments should be None/absent - not cause an error
+        assert data["review"].get("route_assessments") is None
+
+
+class TestSiteBoundaryIntegration:
+    """
+    Integration test for site boundary in full review response.
+
+    Verifies [cycle-route-assessment:ITS-04] - Site boundary API with review data.
+    """
+
+    def test_completed_review_includes_site_boundary(self, client, mock_redis):
+        """
+        Verifies [cycle-route-assessment:ITS-04]
+
+        Given: Completed review with site_boundary in Redis
+        When: GET /api/v1/reviews/{id}
+        Then: site_boundary field populated in review response
+        """
+        geojson = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Polygon", "coordinates": [[[-1.15, 51.9], [-1.14, 51.9], [-1.14, 51.91], [-1.15, 51.9]]]},
+                    "properties": {},
+                },
+            ],
+        }
+
+        job = ReviewJob(
+            review_id="rev_boundary_int",
+            application_ref="21/03267/OUT",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "amber"},
+            "application": {"reference": "21/03267/OUT"},
+            "metadata": {"site_boundary": geojson, "model": "claude-3-sonnet"},
+        })
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_boundary_int")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["site_boundary"] is not None
+        assert data["site_boundary"]["type"] == "FeatureCollection"
+
+    def test_completed_review_without_site_boundary(self, client, mock_redis):
+        """
+        Verifies site_boundary is None when metadata has no boundary.
+
+        Given: Completed review without site_boundary in metadata
+        When: GET /api/v1/reviews/{id}
+        Then: site_boundary is None
+        """
+        job = ReviewJob(
+            review_id="rev_no_boundary_int",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "green"},
+            "application": {"reference": "25/01178/REM"},
+            "metadata": {"model": "claude-3-sonnet"},
+        })
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_no_boundary_int")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["site_boundary"] is None

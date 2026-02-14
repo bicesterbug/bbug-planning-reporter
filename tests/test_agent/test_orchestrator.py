@@ -41,12 +41,21 @@ def _sequential_ingestion(monkeypatch):
 
 @pytest.fixture
 def mock_mcp_client():
-    """Create a mock MCPClientManager."""
+    """Create a mock MCPClientManager.
+
+    By default, cycle-route MCP is not connected so ASSESSING_ROUTES
+    phase is skipped (recoverable error). Tests that need route assessment
+    should override is_connected to return True for CYCLE_ROUTE.
+    """
     client = AsyncMock(spec=MCPClientManager)
     client.initialize = AsyncMock()
     client.close = AsyncMock()
     client.call_tool = AsyncMock()
-    client.is_connected = MagicMock(return_value=True)
+
+    # Cycle route not available by default in legacy tests
+    client.is_connected = MagicMock(
+        side_effect=lambda server_type: server_type != MCPServerType.CYCLE_ROUTE
+    )
     return client
 
 
@@ -638,8 +647,9 @@ class TestPartialDocumentIngestion:
         assert result.success is True
 
         errors = orchestrator.progress.state.errors_encountered
-        assert len(errors) == 2
-        assert any("OCR failed" in e.get("error", "") for e in errors)
+        ingest_errors = [e for e in errors if e.get("phase") == "ingesting_documents"]
+        assert len(ingest_errors) == 2
+        assert any("OCR failed" in e.get("error", "") for e in ingest_errors)
 
         await orchestrator.close()
 
@@ -1077,8 +1087,9 @@ class TestGracefulDegradation:
         assert orchestrator._ingestion_result.documents_ingested == 2
 
         errors = orchestrator.progress.state.errors_encountered
-        assert len(errors) == 1
-        assert "Corrupt PDF" in errors[0]["error"]
+        ingest_errors = [e for e in errors if e.get("phase") == "ingesting_documents"]
+        assert len(ingest_errors) == 1
+        assert "Corrupt PDF" in ingest_errors[0]["error"]
 
         await orchestrator.close()
 
@@ -2539,6 +2550,7 @@ class TestTwoPhaseReviewGeneration:
             "overall_rating", "key_documents", "aspects", "policy_compliance",
             "recommendations", "suggested_conditions", "full_markdown",
             "summary", "model", "input_tokens", "output_tokens",
+            "route_assessments",
         }
         assert set(review.keys()) == expected_keys
 
@@ -2746,9 +2758,10 @@ class TestIngestErrorExtraction:
         assert orchestrator._ingestion_result.documents_ingested == 2
 
         errors = orchestrator.progress.state.errors_encountered
-        assert len(errors) == 1
-        assert "Connection lost" in errors[0]["error"]
-        assert "Unknown error" not in errors[0]["error"]
+        ingest_errors = [e for e in errors if e.get("phase") == "ingesting_documents"]
+        assert len(ingest_errors) == 1
+        assert "Connection lost" in ingest_errors[0]["error"]
+        assert "Unknown error" not in ingest_errors[0]["error"]
 
         await orchestrator.close()
 
@@ -2798,8 +2811,9 @@ class TestIngestErrorExtraction:
         assert orchestrator._ingestion_result.documents_ingested == 2
 
         errors = orchestrator.progress.state.errors_encountered
-        assert len(errors) == 1
-        assert "Unknown error" in errors[0]["error"]
+        ingest_errors = [e for e in errors if e.get("phase") == "ingesting_documents"]
+        assert len(ingest_errors) == 1
+        assert "Unknown error" in ingest_errors[0]["error"]
 
         await orchestrator.close()
 

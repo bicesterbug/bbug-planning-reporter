@@ -19,6 +19,7 @@ def build_report_prompt(
     app_evidence_text: str,
     policy_evidence_text: str,
     plans_submitted_text: str = "No plans or drawings were detected.",
+    route_evidence_text: str = "No cycling route assessments were performed.",
 ) -> tuple[str, str]:
     """
     Build the system and user prompts for the report call.
@@ -34,6 +35,7 @@ def build_report_prompt(
         policy_evidence_text: Evidence chunks from policy documents.
         plans_submitted_text: Formatted list of image-based documents that were
             downloaded but not ingested (plans, elevations, drawings).
+        route_evidence_text: Cycling route assessment data with LTN 1/20 scores and issues.
 
     Returns:
         Tuple of (system_prompt, user_prompt).
@@ -150,6 +152,9 @@ The following documents were identified as image-based (plans, elevations, drawi
 
 ## Relevant Policy Extracts
 {policy_evidence_text}
+
+## Cycling Route Assessments
+{route_evidence_text}
 
 Write the full markdown report following the format specified in your instructions. Expand the analysis notes into detailed prose for each aspect. The report should be suitable for submission as a formal consultation response."""
 

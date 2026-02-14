@@ -7,8 +7,9 @@ Implements:
 - [foundation-api:FR-013] - Health endpoint
 - [policy-knowledge-base:FR-001] - Policy endpoints
 - [api-hardening:FR-005] through [FR-007] - Download endpoints
+- [cycle-route-assessment:FR-005] - Destination endpoints
 """
 
-from src.api.routes import downloads, health, policies, reviews
+from src.api.routes import destinations, downloads, health, policies, reviews
 
-__all__ = ["downloads", "health", "policies", "reviews"]
+__all__ = ["destinations", "downloads", "health", "policies", "reviews"]

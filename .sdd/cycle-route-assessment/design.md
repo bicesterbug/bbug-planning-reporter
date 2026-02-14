@@ -665,25 +665,25 @@ No missing features or infrastructure. All external APIs are publicly available.
 ### Phase 3: Pipeline integration
 
 - Task 9: Add destination management
-  - Status: Backlog
+  - Status: Done
   - Create `src/shared/destinations.py` with Redis CRUD + default seeding. Create `src/api/routes/destinations.py` with GET/POST/DELETE endpoints. Add `destination_ids` to `ReviewOptionsRequest`. Add tests.
   - Requirements: [cycle-route-assessment:FR-005], [cycle-route-assessment:FR-006]
   - Test Scenarios: [cycle-route-assessment:DestinationManagement/TS-01], [cycle-route-assessment:DestinationManagement/TS-02], [cycle-route-assessment:DestinationManagement/TS-03], [cycle-route-assessment:DestinationManagement/TS-04], [cycle-route-assessment:ReviewOptionsRequest/TS-01], [cycle-route-assessment:ReviewOptionsRequest/TS-02], [cycle-route-assessment:ReviewOptionsRequest/TS-03]
 
 - Task 10: Add ASSESSING_ROUTES phase to orchestrator
-  - Status: Backlog
+  - Status: Done
   - Insert `ASSESSING_ROUTES` into `ReviewPhase` enum between ANALYSING_APPLICATION and GENERATING_REVIEW, update weights (rebalance to sum 100) and phase map (ASSESSING_ROUTES=6, GENERATING_REVIEW=7, VERIFYING_REVIEW=8). Add `_phase_assess_routes()` to orchestrator that: fetches destinations, calls `get_site_boundary`, calls `assess_cycle_route` for each destination, stores results. Add `route_assessments` and `site_boundary` to review result dict. Add `CYCLE_ROUTE` to `MCPServerType` and `TOOL_ROUTING`. Update `_build_evidence_context` to include route data (scores, issues, S106 suggestions) so the LLM incorporates them during GENERATING_REVIEW. Add tests.
   - Requirements: [cycle-route-assessment:FR-008], [cycle-route-assessment:NFR-002], [cycle-route-assessment:NFR-005]
   - Test Scenarios: [cycle-route-assessment:AgentOrchestrator/TS-01], [cycle-route-assessment:AgentOrchestrator/TS-02], [cycle-route-assessment:AgentOrchestrator/TS-03], [cycle-route-assessment:ReviewPhase/TS-01], [cycle-route-assessment:ReviewPhase/TS-02], [cycle-route-assessment:ITS-01], [cycle-route-assessment:ITS-02]
 
 - Task 11: Add route_assessments to API schemas and site-boundary endpoint
-  - Status: Backlog
+  - Status: Done
   - Add `RouteAssessment` and `route_assessments` to `ReviewContent`. Add `site_boundary` to `ReviewResponse`. Add `GET /reviews/{id}/site-boundary` endpoint. Add tests.
   - Requirements: [cycle-route-assessment:FR-008], [cycle-route-assessment:FR-010], [cycle-route-assessment:NFR-005]
   - Test Scenarios: [cycle-route-assessment:ReviewContent/TS-01], [cycle-route-assessment:ReviewContent/TS-02], [cycle-route-assessment:SiteBoundaryEndpoint/TS-01], [cycle-route-assessment:SiteBoundaryEndpoint/TS-02], [cycle-route-assessment:SiteBoundaryEndpoint/TS-03], [cycle-route-assessment:ITS-04], [cycle-route-assessment:ITS-05]
 
 - Task 12: Update production docker-compose with cycle-route-mcp
-  - Status: Backlog
+  - Status: Done
   - Add cycle-route-mcp service to deploy/docker-compose.yml with Traefik labels, `CYCLE_ROUTE_URL` on worker, update PRODUCTION.md.
   - Requirements: [cycle-route-assessment:FR-001], [cycle-route-assessment:FR-013]
   - Test Scenarios: N/A (infrastructure)
@@ -694,8 +694,8 @@ No missing features or infrastructure. All external APIs are publicly available.
 
 | Phase Introduced | Description | Used In Phase | Status |
 |------------------|-------------|---------------|--------|
-| Phase 1 | `create_mcp_app` helper with Streamable HTTP support | Phase 2 (new server uses it) | Pending |
-| Phase 2 | CycleRouteMCP server (standalone, not wired to pipeline) | Phase 3 (orchestrator calls it) | Pending |
+| Phase 1 | `create_mcp_app` helper with Streamable HTTP support | Phase 2 (new server uses it) | Resolved |
+| Phase 2 | CycleRouteMCP server (standalone, not wired to pipeline) | Phase 3 (orchestrator calls it) | Resolved |
 
 ---
 

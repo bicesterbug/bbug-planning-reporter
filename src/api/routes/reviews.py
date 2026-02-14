@@ -15,6 +15,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 from ulid import ULID
 
 from src.api.dependencies import ArqPoolDep, RedisClientDep
@@ -110,6 +111,8 @@ async def submit_review(
             # Implements [review-scope-control:FR-004] - Map toggle fields
             include_consultation_responses=request.options.include_consultation_responses,
             include_public_comments=request.options.include_public_comments,
+            # Implements [cycle-route-assessment:FR-006] - Per-review destination selection
+            destination_ids=request.options.destination_ids,
         )
 
     # Create job record
@@ -205,6 +208,7 @@ async def get_review(
     review_content = None
     application_info = None
     metadata = None
+    site_boundary = None
 
     if job.status == ReviewStatus.COMPLETED or job.status == "completed":
         result = await redis.get_result(review_id)
@@ -212,6 +216,9 @@ async def get_review(
             review_content = result.get("review")
             application_info = result.get("application")
             metadata = result.get("metadata")
+            # Implements [cycle-route-assessment:FR-010] - Site boundary from metadata
+            if metadata:
+                site_boundary = metadata.get("site_boundary")
 
     return ReviewResponse(
         review_id=job.review_id,
@@ -224,6 +231,7 @@ async def get_review(
         application=application_info,
         review=review_content,
         metadata=metadata,
+        site_boundary=site_boundary,
         error=job.error,
     )
 
@@ -385,3 +393,56 @@ async def cancel_review(
         status="cancelled",
         progress=None,
     )
+
+
+@router.get(
+    "/reviews/{review_id}/site-boundary",
+    responses={
+        200: {"content": {"application/geo+json": {}}, "description": "GeoJSON site boundary"},
+        404: {"model": ErrorResponse, "description": "Review or boundary not found"},
+    },
+)
+async def get_site_boundary(
+    review_id: str,
+    redis: RedisClientDep,
+) -> Any:
+    """
+    Get site boundary GeoJSON for a review.
+
+    Returns the GeoJSON FeatureCollection with site polygon and centroid point.
+
+    Implements [cycle-route-assessment:FR-010] - Site boundary from metadata
+    Implements [cycle-route-assessment:SiteBoundaryEndpoint/TS-01] - Boundary returned
+    Implements [cycle-route-assessment:SiteBoundaryEndpoint/TS-02] - No boundary
+    Implements [cycle-route-assessment:SiteBoundaryEndpoint/TS-03] - Unknown review
+    """
+    job = await redis.get_job(review_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail=make_error_response(
+                code="review_not_found",
+                message=f"No review found with ID {review_id}",
+                details={"review_id": review_id},
+            ),
+        )
+
+    # Get result to extract site_boundary from metadata
+    result = await redis.get_result(review_id)
+    site_boundary = None
+    if result:
+        metadata = result.get("metadata")
+        if metadata:
+            site_boundary = metadata.get("site_boundary")
+
+    if site_boundary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=make_error_response(
+                code="site_boundary_not_found",
+                message=f"No site boundary data for review {review_id}",
+                details={"review_id": review_id},
+            ),
+        )
+
+    return JSONResponse(content=site_boundary, media_type="application/geo+json")

@@ -32,30 +32,35 @@ class ReviewPhase(Enum):
     DOWNLOADING_DOCUMENTS = "downloading_documents"
     INGESTING_DOCUMENTS = "ingesting_documents"
     ANALYSING_APPLICATION = "analysing_application"
+    ASSESSING_ROUTES = "assessing_routes"  # [cycle-route-assessment:FR-008]
     GENERATING_REVIEW = "generating_review"
     VERIFYING_REVIEW = "verifying_review"  # [review-workflow-redesign:FR-005]
 
 
 # Phase weights for progress calculation (must sum to 100)
+# Implements [cycle-route-assessment:ReviewPhase/TS-01] - Weights sum to 100
 PHASE_WEIGHTS: dict[ReviewPhase, int] = {
     ReviewPhase.FETCHING_METADATA: 5,
     ReviewPhase.FILTERING_DOCUMENTS: 5,
     ReviewPhase.DOWNLOADING_DOCUMENTS: 15,
-    ReviewPhase.INGESTING_DOCUMENTS: 25,
-    ReviewPhase.ANALYSING_APPLICATION: 25,
+    ReviewPhase.INGESTING_DOCUMENTS: 22,
+    ReviewPhase.ANALYSING_APPLICATION: 20,
+    ReviewPhase.ASSESSING_ROUTES: 8,
     ReviewPhase.GENERATING_REVIEW: 15,
     ReviewPhase.VERIFYING_REVIEW: 10,
 }
 
 # Implements [review-progress:FR-001] - Phase to 1-based number mapping
+# Implements [cycle-route-assessment:ReviewPhase/TS-02] - ASSESSING_ROUTES=6
 PHASE_NUMBER_MAP: dict[ReviewPhase, int] = {
     ReviewPhase.FETCHING_METADATA: 1,
     ReviewPhase.FILTERING_DOCUMENTS: 2,
     ReviewPhase.DOWNLOADING_DOCUMENTS: 3,
     ReviewPhase.INGESTING_DOCUMENTS: 4,
     ReviewPhase.ANALYSING_APPLICATION: 5,
-    ReviewPhase.GENERATING_REVIEW: 6,
-    ReviewPhase.VERIFYING_REVIEW: 7,
+    ReviewPhase.ASSESSING_ROUTES: 6,
+    ReviewPhase.GENERATING_REVIEW: 7,
+    ReviewPhase.VERIFYING_REVIEW: 8,
 }
 
 
@@ -307,7 +312,7 @@ class ProgressTracker:
         return {
             "phase": phase.value if phase else None,
             "phase_number": PHASE_NUMBER_MAP.get(phase, 1) if phase else 1,
-            "total_phases": 7,
+            "total_phases": 8,
             "percent_complete": self.calculate_percent_complete(),
             "detail": detail,
         }
