@@ -103,6 +103,7 @@ sed -i 's/IMAGE_TAG=.*/IMAGE_TAG=v0.x.y/' .env
 
 | Date | Tag | Notes |
 |------|-----|-------|
+| 2026-02-14 | v0.1.10 | Fix category filtering: parse <th> section headers, match real portal categories |
 | 2026-02-14 | v0.1.9 | Detect image-based PDFs (plans/drawings), skip vector ingestion |
 | 2026-02-14 | v0.1.8 | Fix document download filename extraction from Cherwell portal URLs |
 | 2026-02-14 | v0.1.7 | Fix scraper health check: add /health endpoint replacing SSE probe |
