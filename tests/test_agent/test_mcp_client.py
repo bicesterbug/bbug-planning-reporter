@@ -83,7 +83,7 @@ def _patch_mcp(mock_session=None, sse_side_effect=None):
         sse_patch = patch("src.agent.mcp_client.sse_client", side_effect=sse_side_effect)
     else:
         @asynccontextmanager
-        async def fake_sse(url):
+        async def fake_sse(url, **kwargs):
             yield (AsyncMock(), AsyncMock())
 
         sse_patch = patch("src.agent.mcp_client.sse_client", side_effect=fake_sse)
@@ -145,7 +145,7 @@ class TestConnectionEstablishment:
         """
 
         @asynccontextmanager
-        async def failing_sse(url):
+        async def failing_sse(url, **kwargs):
             if "3001" in url:
                 raise ConnectionError("Connection refused")
             yield (AsyncMock(), AsyncMock())
@@ -181,7 +181,7 @@ class TestAllServersUnavailable:
         """
 
         @asynccontextmanager
-        async def always_fail(url):
+        async def always_fail(url, **kwargs):
             raise ConnectionError("Connection refused")
             yield  # pragma: no cover
 
@@ -216,7 +216,7 @@ class TestHealthCheckDetection:
         call_count = 0
 
         @asynccontextmanager
-        async def sse_fails_after_init(url):
+        async def sse_fails_after_init(url, **kwargs):
             nonlocal call_count
             call_count += 1
             # First 3 calls (initialize) succeed; subsequent calls for policy-kb fail
@@ -310,7 +310,7 @@ class TestReconnectionBackoff:
         """
 
         @asynccontextmanager
-        async def always_fail(url):
+        async def always_fail(url, **kwargs):
             raise ConnectionError("Connection refused")
             yield  # pragma: no cover
 
@@ -359,7 +359,7 @@ class TestToolCallRouting:
         sse_urls_called = []
 
         @asynccontextmanager
-        async def tracking_sse(url):
+        async def tracking_sse(url, **kwargs):
             sse_urls_called.append(url)
             yield (AsyncMock(), AsyncMock())
 

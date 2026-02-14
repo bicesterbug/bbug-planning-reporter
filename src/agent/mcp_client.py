@@ -149,6 +149,12 @@ class MCPClientManager:
             server_type: ConnectionState(server_type=server_type) for server_type in MCPServerType
         }
 
+        # Auth headers for MCP servers (shared MCP_API_KEY)
+        mcp_api_key = os.getenv("MCP_API_KEY", "")
+        self._headers: dict[str, str] | None = (
+            {"Authorization": f"Bearer {mcp_api_key}"} if mcp_api_key else None
+        )
+
     async def initialize(self) -> None:
         """Test connectivity to all MCP servers."""
         errors: list[MCPConnectionError] = []
@@ -181,7 +187,7 @@ class MCPClientManager:
         state = self._states[server_type]
 
         try:
-            async with sse_client(config.sse_url) as (read, write), ClientSession(read, write) as session:
+            async with sse_client(config.sse_url, headers=self._headers) as (read, write), ClientSession(read, write) as session:
                     await session.initialize()
                     tools_result = await session.list_tools()
                     state.connected = True
@@ -237,7 +243,7 @@ class MCPClientManager:
 
         try:
             async with asyncio.timeout(effective_timeout):
-                async with sse_client(config.sse_url) as (read, write):
+                async with sse_client(config.sse_url, headers=self._headers) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         result = await session.call_tool(tool_name, arguments)
