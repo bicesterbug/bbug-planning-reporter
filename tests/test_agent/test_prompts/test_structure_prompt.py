@@ -178,3 +178,62 @@ class TestStructurePromptDocuments:
         assert "Design and Access Statement" in user
         assert "https://example.com/ta.pdf" in user
         assert "no URL" in user
+
+
+PLANS_SUBMITTED = (
+    "- Site Plan (type: Plans - Site Plan, image ratio: 92%)\n"
+    "- Elevations (type: Elevations, image ratio: 88%)"
+)
+
+
+class TestStructurePromptPlansSubmitted:
+    """
+    Verifies [document-type-detection:build_structure_prompt/TS-01] and [TS-02]
+    """
+
+    def test_plans_section_included_in_prompt(self):
+        """
+        Verifies [document-type-detection:build_structure_prompt/TS-01]
+
+        Given: Non-empty plans_submitted_text
+        When: build_structure_prompt() called
+        Then: User prompt contains Plans & Drawings Submitted section
+        """
+        _, user = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE,
+            PLANS_SUBMITTED,
+        )
+
+        assert "Plans & Drawings Submitted" in user
+        assert "Site Plan" in user
+        assert "92%" in user
+        assert "Elevations" in user
+
+    def test_plans_section_with_no_plans(self):
+        """
+        Verifies [document-type-detection:build_structure_prompt/TS-02]
+
+        Given: plans_submitted_text is "No plans or drawings were detected."
+        When: build_structure_prompt() called
+        Then: User prompt still contains the section with the no-plans text
+        """
+        _, user = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE,
+            "No plans or drawings were detected.",
+        )
+
+        assert "Plans & Drawings Submitted" in user
+        assert "No plans or drawings were detected." in user
+
+    def test_backward_compat_default_param(self):
+        """
+        Given: plans_submitted_text not provided
+        When: build_structure_prompt() called without the parameter
+        Then: User prompt still works with default value
+        """
+        _, user = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE,
+        )
+
+        assert "Plans & Drawings Submitted" in user
+        assert "No plans or drawings were detected." in user

@@ -155,3 +155,48 @@ class TestReportPromptBinding:
         )
 
         assert "authoritative" in system.lower()
+
+
+PLANS_SUBMITTED = (
+    "- Site Plan (type: Plans - Site Plan, image ratio: 92%)\n"
+    "- Elevations (type: Elevations, image ratio: 88%)"
+)
+
+
+class TestReportPromptPlansSubmitted:
+    """
+    Verifies [document-type-detection:build_report_prompt/TS-01]
+    """
+
+    def test_plans_section_in_report_prompt(self):
+        """
+        Verifies [document-type-detection:build_report_prompt/TS-01]
+
+        Given: Non-empty plans_submitted_text
+        When: build_report_prompt() called
+        Then: User prompt contains Plans & Drawings Submitted section
+        """
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        _, user = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE,
+            POLICY_EVIDENCE, PLANS_SUBMITTED,
+        )
+
+        assert "Plans & Drawings Submitted" in user
+        assert "Site Plan" in user
+        assert "92%" in user
+
+    def test_backward_compat_default_param(self):
+        """
+        Given: plans_submitted_text not provided
+        When: build_report_prompt() called without the parameter
+        Then: Prompt still works with default value
+        """
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        _, user = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE,
+            POLICY_EVIDENCE,
+        )
+
+        assert "Plans & Drawings Submitted" in user
+        assert "No plans or drawings were detected." in user

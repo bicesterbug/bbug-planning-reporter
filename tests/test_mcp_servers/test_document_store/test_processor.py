@@ -4,6 +4,7 @@ Tests for DocumentProcessor.
 Implements test scenarios from [document-processing:DocumentProcessor/TS-01] through [TS-08]
 """
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,7 @@ import fitz  # PyMuPDF
 import pytest
 
 from src.mcp_servers.document_store.processor import (
+    DocumentClassification,
     DocumentExtraction,
     DocumentProcessor,
     ExtractionError,
@@ -557,6 +559,177 @@ class TestImageFileExtraction:
             processor.extract_text(sample_image)
 
         assert "OCR is required for image files" in str(exc_info.value)
+
+
+class TestClassifyDocument:
+    """
+    Tests for classify_document method.
+
+    Verifies [document-type-detection:DocumentProcessor/TS-01] through [TS-06]
+    """
+
+    @pytest.fixture
+    def image_heavy_pdf(self, tmp_path: Path) -> Path:
+        """Create a PDF where all pages are image-heavy (ratio > 0.7)."""
+        from PIL import Image
+
+        pdf_path = tmp_path / "plans.pdf"
+        img_path = tmp_path / "plan_image.png"
+
+        # Create a large image that will fill the page
+        img = Image.new("RGB", (2000, 2000), color="blue")
+        img.save(str(img_path))
+
+        doc = fitz.open()
+        for _ in range(3):
+            page = doc.new_page()
+            # Insert image filling the entire page
+            page.insert_image(page.rect, filename=str(img_path))
+
+        doc.save(str(pdf_path))
+        doc.close()
+        return pdf_path
+
+    @pytest.fixture
+    def mixed_ratio_pdf(self, tmp_path: Path) -> Path:
+        """Create a PDF with one image page and many text pages (average < 0.7)."""
+        from PIL import Image
+
+        pdf_path = tmp_path / "mixed.pdf"
+        img_path = tmp_path / "diagram.png"
+
+        img = Image.new("RGB", (2000, 2000), color="red")
+        img.save(str(img_path))
+
+        doc = fitz.open()
+
+        # 1 image-heavy page
+        page = doc.new_page()
+        page.insert_image(page.rect, filename=str(img_path))
+
+        # 9 text-only pages
+        for i in range(9):
+            page = doc.new_page()
+            page.insert_text(
+                (72, 72),
+                f"Page {i + 2}: This is a text-heavy page with transport assessment content. "
+                "The cycle parking provision includes 48 Sheffield stands. "
+                "Highway access is via the A41 roundabout.",
+                fontsize=12,
+            )
+
+        doc.save(str(pdf_path))
+        doc.close()
+        return pdf_path
+
+    def test_image_based_pdf_detected(
+        self, processor: DocumentProcessor, image_heavy_pdf: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentProcessor/TS-01]
+
+        Given: A PDF where all pages have image ratio > 0.7
+        When: classify_document() is called
+        Then: Returns is_image_based=True with correct average ratio
+        """
+        result = processor.classify_document(image_heavy_pdf)
+
+        assert isinstance(result, DocumentClassification)
+        assert result.is_image_based is True
+        assert result.average_image_ratio > 0.7
+        assert result.page_count == 3
+        assert len(result.page_ratios) == 3
+        assert all(r > 0 for r in result.page_ratios)
+
+    def test_text_based_pdf_detected(
+        self, processor: DocumentProcessor, sample_pdf_with_text: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentProcessor/TS-02]
+
+        Given: A PDF where pages have image ratio < 0.7
+        When: classify_document() is called
+        Then: Returns is_image_based=False with correct average ratio
+        """
+        result = processor.classify_document(sample_pdf_with_text)
+
+        assert isinstance(result, DocumentClassification)
+        assert result.is_image_based is False
+        assert result.average_image_ratio < 0.7
+        assert result.page_count == 3
+        assert len(result.page_ratios) == 3
+
+    def test_mixed_pdf_classified_as_text(
+        self, processor: DocumentProcessor, mixed_ratio_pdf: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentProcessor/TS-03]
+
+        Given: A PDF with one image-heavy page and many text pages, average < 0.7
+        When: classify_document() is called
+        Then: Returns is_image_based=False
+        """
+        result = processor.classify_document(mixed_ratio_pdf)
+
+        assert isinstance(result, DocumentClassification)
+        assert result.is_image_based is False
+        assert result.page_count == 10
+        # Average of 1 high + 9 low should be well below 0.7
+        assert result.average_image_ratio < 0.7
+
+    def test_threshold_from_env_var(self, sample_pdf_with_text: Path) -> None:
+        """
+        Verifies [document-type-detection:DocumentProcessor/TS-04]
+
+        Given: IMAGE_RATIO_THRESHOLD=0.5 set in environment
+        When: DocumentProcessor is instantiated
+        Then: Threshold is 0.5 instead of default 0.7
+        """
+        with patch.dict("os.environ", {"IMAGE_RATIO_THRESHOLD": "0.5"}):
+            proc = DocumentProcessor(enable_ocr=False)
+            assert proc.IMAGE_HEAVY_THRESHOLD == pytest.approx(0.5)
+
+        # Without env var, default is used
+        proc_default = DocumentProcessor(enable_ocr=False)
+        assert proc_default.IMAGE_HEAVY_THRESHOLD == pytest.approx(0.7)
+
+    def test_non_pdf_skips_classification(
+        self, processor: DocumentProcessor, tmp_path: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentProcessor/TS-05]
+
+        Given: An image file (.png) is passed
+        When: classify_document() is called
+        Then: Returns is_image_based=False (classification only applies to PDFs)
+        """
+        img_path = tmp_path / "photo.png"
+        img_path.write_bytes(b"\x89PNG\r\n\x1a\n")  # minimal PNG header
+
+        result = processor.classify_document(img_path)
+
+        assert isinstance(result, DocumentClassification)
+        assert result.is_image_based is False
+        assert result.average_image_ratio == 0.0
+        assert result.page_count == 0
+        assert result.page_ratios == []
+
+    def test_corrupt_pdf_handled_gracefully(
+        self, processor: DocumentProcessor, corrupt_pdf: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentProcessor/TS-06]
+
+        Given: A corrupt PDF that cannot be opened
+        When: classify_document() is called
+        Then: Returns is_image_based=False with ratio 0.0
+        """
+        result = processor.classify_document(corrupt_pdf)
+
+        assert isinstance(result, DocumentClassification)
+        assert result.is_image_based is False
+        assert result.average_image_ratio == 0.0
+        assert result.page_count == 0
 
 
 class TestImageHeavyPageDetection:

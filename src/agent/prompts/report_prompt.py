@@ -18,6 +18,7 @@ def build_report_prompt(
     ingested_docs_text: str,
     app_evidence_text: str,
     policy_evidence_text: str,
+    plans_submitted_text: str = "No plans or drawings were detected.",
 ) -> tuple[str, str]:
     """
     Build the system and user prompts for the report call.
@@ -31,6 +32,8 @@ def build_report_prompt(
         ingested_docs_text: Formatted list of ingested documents with metadata.
         app_evidence_text: Evidence chunks from application documents.
         policy_evidence_text: Evidence chunks from policy documents.
+        plans_submitted_text: Formatted list of image-based documents that were
+            downloaded but not ingested (plans, elevations, drawings).
 
     Returns:
         Tuple of (system_prompt, user_prompt).
@@ -137,6 +140,10 @@ If the JSON has suggested conditions, list them numbered. If the array is empty,
 
 ## Ingested Documents
 {ingested_docs_text}
+
+## Plans & Drawings Submitted
+The following documents were identified as image-based (plans, elevations, drawings) and were downloaded but not text-searchable. Reference their existence where relevant:
+{plans_submitted_text}
 
 ## Evidence from Application Documents
 {app_evidence_text}

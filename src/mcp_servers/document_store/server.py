@@ -237,9 +237,27 @@ class DocumentStoreMCP:
                 "message": "Document has already been ingested with the same content",
             }
 
+        # Implements [document-type-detection:FR-001] - Classify before extraction
+        # Implements [document-type-detection:FR-002] - Skip ingestion for image-based docs
+        processor = self._get_processor()
+        classification = processor.classify_document(file_path)
+        if classification.is_image_based:
+            logger.info(
+                "Document skipped (image-based)",
+                file_path=str(file_path),
+                application_ref=input.application_ref,
+                image_ratio=round(classification.average_image_ratio, 3),
+                page_count=classification.page_count,
+            )
+            return {
+                "status": "skipped",
+                "reason": "image_based",
+                "image_ratio": round(classification.average_image_ratio, 3),
+                "total_pages": classification.page_count,
+            }
+
         # Extract text
         try:
-            processor = self._get_processor()
             extraction = processor.extract_text(file_path)
         except ExtractionError as e:
             logger.error("Extraction failed", file_path=str(file_path), error=str(e))

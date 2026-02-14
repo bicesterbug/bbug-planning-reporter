@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-14 | [document-type-detection](document-type-detection/) | [spec](document-type-detection/specification.md) | [design](document-type-detection/design.md) | Implemented | Enhancement |
 | 2026-02-14 | [download-filename-fix](download-filename-fix/) | [spec](download-filename-fix/specification.md) | [design](download-filename-fix/design.md) | Implemented | Bugfix |
 | 2026-02-14 | [scraper-health-check](scraper-health-check/) | [spec](scraper-health-check/specification.md) | [design](scraper-health-check/design.md) | Implemented | Bugfix |
 | 2026-02-13 | [review-workflow-redesign](review-workflow-redesign/) | [spec](review-workflow-redesign/specification.md) | [design](review-workflow-redesign/design.md) | Implemented | Enhancement |

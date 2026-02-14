@@ -78,6 +78,8 @@ class DocumentIngestionResult:
     document_paths: list[str] = field(default_factory=list)
     # Implements [key-documents:FR-005] - Maps file_path to {description, document_type, url}
     document_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Implements [document-type-detection:FR-003] - Track image-based docs separately
+    skipped_documents: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -690,13 +692,14 @@ class AgentOrchestrator:
         total_docs = len(self._ingestion_result.document_paths)
         ingested_count = 0
         failed_count = 0
+        skipped_count = 0
         counter_lock = asyncio.Lock()
         concurrency = int(os.getenv("INGEST_CONCURRENCY", "4"))
         semaphore = asyncio.Semaphore(concurrency)
 
         async def ingest_one(doc_path: str) -> bool:
             """Ingest a single document, respecting the semaphore."""
-            nonlocal ingested_count, failed_count
+            nonlocal ingested_count, failed_count, skipped_count
             async with semaphore:
                 try:
                     result = await self._mcp_client.call_tool(
@@ -720,6 +723,27 @@ class AgentOrchestrator:
                                 total=total_docs,
                             )
                         return True
+                    elif result.get("status") == "skipped":
+                        # Implements [document-type-detection:FR-002] - Track skipped docs
+                        # Implements [document-type-detection:FR-003] - Retain separately
+                        async with counter_lock:
+                            skipped_count += 1
+                            doc_meta = self._ingestion_result.document_metadata.get(doc_path, {})
+                            self._ingestion_result.skipped_documents.append({
+                                "file_path": doc_path,
+                                "description": doc_meta.get("description", os.path.basename(doc_path)),
+                                "document_type": doc_meta.get("document_type", "Unknown"),
+                                "url": doc_meta.get("url", ""),
+                                "reason": result.get("reason", "image_based"),
+                                "image_ratio": result.get("image_ratio", 0.0),
+                            })
+                        logger.info(
+                            "Document skipped (image-based)",
+                            review_id=self._review_id,
+                            document=doc_path,
+                            image_ratio=result.get("image_ratio"),
+                        )
+                        return False
                     else:
                         async with counter_lock:
                             failed_count += 1
@@ -759,6 +783,7 @@ class AgentOrchestrator:
             "Document ingestion complete",
             review_id=self._review_id,
             ingested=ingested_count,
+            skipped=skipped_count,
             failed=failed_count,
         )
 
@@ -938,12 +963,13 @@ class AgentOrchestrator:
             evidence_chunks=len(self._evidence_chunks),
         )
 
-    def _build_evidence_context(self) -> tuple[str, str, str, str]:
+    def _build_evidence_context(self) -> tuple[str, str, str, str, str]:
         """
         Build the evidence context strings used by both the structure and report calls.
 
         Returns:
-            Tuple of (app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text).
+            Tuple of (app_summary, ingested_docs_text, app_evidence_text,
+            policy_evidence_text, plans_submitted_text).
         """
         app_summary = "No application metadata available."
         if self._application:
@@ -984,7 +1010,20 @@ class AgentOrchestrator:
             if doc_lines:
                 ingested_docs_text = "\n".join(doc_lines)
 
-        return app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text
+        # Implements [document-type-detection:FR-004] - Plans submitted metadata
+        # Implements [document-type-detection:FR-005] - Agent context for skipped plans
+        plans_submitted_text = "No plans or drawings were detected."
+        if self._ingestion_result and self._ingestion_result.skipped_documents:
+            plan_lines = []
+            for doc in self._ingestion_result.skipped_documents:
+                desc = doc.get("description", "Unknown")
+                doc_type = doc.get("document_type", "Unknown")
+                ratio = doc.get("image_ratio", 0.0)
+                plan_lines.append(f"- {desc} (type: {doc_type}, image ratio: {ratio:.0%})")
+            if plan_lines:
+                plans_submitted_text = "\n".join(plan_lines)
+
+        return app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text, plans_submitted_text
 
     async def _phase_generate_review(self) -> None:
         """
@@ -1009,7 +1048,7 @@ class AgentOrchestrator:
                 recoverable=False,
             )
 
-        app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text = (
+        app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text, plans_submitted_text = (
             self._build_evidence_context()
         )
 
@@ -1027,7 +1066,8 @@ class AgentOrchestrator:
             structure_start = time.monotonic()
             try:
                 system_prompt, user_prompt = build_structure_prompt(
-                    app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text
+                    app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text,
+                    plans_submitted_text,
                 )
                 structure_msg = client.messages.create(
                     model=model,
@@ -1090,7 +1130,7 @@ class AgentOrchestrator:
                 report_start = time.monotonic()
                 report_system, report_user = build_report_prompt(
                     structure_json_str, app_summary, ingested_docs_text,
-                    app_evidence_text, policy_evidence_text,
+                    app_evidence_text, policy_evidence_text, plans_submitted_text,
                 )
                 report_msg = client.messages.create(
                     model=model,
@@ -1148,7 +1188,7 @@ class AgentOrchestrator:
                 fallback_system, fallback_user = build_report_prompt(
                     "{}",  # empty JSON — report call will just produce a review
                     app_summary, ingested_docs_text,
-                    app_evidence_text, policy_evidence_text,
+                    app_evidence_text, policy_evidence_text, plans_submitted_text,
                 )
                 # Override the system prompt for fallback — don't reference JSON
                 fallback_system = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
@@ -1223,6 +1263,12 @@ Always cite specific policy references. Be constructive and evidence-based."""
                         self._ingestion_result.documents_ingested
                         if self._ingestion_result
                         else 0
+                    ),
+                    # Implements [document-type-detection:FR-004] - Plans submitted in metadata
+                    "plans_submitted": (
+                        self._ingestion_result.skipped_documents
+                        if self._ingestion_result
+                        else []
                     ),
                 },
                 success=True,

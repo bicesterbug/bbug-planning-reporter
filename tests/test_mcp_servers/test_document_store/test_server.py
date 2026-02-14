@@ -224,6 +224,109 @@ class TestIngestDocument:
         assert result["error_type"] == "no_content"
 
 
+class TestImageBasedDocumentSkip:
+    """
+    Tests for image-based document skip during ingestion.
+
+    Verifies [document-type-detection:DocumentStoreMCP/TS-01] through [TS-03]
+    """
+
+    @pytest.fixture
+    def image_heavy_pdf(self, tmp_path: Path) -> Path:
+        """Create a PDF where all pages are image-heavy."""
+        from PIL import Image
+
+        pdf_path = tmp_path / "site_plan.pdf"
+        img_path = tmp_path / "plan.png"
+
+        img = Image.new("RGB", (2000, 2000), color="blue")
+        img.save(str(img_path))
+
+        doc = fitz.open()
+        for _ in range(2):
+            page = doc.new_page()
+            page.insert_image(page.rect, filename=str(img_path))
+        doc.save(str(pdf_path))
+        doc.close()
+        return pdf_path
+
+    @pytest.mark.asyncio
+    async def test_image_based_pdf_skipped(
+        self, mcp_server: DocumentStoreMCP, image_heavy_pdf: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentStoreMCP/TS-01]
+
+        Given: A PDF classified as image-based (ratio > threshold)
+        When: ingest_document tool is called
+        Then: Returns {"status": "skipped", "reason": "image_based", "image_ratio": ...}
+        """
+        from src.mcp_servers.document_store.server import IngestDocumentInput
+
+        input_data = IngestDocumentInput(
+            file_path=str(image_heavy_pdf),
+            application_ref="21/03266/F",
+        )
+
+        result = await mcp_server._ingest_document(input_data)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "image_based"
+        assert result["image_ratio"] > 0.7
+        assert result["total_pages"] == 2
+
+    @pytest.mark.asyncio
+    async def test_text_pdf_ingested_normally(
+        self, mcp_server: DocumentStoreMCP, sample_pdf: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentStoreMCP/TS-02]
+
+        Given: A PDF classified as text-based (ratio < threshold)
+        When: ingest_document tool is called
+        Then: Returns {"status": "success", "chunks_created": ...} as before
+        """
+        from src.mcp_servers.document_store.server import IngestDocumentInput
+
+        input_data = IngestDocumentInput(
+            file_path=str(sample_pdf),
+            application_ref="21/03266/F",
+            document_type="transport_assessment",
+        )
+
+        result = await mcp_server._ingest_document(input_data)
+
+        assert result["status"] == "success"
+        assert result["chunks_created"] > 0
+
+    @pytest.mark.asyncio
+    async def test_duplicate_check_before_classification(
+        self, mcp_server: DocumentStoreMCP, sample_pdf: Path
+    ) -> None:
+        """
+        Verifies [document-type-detection:DocumentStoreMCP/TS-03]
+
+        Given: A PDF that was already ingested
+        When: ingest_document tool is called
+        Then: Returns "already_ingested" (duplicate check before classification)
+        """
+        from src.mcp_servers.document_store.server import IngestDocumentInput
+
+        input_data = IngestDocumentInput(
+            file_path=str(sample_pdf),
+            application_ref="21/03266/F",
+            document_type="transport_assessment",
+        )
+
+        # First ingestion
+        result1 = await mcp_server._ingest_document(input_data)
+        assert result1["status"] == "success"
+
+        # Second ingestion — should return already_ingested, not re-classify
+        result2 = await mcp_server._ingest_document(input_data)
+        assert result2["status"] == "already_ingested"
+
+
 class TestSearchDocuments:
     """Tests for search_application_docs tool."""
 

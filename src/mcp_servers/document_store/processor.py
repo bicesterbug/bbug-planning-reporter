@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import os
 import re
 
 import fitz  # PyMuPDF
@@ -76,6 +77,19 @@ class DocumentExtraction:
         return "\n\n".join(parts)
 
 
+@dataclass
+class DocumentClassification:
+    """Result of classifying a document as image-based or text-based.
+
+    Implements [document-type-detection:FR-001] - Image ratio detection
+    """
+
+    is_image_based: bool
+    average_image_ratio: float
+    page_count: int
+    page_ratios: list[float]
+
+
 class DocumentProcessor:
     """
     Core document processing engine for text extraction.
@@ -92,7 +106,7 @@ class DocumentProcessor:
     # Minimum characters per page to consider it has text
     MIN_CHARS_PER_PAGE = 10
 
-    # Image area ratio threshold for detecting image-heavy pages
+    # Default image area ratio threshold for detecting image-heavy pages
     IMAGE_HEAVY_THRESHOLD = 0.7
 
     # Supported file extensions
@@ -111,15 +125,100 @@ class DocumentProcessor:
         """
         Initialize the document processor.
 
+        Implements [document-type-detection:NFR-002] - Configurable threshold via env var
+
         Args:
             enable_ocr: Whether to enable OCR fallback for scanned documents.
         """
         self.enable_ocr = enable_ocr
         self._ocr_available: bool | None = None
+        # Implements [document-type-detection:NFR-002] - Override threshold from env
+        threshold_str = os.getenv("IMAGE_RATIO_THRESHOLD")
+        if threshold_str is not None:
+            self.IMAGE_HEAVY_THRESHOLD = float(threshold_str)
 
     def _is_rendering(self, path: Path) -> bool:
         """Return True if the filename indicates an architectural rendering."""
         return bool(self._RENDERING_PATTERN.search(path.stem))
+
+    def classify_document(self, file_path: str | Path) -> DocumentClassification:
+        """
+        Classify a document as image-based or text-based.
+
+        Implements [document-type-detection:FR-001] - Image ratio detection
+        Implements [document-type-detection:NFR-001] - Lightweight classification (< 500ms)
+        Implements [document-type-detection:NFR-003] - Logging of classification decisions
+
+        Opens the PDF, computes image ratio per page, averages across all pages,
+        and classifies based on the threshold. Non-PDF files are always classified
+        as text-based (classification only applies to PDFs).
+
+        Args:
+            file_path: Path to the document file.
+
+        Returns:
+            DocumentClassification with the classification result.
+        """
+        path = Path(file_path)
+
+        # Only classify PDFs — images and other formats pass through
+        if path.suffix.lower() != ".pdf":
+            logger.info(
+                "Document classification skipped (non-PDF)",
+                file_path=str(path),
+                is_image_based=False,
+            )
+            return DocumentClassification(
+                is_image_based=False,
+                average_image_ratio=0.0,
+                page_count=0,
+                page_ratios=[],
+            )
+
+        try:
+            doc = fitz.open(str(path))
+        except Exception as e:
+            logger.warning(
+                "Document classification failed (cannot open PDF)",
+                file_path=str(path),
+                error=str(e),
+            )
+            return DocumentClassification(
+                is_image_based=False,
+                average_image_ratio=0.0,
+                page_count=0,
+                page_ratios=[],
+            )
+
+        try:
+            page_ratios: list[float] = []
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                ratio = self._calculate_image_ratio(page)
+                page_ratios.append(ratio)
+
+            page_count = len(page_ratios)
+            average_ratio = sum(page_ratios) / page_count if page_count > 0 else 0.0
+            is_image_based = average_ratio > self.IMAGE_HEAVY_THRESHOLD
+
+            logger.info(
+                "Document classified",
+                file_path=str(path),
+                page_count=page_count,
+                average_image_ratio=round(average_ratio, 3),
+                is_image_based=is_image_based,
+                threshold=self.IMAGE_HEAVY_THRESHOLD,
+            )
+
+            return DocumentClassification(
+                is_image_based=is_image_based,
+                average_image_ratio=average_ratio,
+                page_count=page_count,
+                page_ratios=page_ratios,
+            )
+
+        finally:
+            doc.close()
 
     def _check_ocr_available(self) -> bool:
         """Check if Tesseract OCR is available."""

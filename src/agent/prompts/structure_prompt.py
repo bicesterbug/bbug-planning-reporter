@@ -16,6 +16,7 @@ def build_structure_prompt(
     ingested_docs_text: str,
     app_evidence_text: str,
     policy_evidence_text: str,
+    plans_submitted_text: str = "No plans or drawings were detected.",
 ) -> tuple[str, str]:
     """
     Build the system and user prompts for the structure call.
@@ -28,6 +29,8 @@ def build_structure_prompt(
         ingested_docs_text: Formatted list of ingested documents with metadata.
         app_evidence_text: Evidence chunks from application documents.
         policy_evidence_text: Evidence chunks from policy documents.
+        plans_submitted_text: Formatted list of image-based documents that were
+            downloaded but not ingested (plans, elevations, drawings).
 
     Returns:
         Tuple of (system_prompt, user_prompt).
@@ -116,6 +119,10 @@ Each aspect must have:
 ## Ingested Documents
 The following documents were downloaded from the planning portal. Use this list to populate the key_documents field:
 {ingested_docs_text}
+
+## Plans & Drawings Submitted
+The following documents were identified as image-based (plans, elevations, drawings) and were downloaded but not text-searchable. Note their existence in your assessment where relevant:
+{plans_submitted_text}
 
 ## Evidence from Application Documents
 {app_evidence_text}

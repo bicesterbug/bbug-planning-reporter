@@ -2932,3 +2932,346 @@ class TestVerificationPhase:
         assert "verification" not in result.metadata
 
         await orchestrator.close()
+
+
+# ---------------------------------------------------------------------------
+# Document type detection tests
+# ---------------------------------------------------------------------------
+
+class TestDocumentTypeDetection:
+    """
+    Tests for image-based document detection and skip handling.
+
+    Implements [document-type-detection:AgentOrchestrator/TS-01] through [TS-07]
+    """
+
+    @pytest.fixture
+    def sample_skipped_ingest_response(self):
+        """Sample response from ingest_document when document is image-based."""
+        return {
+            "status": "skipped",
+            "reason": "image_based",
+            "image_ratio": 0.92,
+            "total_pages": 2,
+        }
+
+    @pytest.mark.asyncio
+    async def test_skipped_doc_tracked_separately(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+        sample_skipped_ingest_response,
+    ):
+        """
+        Verifies [document-type-detection:AgentOrchestrator/TS-01]
+
+        Given: ingest_document returns skipped for one document
+        When: Ingestion phase completes
+        Then: Document in skipped_documents, not in failed_documents
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,              # doc1 ingested
+            sample_skipped_ingest_response,       # doc2 skipped (image-based)
+            sample_ingest_response,              # doc3 ingested
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        assert orchestrator._ingestion_result.documents_ingested == 2
+        assert len(orchestrator._ingestion_result.skipped_documents) == 1
+
+        skipped = orchestrator._ingestion_result.skipped_documents[0]
+        assert skipped["reason"] == "image_based"
+        assert skipped["image_ratio"] == 0.92
+        assert skipped["description"] == "Site Plan"
+
+        # Should not appear in failed documents
+        assert len(orchestrator._ingestion_result.failed_documents) == 0
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_mixed_ingested_and_skipped(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+        sample_skipped_ingest_response,
+    ):
+        """
+        Verifies [document-type-detection:AgentOrchestrator/TS-02]
+
+        Given: 3 documents: 1 ingested, 2 skipped
+        When: Ingestion phase completes
+        Then: documents_ingested=1, skipped_documents has 2 entries, no error
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,              # doc1 ingested
+            sample_skipped_ingest_response,       # doc2 skipped
+            sample_skipped_ingest_response,       # doc3 skipped
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        assert orchestrator._ingestion_result.documents_ingested == 1
+        assert len(orchestrator._ingestion_result.skipped_documents) == 2
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_all_docs_skipped_fails(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_skipped_ingest_response,
+    ):
+        """
+        Verifies [document-type-detection:AgentOrchestrator/TS-03]
+
+        Given: All documents return "skipped"
+        When: Ingestion phase completes
+        Then: Error raised: "No documents could be ingested"
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_skipped_ingest_response,
+            sample_skipped_ingest_response,
+            sample_skipped_ingest_response,
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = [_make_filter_response()]
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is False
+        assert "No documents could be ingested" in result.error
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_plans_submitted_in_evidence_context(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+        sample_skipped_ingest_response,
+    ):
+        """
+        Verifies [document-type-detection:AgentOrchestrator/TS-04]
+
+        Given: 2 documents in skipped_documents
+        When: _build_evidence_context() is called
+        Then: 5th element contains formatted list of skipped docs
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,
+            sample_skipped_ingest_response,
+            sample_skipped_ingest_response,
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        # Verify plans_submitted_text was generated (check it was passed to prompts)
+        # The plans should be in the result metadata
+        assert "plans_submitted" in result.metadata
+        assert len(result.metadata["plans_submitted"]) == 2
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_no_plans_submitted_empty_list(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+    ):
+        """
+        Verifies [document-type-detection:AgentOrchestrator/TS-05]
+
+        Given: No skipped_documents
+        When: _build_evidence_context() is called
+        Then: 5th element is "No plans or drawings were detected."
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,
+            sample_ingest_response,
+            sample_ingest_response,
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        assert "plans_submitted" in result.metadata
+        assert result.metadata["plans_submitted"] == []
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_plans_metadata_in_review_result(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+        sample_skipped_ingest_response,
+    ):
+        """
+        Verifies [document-type-detection:AgentOrchestrator/TS-06]
+
+        Given: Skipped documents exist
+        When: Review generation completes
+        Then: result.metadata["plans_submitted"] contains skipped doc metadata
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,
+            sample_skipped_ingest_response,
+            sample_ingest_response,
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        plans = result.metadata["plans_submitted"]
+        assert len(plans) == 1
+        assert plans[0]["reason"] == "image_based"
+        assert plans[0]["image_ratio"] == 0.92
+        assert "description" in plans[0]
+        assert "url" in plans[0]
+
+        await orchestrator.close()
