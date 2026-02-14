@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from src.shared.models import ReviewJob, ReviewOptions, ReviewStatus
+from src.shared.models import ReviewJob, ReviewStatus
 from src.shared.storage import StorageUploadError
 from src.worker.review_jobs import (
     _handle_failure,
@@ -355,7 +355,9 @@ class TestProcessReviewOptionsPassthrough:
 
     @pytest.mark.asyncio
     async def test_reads_options_from_redis_and_passes_to_orchestrator(
-        self, mock_redis_wrapper, sample_success_result,
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
     ):
         """
         Verifies [review-scope-control:process_review/TS-01] - Reads options
@@ -364,7 +366,7 @@ class TestProcessReviewOptionsPassthrough:
         When: process_review is called
         Then: AgentOrchestrator is created with the options from the job
         """
-        from src.shared.models import ReviewJob, ReviewOptions
+        from src.shared.models import ReviewOptions
 
         job = ReviewJob(
             review_id="rev_options_test",
@@ -405,7 +407,9 @@ class TestProcessReviewOptionsPassthrough:
 
     @pytest.mark.asyncio
     async def test_works_without_options(
-        self, mock_redis_wrapper, sample_success_result,
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
     ):
         """
         Verifies [review-scope-control:process_review/TS-02] - Works without options
@@ -459,8 +463,8 @@ def _make_s3_backend_mock():
     backend = MagicMock()
     type(backend).is_remote = PropertyMock(return_value=True)
     backend.upload.return_value = None
-    backend.public_url.side_effect = (
-        lambda key: f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
+    backend.public_url.side_effect = lambda key: (
+        f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
     )
     backend.delete_local.return_value = None
     return backend
@@ -589,8 +593,13 @@ class TestS3ReviewOutputUpload:
         assert isinstance(md_call_path, Path)
 
         # Verify S3 keys
-        assert backend.upload.call_args_list[0][0][1] == "25_00284_F/output/rev_upload_test_review.json"
-        assert backend.upload.call_args_list[1][0][1] == "25_00284_F/output/rev_upload_test_review.md"
+        assert (
+            backend.upload.call_args_list[0][0][1]
+            == "25_00284_F/output/rev_upload_test_review.json"
+        )
+        assert (
+            backend.upload.call_args_list[1][0][1] == "25_00284_F/output/rev_upload_test_review.md"
+        )
 
 
 class TestProcessReviewPassesStorageBackend:
@@ -607,8 +616,10 @@ class TestProcessReviewPassesStorageBackend:
         """
         mock_redis_wrapper.get_job = AsyncMock(return_value=None)
 
-        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls, \
-             patch("src.worker.review_jobs.create_storage_backend") as mock_factory:
+        with (
+            patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls,
+            patch("src.worker.review_jobs.create_storage_backend") as mock_factory,
+        ):
             mock_instance = AsyncMock()
             mock_orch_cls.return_value = mock_instance
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -650,7 +661,9 @@ class TestGlobalWebhookEvents:
 
     @pytest.mark.asyncio
     async def test_completed_webhook_includes_full_review_data(
-        self, mock_redis_wrapper, sample_success_result,
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
     ):
         """
         Verifies [global-webhooks:_handle_success/TS-01] - Fires review.completed with full data
@@ -664,7 +677,9 @@ class TestGlobalWebhookEvents:
             await _handle_success(sample_success_result, mock_redis_wrapper)
 
             # Find the review.completed call
-            completed_calls = [c for c in mock_fire.call_args_list if c.args[0] == "review.completed"]
+            completed_calls = [
+                c for c in mock_fire.call_args_list if c.args[0] == "review.completed"
+            ]
             assert len(completed_calls) == 1
 
             data = completed_calls[0].args[2]
@@ -680,7 +695,9 @@ class TestGlobalWebhookEvents:
 
     @pytest.mark.asyncio
     async def test_completed_markdown_webhook_fired(
-        self, mock_redis_wrapper, sample_success_result,
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
     ):
         """
         Verifies [global-webhooks:_handle_success/TS-02] - Fires review.completed.markdown
@@ -696,7 +713,9 @@ class TestGlobalWebhookEvents:
             await _handle_success(sample_success_result, mock_redis_wrapper)
 
             # Find the review.completed.markdown call
-            md_calls = [c for c in mock_fire.call_args_list if c.args[0] == "review.completed.markdown"]
+            md_calls = [
+                c for c in mock_fire.call_args_list if c.args[0] == "review.completed.markdown"
+            ]
             assert len(md_calls) == 1
 
             data = md_calls[0].args[2]
@@ -705,7 +724,8 @@ class TestGlobalWebhookEvents:
 
     @pytest.mark.asyncio
     async def test_completed_webhook_null_fields_preserved(
-        self, mock_redis_wrapper,
+        self,
+        mock_redis_wrapper,
     ):
         """
         Verifies [global-webhooks:_handle_success/TS-03] - Null fields preserved
@@ -728,7 +748,9 @@ class TestGlobalWebhookEvents:
         with patch("src.worker.review_jobs.fire_webhook") as mock_fire:
             await _handle_success(result, mock_redis_wrapper)
 
-            completed_calls = [c for c in mock_fire.call_args_list if c.args[0] == "review.completed"]
+            completed_calls = [
+                c for c in mock_fire.call_args_list if c.args[0] == "review.completed"
+            ]
             data = completed_calls[0].args[2]
             assert data["application"] is None
             assert data["review"]["suggested_conditions"] is None
@@ -736,7 +758,8 @@ class TestGlobalWebhookEvents:
 
     @pytest.mark.asyncio
     async def test_failed_webhook_includes_structured_error(
-        self, mock_redis_wrapper,
+        self,
+        mock_redis_wrapper,
     ):
         """
         Verifies [global-webhooks:_handle_failure/TS-01] - Fires review.failed with structured error
@@ -767,7 +790,9 @@ class TestGlobalWebhookEvents:
 
     @pytest.mark.asyncio
     async def test_no_review_started_event(
-        self, mock_redis_wrapper, sample_success_result,
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
     ):
         """
         Verifies [global-webhooks:process_review/TS-02] - No review.started event fired.
@@ -784,8 +809,10 @@ class TestGlobalWebhookEvents:
         )
         mock_redis_wrapper.get_job = AsyncMock(return_value=job)
 
-        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls, \
-             patch("src.worker.review_jobs.fire_webhook") as mock_fire:
+        with (
+            patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls,
+            patch("src.worker.review_jobs.fire_webhook") as mock_fire,
+        ):
             mock_instance = AsyncMock()
             mock_orch_cls.return_value = mock_instance
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -802,7 +829,8 @@ class TestGlobalWebhookEvents:
 
     @pytest.mark.asyncio
     async def test_exception_handler_fires_review_failed(
-        self, mock_redis_wrapper,
+        self,
+        mock_redis_wrapper,
     ):
         """
         Verifies [global-webhooks:process_review/TS-03] - Exception handler fires review.failed
@@ -819,8 +847,10 @@ class TestGlobalWebhookEvents:
         )
         mock_redis_wrapper.get_job = AsyncMock(return_value=job)
 
-        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls, \
-             patch("src.worker.review_jobs.fire_webhook") as mock_fire:
+        with (
+            patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls,
+            patch("src.worker.review_jobs.fire_webhook") as mock_fire,
+        ):
             mock_instance = AsyncMock()
             mock_orch_cls.return_value = mock_instance
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -840,7 +870,9 @@ class TestGlobalWebhookEvents:
 
     @pytest.mark.asyncio
     async def test_no_webhooks_when_url_unset(
-        self, mock_redis_wrapper, sample_success_result,
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
     ):
         """
         Verifies [global-webhooks:ITS-04] - No webhooks when URL unset.

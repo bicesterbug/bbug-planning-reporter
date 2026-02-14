@@ -63,8 +63,7 @@ class TestPhaseTransition:
 
         # Find the ingesting_documents progress event
         progress_calls = [
-            c for c in mock_redis.publish.call_args_list
-            if "review.progress" in str(c)
+            c for c in mock_redis.publish.call_args_list if "review.progress" in str(c)
         ]
 
         assert len(progress_calls) >= 2  # At least fetching and ingesting
@@ -121,10 +120,7 @@ class TestSubProgress:
 
         # Find the sub-progress event
         calls = mock_redis.publish.call_args_list
-        sub_progress_calls = [
-            c for c in calls
-            if "Ingesting document 5 of 22" in str(c)
-        ]
+        sub_progress_calls = [c for c in calls if "Ingesting document 5 of 22" in str(c)]
 
         assert len(sub_progress_calls) >= 1
 
@@ -219,8 +215,10 @@ class TestPercentComplete:
         percent = tracker.calculate_percent_complete()
 
         # Phases 1+2 weight = 5 + 20 = 25%
-        expected_base = PHASE_WEIGHTS[ReviewPhase.FETCHING_METADATA] + \
-                       PHASE_WEIGHTS[ReviewPhase.DOWNLOADING_DOCUMENTS]
+        expected_base = (
+            PHASE_WEIGHTS[ReviewPhase.FETCHING_METADATA]
+            + PHASE_WEIGHTS[ReviewPhase.DOWNLOADING_DOCUMENTS]
+        )
 
         assert percent >= expected_base
         assert percent < 100  # Never 100 until workflow completes
@@ -350,8 +348,7 @@ class TestWorkflowCompletion:
 
         # Check completed event was published
         completed_calls = [
-            c for c in mock_redis.publish.call_args_list
-            if "review.completed" in str(c)
+            c for c in mock_redis.publish.call_args_list if "review.completed" in str(c)
         ]
         assert len(completed_calls) == 1
 
@@ -371,10 +368,7 @@ class TestWorkflowCompletion:
         assert len(metadata["errors_encountered"]) == 1
 
         # Check failed event was published
-        failed_calls = [
-            c for c in mock_redis.publish.call_args_list
-            if "review.failed" in str(c)
-        ]
+        failed_calls = [c for c in mock_redis.publish.call_args_list if "review.failed" in str(c)]
         assert len(failed_calls) == 1
 
 
@@ -506,19 +500,21 @@ class TestSyncJobProgress:
     @pytest.fixture
     def tracker_with_job(self, mock_redis):
         """Create a ProgressTracker with a pre-existing ReviewJob in Redis."""
-        job_data = json.dumps({
-            "review_id": "rev_test123",
-            "application_ref": "25/01178/REM",
-            "status": "processing",
-            "progress": None,
-            "created_at": "2026-02-10T10:00:00+00:00",
-            "started_at": "2026-02-10T10:00:01+00:00",
-            "completed_at": None,
-            "error": None,
-            "result_key": None,
-            "options": None,
-            "webhook": None,
-        })
+        job_data = json.dumps(
+            {
+                "review_id": "rev_test123",
+                "application_ref": "25/01178/REM",
+                "status": "processing",
+                "progress": None,
+                "created_at": "2026-02-10T10:00:00+00:00",
+                "started_at": "2026-02-10T10:00:01+00:00",
+                "completed_at": None,
+                "error": None,
+                "result_key": None,
+                "options": None,
+                "webhook": None,
+            }
+        )
 
         async def mock_get(key):
             if key == "review:rev_test123":
@@ -531,8 +527,6 @@ class TestSyncJobProgress:
 
         # Track what gets written back
         mock_redis.written_data = {}
-
-        original_set = mock_redis.set
 
         async def mock_set(key, value, **kwargs):
             mock_redis.written_data[key] = value
