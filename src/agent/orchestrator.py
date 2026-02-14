@@ -41,7 +41,7 @@ import redis.asyncio as redis
 import structlog
 from pydantic import ValidationError
 
-from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPToolError
+from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPServerType, MCPToolError
 from src.agent.progress import ProgressTracker, ReviewPhase
 from src.agent.prompts.document_filter_prompt import build_document_filter_prompt
 from src.agent.prompts.report_prompt import build_report_prompt
@@ -163,6 +163,9 @@ class AgentOrchestrator:
         self._evidence_chunks: list[dict[str, Any]] = []
         self._review_result: ReviewResult | None = None
         self._initialized = False
+        # Implements [cycle-route-assessment:FR-008] - Route assessment data
+        self._route_assessments: list[dict[str, Any]] = []
+        self._site_boundary: dict[str, Any] | None = None
 
         # Implements [review-workflow-redesign:NFR-001] - Configurable filter model
         self._filter_model = os.getenv("DOCUMENT_FILTER_MODEL", "claude-haiku-4-5-20251001")
@@ -238,13 +241,14 @@ class AgentOrchestrator:
             start_phase = self._get_resume_phase()
 
             # Execute workflow phases
-            # Implements [review-workflow-redesign:AgentOrchestrator/TS-07] - Seven phases
+            # Implements [cycle-route-assessment:AgentOrchestrator/TS-01] - Eight phases
             phases = [
                 (ReviewPhase.FETCHING_METADATA, self._phase_fetch_metadata),
                 (ReviewPhase.FILTERING_DOCUMENTS, self._phase_filter_documents),
                 (ReviewPhase.DOWNLOADING_DOCUMENTS, self._phase_download_documents),
                 (ReviewPhase.INGESTING_DOCUMENTS, self._phase_ingest_documents),
                 (ReviewPhase.ANALYSING_APPLICATION, self._phase_analyse_application),
+                (ReviewPhase.ASSESSING_ROUTES, self._phase_assess_routes),
                 (ReviewPhase.GENERATING_REVIEW, self._phase_generate_review),
                 (ReviewPhase.VERIFYING_REVIEW, self._phase_verify_review),
             ]
@@ -498,7 +502,7 @@ class AgentOrchestrator:
             filter_duration = time.monotonic() - filter_start
 
             # Match selected IDs to document metadata
-            selected_id_set = set(str(sid) for sid in selected_ids)
+            selected_id_set = {str(sid) for sid in selected_ids}
             self._selected_documents = [
                 doc for doc in all_documents
                 if str(doc.get("document_id", "")) in selected_id_set
@@ -963,13 +967,194 @@ class AgentOrchestrator:
             evidence_chunks=len(self._evidence_chunks),
         )
 
-    def _build_evidence_context(self) -> tuple[str, str, str, str, str]:
+    async def _phase_assess_routes(self) -> None:
+        """
+        Phase 6: Assess cycling routes to configured destinations.
+
+        Implements [cycle-route-assessment:FR-008] - Route assessment in pipeline
+        Implements [cycle-route-assessment:NFR-002] - Graceful failure handling
+        Implements [cycle-route-assessment:NFR-005] - Review completes even if assessment fails
+
+        Looks up site boundary via ArcGIS, then assesses routes to each
+        configured destination using the cycle-route MCP server. Results
+        are stored as evidence context for the LLM review generation.
+        """
+        # Check if cycle-route MCP is available
+        if not self._mcp_client or not self._mcp_client.is_connected(
+            MCPServerType.CYCLE_ROUTE
+        ):
+            logger.info(
+                "Cycle route MCP not available, skipping route assessment",
+                review_id=self._review_id,
+            )
+            raise OrchestratorError(
+                "Cycle route MCP server not available",
+                phase=ReviewPhase.ASSESSING_ROUTES,
+                recoverable=True,
+            )
+
+        # Check if destination_ids explicitly set to empty list (skip assessment)
+        if (
+            self._options
+            and hasattr(self._options, "destination_ids")
+            and self._options.destination_ids is not None
+            and len(self._options.destination_ids) == 0
+        ):
+            logger.info(
+                "Route assessment skipped (empty destination_ids)",
+                review_id=self._review_id,
+            )
+            return
+
+        await self._progress.update_sub_progress("Looking up site boundary")
+
+        # Step 1: Get site boundary
+        try:
+            boundary_result = await self._mcp_client.call_tool(
+                "get_site_boundary",
+                {"application_ref": self._application_ref},
+                timeout=30.0,
+            )
+
+            if boundary_result.get("status") == "error":
+                logger.warning(
+                    "Site boundary not found",
+                    review_id=self._review_id,
+                    error=boundary_result.get("message"),
+                )
+                raise OrchestratorError(
+                    f"Site boundary lookup failed: {boundary_result.get('message')}",
+                    phase=ReviewPhase.ASSESSING_ROUTES,
+                    recoverable=True,
+                )
+
+            self._site_boundary = boundary_result.get("geojson")
+
+        except (MCPToolError, MCPConnectionError) as e:
+            logger.warning(
+                "Site boundary lookup failed",
+                review_id=self._review_id,
+                error=str(e),
+            )
+            raise OrchestratorError(
+                f"Site boundary lookup failed: {e}",
+                phase=ReviewPhase.ASSESSING_ROUTES,
+                recoverable=True,
+            )
+
+        # Extract centroid from boundary
+        centroid = None
+        if self._site_boundary and "features" in self._site_boundary:
+            for feature in self._site_boundary["features"]:
+                if feature.get("geometry", {}).get("type") == "Point":
+                    coords = feature["geometry"]["coordinates"]
+                    centroid = {"lon": coords[0], "lat": coords[1]}
+                    break
+
+        if not centroid:
+            logger.warning(
+                "No centroid in site boundary",
+                review_id=self._review_id,
+            )
+            raise OrchestratorError(
+                "Could not determine site centroid from boundary",
+                phase=ReviewPhase.ASSESSING_ROUTES,
+                recoverable=True,
+            )
+
+        # Step 2: Fetch destinations
+        # Import here to avoid circular imports at module level
+        from src.shared.destinations import list_destinations
+        from src.shared.redis_client import RedisClient
+
+        destinations = []
+        if self._redis:
+            redis_client = RedisClient()
+            redis_client._client = self._redis
+            all_destinations = await list_destinations(redis_client)
+
+            # Filter by destination_ids if specified
+            if (
+                self._options
+                and hasattr(self._options, "destination_ids")
+                and self._options.destination_ids is not None
+            ):
+                dest_ids = set(self._options.destination_ids)
+                destinations = [d for d in all_destinations if d["id"] in dest_ids]
+            else:
+                destinations = all_destinations
+        else:
+            logger.warning(
+                "No Redis client for destinations, using empty list",
+                review_id=self._review_id,
+            )
+
+        if not destinations:
+            logger.info(
+                "No destinations to assess",
+                review_id=self._review_id,
+            )
+            return
+
+        # Step 3: Assess route to each destination
+        await self._progress.update_sub_progress(
+            f"Assessing routes to {len(destinations)} destinations"
+        )
+
+        for i, dest in enumerate(destinations):
+            dest_name = dest.get("name", "Destination")
+            await self._progress.update_sub_progress(
+                f"Route {i + 1}/{len(destinations)}: {dest_name}",
+                current=i + 1,
+                total=len(destinations),
+            )
+
+            try:
+                route_result = await self._mcp_client.call_tool(
+                    "assess_cycle_route",
+                    {
+                        "origin_lon": centroid["lon"],
+                        "origin_lat": centroid["lat"],
+                        "destination_lon": dest["lon"],
+                        "destination_lat": dest["lat"],
+                        "destination_name": dest_name,
+                    },
+                    timeout=30.0,
+                )
+
+                if route_result.get("status") == "success":
+                    route_result["destination_id"] = dest["id"]
+                    self._route_assessments.append(route_result)
+                else:
+                    logger.warning(
+                        "Route assessment returned error",
+                        review_id=self._review_id,
+                        destination=dest_name,
+                        error=route_result.get("message"),
+                    )
+
+            except (MCPToolError, MCPConnectionError) as e:
+                logger.warning(
+                    "Route assessment failed for destination",
+                    review_id=self._review_id,
+                    destination=dest_name,
+                    error=str(e),
+                )
+
+        logger.info(
+            "Route assessment phase complete",
+            review_id=self._review_id,
+            routes_assessed=len(self._route_assessments),
+            destinations_total=len(destinations),
+        )
+
+    def _build_evidence_context(self) -> tuple[str, str, str, str, str, str]:
         """
         Build the evidence context strings used by both the structure and report calls.
 
         Returns:
             Tuple of (app_summary, ingested_docs_text, app_evidence_text,
-            policy_evidence_text, plans_submitted_text).
+            policy_evidence_text, plans_submitted_text, route_evidence_text).
         """
         app_summary = "No application metadata available."
         if self._application:
@@ -1023,7 +1208,46 @@ class AgentOrchestrator:
             if plan_lines:
                 plans_submitted_text = "\n".join(plan_lines)
 
-        return app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text, plans_submitted_text
+        # Implements [cycle-route-assessment:FR-008] - Route assessment evidence for LLM
+        route_evidence_text = "No cycling route assessments were performed."
+        if self._route_assessments:
+            route_lines = []
+            for ra in self._route_assessments:
+                dest = ra.get("destination", "Unknown")
+                distance = ra.get("distance_m", 0)
+                score = ra.get("score", {})
+                rating = score.get("rating", "unknown")
+                score_val = score.get("score", 0)
+                issues = ra.get("issues", [])
+                s106 = ra.get("s106_suggestions", [])
+
+                route_lines.append(f"### Route to {dest}")
+                route_lines.append(f"- Distance: {distance}m, LTN 1/20 score: {score_val}/100 ({rating})")
+
+                # Provision breakdown
+                provision = ra.get("provision_breakdown", {})
+                if provision:
+                    prov_parts = [f"{k}: {v}m" for k, v in provision.items() if v > 0]
+                    if prov_parts:
+                        route_lines.append(f"- Provision: {', '.join(prov_parts)}")
+
+                # Issues
+                if issues:
+                    route_lines.append("- Issues:")
+                    for issue in issues:
+                        route_lines.append(f"  - [{issue.get('severity', 'unknown')}] {issue.get('problem', '')}")
+                        if issue.get("suggested_improvement"):
+                            route_lines.append(f"    Suggestion: {issue['suggested_improvement']}")
+
+                # S106 suggestions
+                if s106:
+                    route_lines.append("- S106 funding suggestions:")
+                    for sug in s106:
+                        route_lines.append(f"  - {sug.get('suggestion', '')}")
+
+            route_evidence_text = "\n".join(route_lines)
+
+        return app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text, plans_submitted_text, route_evidence_text
 
     async def _phase_generate_review(self) -> None:
         """
@@ -1048,7 +1272,7 @@ class AgentOrchestrator:
                 recoverable=False,
             )
 
-        app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text, plans_submitted_text = (
+        app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text, plans_submitted_text, route_evidence_text = (
             self._build_evidence_context()
         )
 
@@ -1067,7 +1291,7 @@ class AgentOrchestrator:
             try:
                 system_prompt, user_prompt = build_structure_prompt(
                     app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text,
-                    plans_submitted_text,
+                    plans_submitted_text, route_evidence_text,
                 )
                 structure_msg = client.messages.create(
                     model=model,
@@ -1131,6 +1355,7 @@ class AgentOrchestrator:
                 report_system, report_user = build_report_prompt(
                     structure_json_str, app_summary, ingested_docs_text,
                     app_evidence_text, policy_evidence_text, plans_submitted_text,
+                    route_evidence_text,
                 )
                 report_msg = client.messages.create(
                     model=model,
@@ -1189,6 +1414,7 @@ class AgentOrchestrator:
                     "{}",  # empty JSON — report call will just produce a review
                     app_summary, ingested_docs_text,
                     app_evidence_text, policy_evidence_text, plans_submitted_text,
+                    route_evidence_text,
                 )
                 # Override the system prompt for fallback — don't reference JSON
                 fallback_system = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
@@ -1254,6 +1480,8 @@ Always cite specific policy references. Be constructive and evidence-based."""
                     "model": model,
                     "input_tokens": total_input,
                     "output_tokens": total_output,
+                    # Implements [cycle-route-assessment:FR-008] - Route assessments in output
+                    "route_assessments": self._route_assessments or None,
                 },
                 metadata={
                     "model": model,
@@ -1270,6 +1498,8 @@ Always cite specific policy references. Be constructive and evidence-based."""
                         if self._ingestion_result
                         else []
                     ),
+                    # Implements [cycle-route-assessment:FR-008] - Site boundary in output
+                    "site_boundary": self._site_boundary,
                 },
                 success=True,
             )

@@ -20,7 +20,7 @@ from src.api.exception_handlers import register_exception_handlers
 from src.api.middleware.api_version import APIVersionMiddleware
 from src.api.middleware.auth import AuthMiddleware
 from src.api.middleware.request_id import RequestIdMiddleware
-from src.api.routes import downloads, health, letters, policies, reviews
+from src.api.routes import destinations, downloads, health, letters, policies, reviews
 
 # API Version for X-API-Version header
 API_VERSION = "1.0.0"
@@ -136,6 +136,7 @@ All errors follow a consistent format:
     app.include_router(downloads.router, prefix="/api/v1", tags=["downloads"])
     app.include_router(policies.router, prefix="/api/v1", tags=["policies"])
     app.include_router(letters.router, prefix="/api/v1", tags=["letters"])
+    app.include_router(destinations.router, prefix="/api/v1", tags=["destinations"])
 
     return app
 

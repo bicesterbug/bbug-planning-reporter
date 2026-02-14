@@ -64,13 +64,16 @@ def _sequential_ingestion(monkeypatch):
 @pytest.fixture
 def mock_mcp_client():
     """Create a mock MCP client."""
-    from src.agent.mcp_client import MCPClientManager
+    from src.agent.mcp_client import MCPClientManager, MCPServerType
 
     client = AsyncMock(spec=MCPClientManager)
     client.initialize = AsyncMock()
     client.close = AsyncMock()
     client.call_tool = AsyncMock()
-    client.is_connected = MagicMock(return_value=True)
+    # Return False for CYCLE_ROUTE so ASSESSING_ROUTES phase is skipped
+    client.is_connected = MagicMock(
+        side_effect=lambda server_type=None: server_type != MCPServerType.CYCLE_ROUTE
+    )
     return client
 
 

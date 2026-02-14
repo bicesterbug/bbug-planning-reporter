@@ -17,6 +17,7 @@ def build_structure_prompt(
     app_evidence_text: str,
     policy_evidence_text: str,
     plans_submitted_text: str = "No plans or drawings were detected.",
+    route_evidence_text: str = "No cycling route assessments were performed.",
 ) -> tuple[str, str]:
     """
     Build the system and user prompts for the structure call.
@@ -31,6 +32,7 @@ def build_structure_prompt(
         policy_evidence_text: Evidence chunks from policy documents.
         plans_submitted_text: Formatted list of image-based documents that were
             downloaded but not ingested (plans, elevations, drawings).
+        route_evidence_text: Cycling route assessment data with LTN 1/20 scores and issues.
 
     Returns:
         Tuple of (system_prompt, user_prompt).
@@ -129,6 +131,10 @@ The following documents were identified as image-based (plans, elevations, drawi
 
 ## Relevant Policy Extracts
 {policy_evidence_text}
+
+## Cycling Route Assessments
+The following cycling route assessments were performed using LTN 1/20 criteria, scoring infrastructure quality from the development site to key destinations. Incorporate these findings into your cycle_routes aspect assessment, recommendations, and S106 suggestions:
+{route_evidence_text}
 
 Respond with the JSON object only. If the application documents don't contain enough transport/cycling information, note this in your analysis and base your assessment on what is available."""
 

@@ -28,6 +28,7 @@ class MCPServerType(Enum):
     CHERWELL_SCRAPER = "cherwell-scraper"
     DOCUMENT_STORE = "document-store"
     POLICY_KB = "policy-kb"
+    CYCLE_ROUTE = "cycle-route"  # [cycle-route-assessment:FR-001]
 
 
 @dataclass
@@ -93,6 +94,9 @@ TOOL_ROUTING: dict[str, MCPServerType] = {
     "list_policy_revisions": MCPServerType.POLICY_KB,
     "ingest_policy_revision": MCPServerType.POLICY_KB,
     "remove_policy_revision": MCPServerType.POLICY_KB,
+    # Cycle route tools [cycle-route-assessment:FR-001]
+    "get_site_boundary": MCPServerType.CYCLE_ROUTE,
+    "assess_cycle_route": MCPServerType.CYCLE_ROUTE,
 }
 
 
@@ -112,6 +116,7 @@ class MCPClientManager:
         cherwell_scraper_url: str | None = None,
         document_store_url: str | None = None,
         policy_kb_url: str | None = None,
+        cycle_route_url: str | None = None,
     ) -> None:
         self._servers: dict[MCPServerType, MCPServerConfig] = {
             MCPServerType.CHERWELL_SCRAPER: MCPServerConfig(
@@ -131,6 +136,12 @@ class MCPClientManager:
                     "search_policy", "get_policy_section", "list_policy_documents",
                     "list_policy_revisions", "ingest_policy_revision", "remove_policy_revision",
                 ],
+            ),
+            # Implements [cycle-route-assessment:FR-001] - Cycle route MCP server
+            MCPServerType.CYCLE_ROUTE: MCPServerConfig(
+                server_type=MCPServerType.CYCLE_ROUTE,
+                base_url=cycle_route_url or os.getenv("CYCLE_ROUTE_URL", "http://cycle-route-mcp:3004"),
+                tools=["get_site_boundary", "assess_cycle_route"],
             ),
         }
 

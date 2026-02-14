@@ -25,18 +25,21 @@ class ProcessingPhase(StrEnum):
     """Processing phases for a review."""
 
     FETCHING_METADATA = "fetching_metadata"
+    FILTERING_DOCUMENTS = "filtering_documents"
     DOWNLOADING_DOCUMENTS = "downloading_documents"
     INGESTING_DOCUMENTS = "ingesting_documents"
     ANALYSING_APPLICATION = "analysing_application"
+    ASSESSING_ROUTES = "assessing_routes"  # [cycle-route-assessment:FR-008]
     GENERATING_REVIEW = "generating_review"
+    VERIFYING_REVIEW = "verifying_review"
 
 
 class ReviewProgress(BaseModel):
     """Progress information for a review job."""
 
     phase: ProcessingPhase
-    phase_number: int = Field(ge=1, le=5)
-    total_phases: int = 5
+    phase_number: int = Field(ge=1, le=8)
+    total_phases: int = 8
     percent_complete: int = Field(ge=0, le=100)
     detail: str | None = None
 
@@ -51,6 +54,8 @@ class ReviewOptions(BaseModel):
     # Implements [review-scope-control:FR-004] - Toggle fields on internal model
     include_consultation_responses: bool = False
     include_public_comments: bool = False
+    # Implements [cycle-route-assessment:FR-006] - Per-review destination selection
+    destination_ids: list[str] | None = None
 
 
 class ReviewJob(BaseModel):

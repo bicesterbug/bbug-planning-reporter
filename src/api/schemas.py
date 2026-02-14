@@ -39,6 +39,11 @@ class ReviewOptionsRequest(BaseModel):
         default=False,
         description="Include public comments and objection letters as evidence for LLM analysis",
     )
+    # Implements [cycle-route-assessment:FR-006] - Per-review destination selection
+    destination_ids: list[str] | None = Field(
+        default=None,
+        description="Destination IDs for route assessment. None = all destinations, [] = skip assessment.",
+    )
 
 
 class ReviewRequest(BaseModel):
@@ -182,6 +187,23 @@ class KeyDocument(BaseModel):
     )
 
 
+class RouteAssessment(BaseModel):
+    """
+    Cycling route assessment result.
+
+    Implements [cycle-route-assessment:FR-008] - Route assessments in structured output
+    """
+
+    destination: str | None = None
+    destination_id: str | None = None
+    distance_m: float | None = None
+    duration_minutes: float | None = None
+    provision_breakdown: dict[str, float] | None = None
+    score: dict[str, Any] | None = None
+    issues: list[dict[str, Any]] | None = None
+    s106_suggestions: list[dict[str, Any]] | None = None
+
+
 class ReviewContent(BaseModel):
     """Review content in response."""
 
@@ -193,6 +215,8 @@ class ReviewContent(BaseModel):
     recommendations: list[str] | None = None
     suggested_conditions: list[str] | None = None
     full_markdown: str | None = None
+    # Implements [cycle-route-assessment:FR-008] - Route assessments in review output
+    route_assessments: list[RouteAssessment] | None = None
 
 
 class PolicyRevisionUsed(BaseModel):
@@ -232,6 +256,8 @@ class ReviewResponse(BaseModel):
     application: ApplicationInfo | None = None
     review: ReviewContent | None = None
     metadata: ReviewMetadata | None = None
+    # Implements [cycle-route-assessment:FR-010] - Site boundary in review response
+    site_boundary: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
 
 

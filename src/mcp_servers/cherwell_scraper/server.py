@@ -25,12 +25,10 @@ from typing import Any
 
 import structlog
 from mcp.server import Server
-from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent, Tool
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
 
 from src.mcp_servers.cherwell_scraper.client import (
     ApplicationNotFoundError,
@@ -538,7 +536,7 @@ def create_app(
     rate_limit: float | None = None,
 ) -> Starlette:
     """
-    Create the Starlette application with SSE transport.
+    Create the Starlette application with SSE + Streamable HTTP transport.
 
     Args:
         portal_url: Base URL of the Cherwell planning portal.
@@ -547,31 +545,18 @@ def create_app(
     Returns:
         Configured Starlette application.
     """
+    from src.mcp_servers.shared.transport import create_mcp_app
+
     mcp_server = CherwellScraperMCP(
         portal_url=portal_url,
         rate_limit=rate_limit,
     )
-    sse = SseServerTransport("/messages/")
-
-    async def handle_sse(request):
-        async with sse.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
-            await mcp_server.server.run(
-                streams[0], streams[1], mcp_server.server.create_initialization_options()
-            )
 
     # Implements [scraper-health-check:FR-001] - Health endpoint for Docker HEALTHCHECK
-    async def handle_health(request):
+    async def handle_health(request):  # noqa: ARG001
         return JSONResponse({"status": "ok"})
 
-    routes = [
-        Route("/health", endpoint=handle_health),
-        Route("/sse", endpoint=handle_sse),
-        Mount("/messages", app=sse.handle_post_message),
-    ]
-
-    return Starlette(routes=routes)
+    return create_mcp_app(mcp_server.server, health_handler=handle_health)
 
 
 async def main() -> None:

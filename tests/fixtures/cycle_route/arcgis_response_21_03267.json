@@ -1,0 +1,239 @@
+{
+    "displayFieldName": "CORPGIS.MASTERGOV.DEF_Planning.APPLICATION_REF",
+    "fieldAliases": {
+        "CORPGIS.MASTERGOV.DEF_Planning.OBJECTID": "OBJECTID",
+        "CORPGIS.MASTERGOV.DEF_Planning.APPLICATION_REF": "APPLICATION_REF",
+        "CORPGIS.MASTERGOV.DEF_Planning.PLOTTED": "PLOTTED",
+        "CORPGIS.MASTERGOV.DEF_Planning.UPDATED": "UPDATED",
+        "CORPGIS.MASTERGOV.DEF_Planning.DEF_ID": "DEF_ID",
+        "CORPGIS.MASTERGOV.DEF_Planning.INUSE": "INUSE",
+        "SHAPE.STArea()": "SHAPE.STArea()",
+        "SHAPE.STLength()": "SHAPE.STLength()",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.record_number": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.record_number",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_number": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_number",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_type": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_type",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.location": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.location",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.proposal": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.proposal",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.received_complete_date": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.received_complete_date",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_description": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_description",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_code": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_code",
+        "DLGSDST.dbo.Planning_ArcGIS_Link_Public.issue_date": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.issue_date"
+    },
+    "geometryType": "esriGeometryPolygon",
+    "spatialReference": {
+        "wkid": 4326,
+        "latestWkid": 4326
+    },
+    "fields": [
+        {
+            "name": "CORPGIS.MASTERGOV.DEF_Planning.OBJECTID",
+            "type": "esriFieldTypeOID",
+            "alias": "OBJECTID"
+        },
+        {
+            "name": "CORPGIS.MASTERGOV.DEF_Planning.APPLICATION_REF",
+            "type": "esriFieldTypeString",
+            "alias": "APPLICATION_REF",
+            "length": 20
+        },
+        {
+            "name": "CORPGIS.MASTERGOV.DEF_Planning.PLOTTED",
+            "type": "esriFieldTypeDate",
+            "alias": "PLOTTED",
+            "length": 8
+        },
+        {
+            "name": "CORPGIS.MASTERGOV.DEF_Planning.UPDATED",
+            "type": "esriFieldTypeDate",
+            "alias": "UPDATED",
+            "length": 8
+        },
+        {
+            "name": "CORPGIS.MASTERGOV.DEF_Planning.DEF_ID",
+            "type": "esriFieldTypeInteger",
+            "alias": "DEF_ID"
+        },
+        {
+            "name": "CORPGIS.MASTERGOV.DEF_Planning.INUSE",
+            "type": "esriFieldTypeString",
+            "alias": "INUSE",
+            "length": 1
+        },
+        {
+            "name": "SHAPE.STArea()",
+            "type": "esriFieldTypeDouble",
+            "alias": "SHAPE.STArea()"
+        },
+        {
+            "name": "SHAPE.STLength()",
+            "type": "esriFieldTypeDouble",
+            "alias": "SHAPE.STLength()"
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.record_number",
+            "type": "esriFieldTypeInteger",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.record_number"
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_number",
+            "type": "esriFieldTypeString",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_number",
+            "length": 20
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_type",
+            "type": "esriFieldTypeString",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_type",
+            "length": 10
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.location",
+            "type": "esriFieldTypeString",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.location",
+            "length": 1000
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.proposal",
+            "type": "esriFieldTypeString",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.proposal",
+            "length": 4000
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.received_complete_date",
+            "type": "esriFieldTypeDate",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.received_complete_date",
+            "length": 8
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision",
+            "type": "esriFieldTypeString",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision",
+            "length": 3
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_description",
+            "type": "esriFieldTypeString",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_description",
+            "length": 60
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_code",
+            "type": "esriFieldTypeString",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_code",
+            "length": 3
+        },
+        {
+            "name": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.issue_date",
+            "type": "esriFieldTypeDate",
+            "alias": "DLGSDST.dbo.Planning_ArcGIS_Link_Public.issue_date",
+            "length": 8
+        }
+    ],
+    "features": [
+        {
+            "attributes": {
+                "CORPGIS.MASTERGOV.DEF_Planning.OBJECTID": 66290,
+                "CORPGIS.MASTERGOV.DEF_Planning.APPLICATION_REF": "21/03267/OUT",
+                "CORPGIS.MASTERGOV.DEF_Planning.PLOTTED": 1632580658000,
+                "CORPGIS.MASTERGOV.DEF_Planning.UPDATED": null,
+                "CORPGIS.MASTERGOV.DEF_Planning.DEF_ID": 147202,
+                "CORPGIS.MASTERGOV.DEF_Planning.INUSE": "Y",
+                "SHAPE.STArea()": 245844.491360065,
+                "SHAPE.STLength()": 2019.9773701716042,
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.record_number": 147202,
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_number": "21/03267/OUT",
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.application_type": "OUT",
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.location": "OS Parcel 0006 South East Of Baynards House Adjoining A43\r\nBaynards Green",
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.proposal": "Outline planning permission (all matters reserved except for access) for the erection of buildings comprising logistics (Use Class B8) and ancillary Office (Use Class E(g)(i)) floorspace and associated infrastructure; construction of new site access from the B4100; creation of internal roads and access routes; and hard and soft landscaping",
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.received_complete_date": 1632355200000,
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision": "REF",
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_description": "Refused",
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.decision_code": "REF",
+                "DLGSDST.dbo.Planning_ArcGIS_Link_Public.issue_date": 1768953600000
+            },
+            "geometry": {
+                "rings": [
+                    [
+                        [
+                            -1.2011979961414674,
+                            51.95758410042361
+                        ],
+                        [
+                            -1.2000993536244782,
+                            51.957005697923535
+                        ],
+                        [
+                            -1.199016478576142,
+                            51.95640836078572
+                        ],
+                        [
+                            -1.1982519287181697,
+                            51.956098653082016
+                        ],
+                        [
+                            -1.1986582500319571,
+                            51.9557683722906
+                        ],
+                        [
+                            -1.198371089700963,
+                            51.955461915472966
+                        ],
+                        [
+                            -1.1978751337784188,
+                            51.954773407545865
+                        ],
+                        [
+                            -1.1974453731542705,
+                            51.95382842650866
+                        ],
+                        [
+                            -1.1975760814415803,
+                            51.952544703044666
+                        ],
+                        [
+                            -1.1976172330357617,
+                            51.95196452858134
+                        ],
+                        [
+                            -1.200667561628077,
+                            51.95103372322196
+                        ],
+                        [
+                            -1.2037328997803631,
+                            51.950987886294165
+                        ],
+                        [
+                            -1.204009195705439,
+                            51.95277870057633
+                        ],
+                        [
+                            -1.2030325137071671,
+                            51.9557504969778
+                        ],
+                        [
+                            -1.2026780381814424,
+                            51.956633052526804
+                        ],
+                        [
+                            -1.2022627903423446,
+                            51.95746761827245
+                        ],
+                        [
+                            -1.2019082533114065,
+                            51.95748424608671
+                        ],
+                        [
+                            -1.2015413577892506,
+                            51.957329508447344
+                        ],
+                        [
+                            -1.2011979961414674,
+                            51.95758410042361
+                        ]
+                    ]
+                ]
+            }
+        }
+    ]
+}

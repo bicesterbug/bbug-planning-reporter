@@ -15,11 +15,9 @@ from typing import Any
 
 import structlog
 from mcp.server import Server
-from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent, Tool
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
-from starlette.routing import Mount, Route
 
 from src.mcp_servers.document_store.chroma_client import (
     ChromaClient,
@@ -519,7 +517,7 @@ def create_app(
     enable_ocr: bool = True,
 ) -> Starlette:
     """
-    Create the Starlette application with SSE transport.
+    Create the Starlette application with SSE + Streamable HTTP transport.
 
     Args:
         chroma_persist_dir: Directory for ChromaDB persistence.
@@ -528,26 +526,14 @@ def create_app(
     Returns:
         Configured Starlette application.
     """
+    from src.mcp_servers.shared.transport import create_mcp_app
+
     mcp_server = DocumentStoreMCP(
         chroma_persist_dir=chroma_persist_dir,
         enable_ocr=enable_ocr,
     )
-    sse = SseServerTransport("/messages/")
 
-    async def handle_sse(request):
-        async with sse.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
-            await mcp_server.server.run(
-                streams[0], streams[1], mcp_server.server.create_initialization_options()
-            )
-
-    routes = [
-        Route("/sse", endpoint=handle_sse),
-        Mount("/messages", app=sse.handle_post_message),
-    ]
-
-    return Starlette(routes=routes)
+    return create_mcp_app(mcp_server.server)
 
 
 async def main() -> None:
