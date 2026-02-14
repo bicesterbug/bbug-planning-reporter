@@ -2,12 +2,18 @@
 Structure call prompt builder for the two-phase review generation.
 
 Implements [structured-review-output:FR-001] - Defines the structure call prompt
-Implements [structured-review-output:FR-002] - Prompt specifies the JSON schema
+Implements [reliable-structure-extraction:FR-005] - Prompt updated for tool use
+Implements [reliable-structure-extraction:FR-003] - Flexible aspect selection
 
 Implements:
-- [structured-review-output:StructureCallPrompt/TS-01] Prompt includes schema
 - [structured-review-output:StructureCallPrompt/TS-02] Evidence included
 - [structured-review-output:StructureCallPrompt/TS-03] Document metadata included
+- [reliable-structure-extraction:StructurePrompt/TS-01] No JSON-only instruction
+- [reliable-structure-extraction:StructurePrompt/TS-02] No inline schema
+- [reliable-structure-extraction:StructurePrompt/TS-03] Tool reference
+- [reliable-structure-extraction:StructurePrompt/TS-04] Flexible aspects
+- [reliable-structure-extraction:StructurePrompt/TS-05] Field guidance retained
+- [reliable-structure-extraction:StructurePrompt/TS-06] Route evidence in user prompt
 """
 
 
@@ -22,8 +28,8 @@ def build_structure_prompt(
     """
     Build the system and user prompts for the structure call.
 
-    The structure call asks Claude to return a JSON object containing
-    the complete structured assessment. No markdown prose is requested.
+    The structure call asks Claude to return structured assessment data
+    via the submit_review_structure tool. No markdown prose is requested.
 
     Args:
         app_summary: Formatted application metadata text.
@@ -37,42 +43,11 @@ def build_structure_prompt(
     Returns:
         Tuple of (system_prompt, user_prompt).
     """
+    # Implements [reliable-structure-extraction:FR-005] - No inline JSON schema,
+    # no "respond with JSON only" instruction. Tool definition provides the schema.
     system_prompt = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
 
-You MUST respond with a single JSON object and nothing else. No markdown, no commentary, no explanation — only valid JSON.
-
-The JSON object must conform to this schema:
-
-{
-  "overall_rating": "red" | "amber" | "green",
-  "summary": string,
-  "aspects": [
-    {
-      "name": string,
-      "rating": "red" | "amber" | "green",
-      "key_issue": string,
-      "analysis": string
-    }
-  ],
-  "policy_compliance": [
-    {
-      "requirement": string,
-      "policy_source": string,
-      "compliant": boolean,
-      "notes": string | null
-    }
-  ],
-  "recommendations": [string],
-  "suggested_conditions": [string],
-  "key_documents": [
-    {
-      "title": string,
-      "category": "Transport & Access" | "Design & Layout" | "Application Core",
-      "summary": string,
-      "url": string | null
-    }
-  ]
-}
+Use the submit_review_structure tool to return your structured assessment.
 
 Field guidance:
 
@@ -83,15 +58,17 @@ Field guidance:
 
 **summary**: A concise 2-4 sentence summary of the review including the overall rating. This should capture the key finding, main concerns, and overall recommendation. Do not use markdown formatting.
 
-**aspects**: Exactly 5 aspects, in this order:
-1. "Cycle Parking" — quantity, type, location, security, accessibility
-2. "Cycle Routes" — on-site and connections to existing cycle network
-3. "Junctions" — junction design safety for cyclists, LTN 1/20 compliance
-4. "Permeability" — pedestrian/cycle permeability and filtered permeability
-5. "Policy Compliance" — overall policy compliance assessment
+**aspects**: Include the aspects that are relevant to the application under review. Consider these standard aspects but select only those applicable:
+- "Cycle Parking" — quantity, type, location, security, accessibility
+- "Cycle Routes" — on-site and connections to existing cycle network
+- "Junctions" — junction design safety for cyclists, LTN 1/20 compliance
+- "Permeability" — pedestrian/cycle permeability and filtered permeability
+- "Policy Compliance" — overall policy compliance assessment
+
+You may include additional aspects if the application warrants them (e.g. "Construction Phase Impacts", "Sustainable Transport"). Include at least one aspect.
 
 Each aspect must have:
-- "name": The aspect name as listed above
+- "name": A descriptive name for the aspect
 - "rating": red/amber/green for this aspect
 - "key_issue": A brief (1 sentence) summary of the main issue
 - "analysis": A detailed markdown-formatted analysis (2-4 paragraphs) covering findings, evidence references, and policy citations. This will be used by a report writer to produce detailed prose.
@@ -113,7 +90,7 @@ Each aspect must have:
 - "url": Download URL from the ingested documents list, or null
 """
 
-    user_prompt = f"""Assess the following planning application from a cycling advocacy perspective and return the structured JSON assessment.
+    user_prompt = f"""Assess the following planning application from a cycling advocacy perspective using the submit_review_structure tool.
 
 ## Application Details
 {app_summary}
@@ -133,9 +110,9 @@ The following documents were identified as image-based (plans, elevations, drawi
 {policy_evidence_text}
 
 ## Cycling Route Assessments
-The following cycling route assessments were performed using LTN 1/20 criteria, scoring infrastructure quality from the development site to key destinations. Incorporate these findings into your cycle_routes aspect assessment, recommendations, and S106 suggestions:
+The following cycling route assessments were performed using LTN 1/20 criteria, scoring infrastructure quality from the development site to key destinations. Incorporate these findings into your cycle routes aspect assessment, recommendations, and S106 suggestions:
 {route_evidence_text}
 
-Respond with the JSON object only. If the application documents don't contain enough transport/cycling information, note this in your analysis and base your assessment on what is available."""
+If the application documents don't contain enough transport/cycling information, note this in your analysis and base your assessment on what is available."""
 
     return system_prompt, user_prompt

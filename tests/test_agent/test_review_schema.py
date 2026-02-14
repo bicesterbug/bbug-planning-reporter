@@ -2,6 +2,7 @@
 Tests for ReviewStructure Pydantic model.
 
 Verifies [structured-review-output:ReviewStructure/TS-01] through [TS-05]
+Verifies [reliable-structure-extraction:ReviewStructure/TS-01] through [TS-06]
 """
 
 import json
@@ -231,6 +232,8 @@ class TestReviewStructureRatingValidation:
 
     def test_invalid_overall_rating(self):
         """
+        Verifies [reliable-structure-extraction:ReviewStructure/TS-03] - Invalid rating rejected
+
         Given: JSON with overall_rating: "purple"
         When: ReviewStructure.model_validate() called
         Then: ValidationError raised
@@ -238,9 +241,8 @@ class TestReviewStructureRatingValidation:
         data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
         data["overall_rating"] = "purple"
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             ReviewStructure.model_validate(data)
-        assert "red, amber, or green" in str(exc_info.value)
 
     def test_invalid_aspect_rating(self):
         """
@@ -270,6 +272,8 @@ class TestReviewStructureRatingValidation:
 
     def test_invalid_category(self):
         """
+        Verifies [reliable-structure-extraction:ReviewStructure/TS-06] - Category via Literal
+
         Given: A key document with invalid category
         When: ReviewStructure.model_validate() called
         Then: ValidationError raised
@@ -277,9 +281,8 @@ class TestReviewStructureRatingValidation:
         data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
         data["key_documents"][0]["category"] = "Other"
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             ReviewStructure.model_validate(data)
-        assert "Category" in str(exc_info.value)
 
 
 class TestComplianceBooleanCoercion:
@@ -351,3 +354,105 @@ class TestComplianceBooleanCoercion:
             compliant=True,
         )
         assert item.compliant is True
+
+
+class TestLiteralEnumInSchema:
+    """
+    Verifies [reliable-structure-extraction:ReviewStructure/TS-01] - Literal enum in schema
+    """
+
+    def test_schema_contains_rating_enum(self):
+        """
+        Given: ReviewStructure model
+        When: model_json_schema() called
+        Then: overall_rating has enum: ["red", "amber", "green"]
+        """
+        schema = ReviewStructure.model_json_schema()
+        rating_prop = schema["properties"]["overall_rating"]
+        # May be a $ref — resolve it
+        if "$ref" in rating_prop:
+            ref_name = rating_prop["$ref"].split("/")[-1]
+            rating_prop = schema["$defs"][ref_name]
+        assert "enum" in rating_prop
+        assert set(rating_prop["enum"]) == {"red", "amber", "green"}
+
+    def test_schema_contains_category_enum(self):
+        """
+        Given: ReviewStructure model
+        When: model_json_schema() called
+        Then: KeyDocumentItem.category has enum with 3 categories
+        """
+        schema = ReviewStructure.model_json_schema()
+        # Navigate to KeyDocumentItem definition
+        defs = schema.get("$defs", {})
+        key_doc_schema = defs.get("KeyDocumentItem", {})
+        cat_prop = key_doc_schema.get("properties", {}).get("category", {})
+        if "$ref" in cat_prop:
+            ref_name = cat_prop["$ref"].split("/")[-1]
+            cat_prop = defs[ref_name]
+        assert "enum" in cat_prop
+        assert set(cat_prop["enum"]) == {
+            "Transport & Access",
+            "Design & Layout",
+            "Application Core",
+        }
+
+
+class TestFlexibleAspects:
+    """
+    Verifies [reliable-structure-extraction:ReviewStructure/TS-04] - Flexible aspect count
+    Verifies [reliable-structure-extraction:ReviewStructure/TS-05] - Empty aspects rejected
+    """
+
+    def test_three_aspects_valid(self):
+        """
+        Given: JSON with 3 aspects instead of 5
+        When: ReviewStructure.model_validate() called
+        Then: Validates successfully with 3 aspects
+        """
+        data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
+        data["aspects"] = data["aspects"][:3]
+
+        structure = ReviewStructure.model_validate(data)
+        assert len(structure.aspects) == 3
+
+    def test_single_aspect_valid(self):
+        """
+        Given: JSON with 1 aspect
+        When: ReviewStructure.model_validate() called
+        Then: Validates successfully with 1 aspect
+        """
+        data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
+        data["aspects"] = data["aspects"][:1]
+
+        structure = ReviewStructure.model_validate(data)
+        assert len(structure.aspects) == 1
+
+    def test_six_aspects_valid(self):
+        """
+        Given: JSON with 6 aspects
+        When: ReviewStructure.model_validate() called
+        Then: Validates successfully with 6 aspects
+        """
+        data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
+        data["aspects"].append({
+            "name": "Construction Phase Impacts",
+            "rating": "amber",
+            "key_issue": "Temporary road closures may affect cycle routes",
+            "analysis": "Construction traffic management plan needed.",
+        })
+
+        structure = ReviewStructure.model_validate(data)
+        assert len(structure.aspects) == 6
+
+    def test_empty_aspects_rejected(self):
+        """
+        Given: JSON with aspects: []
+        When: ReviewStructure.model_validate() called
+        Then: ValidationError raised
+        """
+        data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
+        data["aspects"] = []
+
+        with pytest.raises(ValidationError):
+            ReviewStructure.model_validate(data)

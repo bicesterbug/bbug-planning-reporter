@@ -208,14 +208,34 @@ def _make_claude_response(
     input_tokens: int = 1000,
     output_tokens: int = 2000,
 ):
-    """Build a mock Anthropic Messages response."""
-    content_block = SimpleNamespace(text=text)
+    """Build a mock Anthropic Messages response with a text content block."""
+    content_block = SimpleNamespace(type="text", text=text)
     usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
-    return SimpleNamespace(content=[content_block], usage=usage)
+    return SimpleNamespace(content=[content_block], usage=usage, stop_reason="end_turn")
 
 
-# Default structure call JSON used across tests
-SAMPLE_STRUCTURE_JSON = json.dumps({
+def _make_tool_use_response(
+    tool_input: dict,
+    tool_name: str = "submit_review_structure",
+    input_tokens: int = 1000,
+    output_tokens: int = 2000,
+):
+    """Build a mock Anthropic Messages response with a tool_use content block.
+
+    Implements [reliable-structure-extraction:Orchestrator/TS-02] mock helper.
+    """
+    content_block = SimpleNamespace(
+        type="tool_use",
+        id="toolu_test_123",
+        name=tool_name,
+        input=tool_input,
+    )
+    usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    return SimpleNamespace(content=[content_block], usage=usage, stop_reason="tool_use")
+
+
+# Default structure call dict used across tests
+SAMPLE_STRUCTURE_DICT = {
     "overall_rating": "amber",
     "summary": "The application provides basic cycle parking but lacks safe cycle routes and adequate junction design. Partial policy compliance with room for improvement.",
     "aspects": [
@@ -240,19 +260,25 @@ SAMPLE_STRUCTURE_JSON = json.dumps({
         {"title": "Transport Assessment", "category": "Transport & Access",
          "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
     ],
-})
+}
+
+# Keep JSON string for backward compat in any test that needs it
+SAMPLE_STRUCTURE_JSON = json.dumps(SAMPLE_STRUCTURE_DICT)
 
 
 def _make_two_phase_side_effect(
-    structure_json: str = SAMPLE_STRUCTURE_JSON,
+    structure_dict: dict = SAMPLE_STRUCTURE_DICT,
     markdown: str = "# Review\n## Application Summary\n...\n**Overall Rating:** AMBER",
     structure_tokens: tuple[int, int] = (500, 1500),
     report_tokens: tuple[int, int] = (1000, 3000),
 ):
-    """Build side_effect for messages.create that handles queries + structure + report + verify calls."""
+    """Build side_effect for messages.create that handles queries + structure + report + verify calls.
+
+    Structure call now returns a tool_use content block (reliable-structure-extraction).
+    """
     query_resp = _make_query_response()
-    structure_resp = _make_claude_response(
-        text=structure_json,
+    structure_resp = _make_tool_use_response(
+        tool_input=structure_dict,
         input_tokens=structure_tokens[0],
         output_tokens=structure_tokens[1],
     )
@@ -265,14 +291,17 @@ def _make_two_phase_side_effect(
 
 
 def _make_review_side_effect(
-    structure_json: str = SAMPLE_STRUCTURE_JSON,
+    structure_dict: dict = SAMPLE_STRUCTURE_DICT,
     markdown: str = "# Review\n## Application Summary\n...\n**Overall Rating:** AMBER",
     structure_tokens: tuple[int, int] = (500, 1500),
     report_tokens: tuple[int, int] = (1000, 3000),
 ):
-    """Build side_effect for messages.create for direct _phase_generate_review calls (structure + report only)."""
-    structure_resp = _make_claude_response(
-        text=structure_json,
+    """Build side_effect for messages.create for direct _phase_generate_review calls (structure + report only).
+
+    Structure call now returns a tool_use content block (reliable-structure-extraction).
+    """
+    structure_resp = _make_tool_use_response(
+        tool_input=structure_dict,
         input_tokens=structure_tokens[0],
         output_tokens=structure_tokens[1],
     )
@@ -353,7 +382,7 @@ def _make_verification_response(
 
 def _make_three_phase_side_effect(
     filter_doc_ids: str = SAMPLE_FILTER_DOC_IDS,
-    structure_json: str = SAMPLE_STRUCTURE_JSON,
+    structure_dict: dict = SAMPLE_STRUCTURE_DICT,
     markdown: str = "# Review\n## Application Summary\n...\n**Overall Rating:** AMBER",
     structure_tokens: tuple[int, int] = (500, 1500),
     report_tokens: tuple[int, int] = (1000, 3000),
@@ -361,8 +390,8 @@ def _make_three_phase_side_effect(
     """Build side_effect for messages.create: filter + queries + structure + report + verify calls."""
     filter_resp = _make_filter_response(doc_ids_json=filter_doc_ids)
     query_resp = _make_query_response()
-    structure_resp = _make_claude_response(
-        text=structure_json,
+    structure_resp = _make_tool_use_response(
+        tool_input=structure_dict,
         input_tokens=structure_tokens[0],
         output_tokens=structure_tokens[1],
     )
@@ -1361,7 +1390,7 @@ class TestGenerateReviewKeyDocuments:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
+        structure_dict = {
             "overall_rating": "amber",
             "summary": "Basic cycle parking provided but lacks safe routes and detailed junction design.",
             "aspects": [
@@ -1388,7 +1417,7 @@ class TestGenerateReviewKeyDocuments:
                 {"title": "Design and Access Statement", "category": "Design & Layout",
                  "summary": "Describes site layout.", "url": "https://example.com/das.pdf"},
             ],
-        })
+        }
 
         # Pre-populate orchestrator state for Phase 5
         orchestrator = AgentOrchestrator(
@@ -1417,7 +1446,7 @@ class TestGenerateReviewKeyDocuments:
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
             mock_client_inst.messages.create.side_effect = _make_review_side_effect(
-                structure_json=structure_json,
+                structure_dict=structure_dict,
             )
             MockAnthropic.return_value = mock_client_inst
 
@@ -1610,7 +1639,7 @@ class TestKeyDocumentsIntegration:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
+        structure_dict = {
             "overall_rating": "amber",
             "summary": "Mixed provision with some cycle parking but lacking safe routes and junction detail.",
             "aspects": [
@@ -1642,7 +1671,7 @@ class TestKeyDocumentsIntegration:
                  "summary": "Shows proposed layout with access roads.",
                  "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2"},
             ],
-        })
+        }
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,        # Phase 1
@@ -1657,7 +1686,7 @@ class TestKeyDocumentsIntegration:
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
             mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect(
-                structure_json=structure_json,
+                structure_dict=structure_dict,
             )
             MockAnthropic.return_value = mock_client_inst
 
@@ -2285,7 +2314,7 @@ class TestTwoPhaseReviewGeneration:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
+        structure_dict = {
             "overall_rating": "red",
             "summary": "The application fails to provide adequate cycling infrastructure and is non-compliant with key transport policies.",
             "aspects": [
@@ -2312,7 +2341,7 @@ class TestTwoPhaseReviewGeneration:
                 {"title": "Transport Assessment", "category": "Transport & Access",
                  "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
             ],
-        })
+        }
 
         report_md = "# Cycle Advocacy Review: 25/01178/REM\n## Assessment Summary\n**Overall Rating:** RED"
 
@@ -2335,7 +2364,7 @@ class TestTwoPhaseReviewGeneration:
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
             mock_client_inst.messages.create.side_effect = _make_review_side_effect(
-                structure_json=structure_json, markdown=report_md,
+                structure_dict=structure_dict, markdown=report_md,
             )
             MockAnthropic.return_value = mock_client_inst
 
@@ -2569,7 +2598,7 @@ class TestTwoPhaseReviewGeneration:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
+        structure_dict = {
             "overall_rating": "green",
             "summary": "Excellent cycling provision throughout with safe routes and policy compliance.",
             "aspects": [
@@ -2591,7 +2620,7 @@ class TestTwoPhaseReviewGeneration:
             "recommendations": ["Consider covered cycle parking"],
             "suggested_conditions": [],
             "key_documents": [],
-        })
+        }
 
         report_md = "# Cycle Advocacy Review\n**Overall Rating:** GREEN\n## Assessment Summary\n..."
 
@@ -2608,7 +2637,7 @@ class TestTwoPhaseReviewGeneration:
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
             mock_client_inst.messages.create.side_effect = _make_review_side_effect(
-                structure_json=structure_json, markdown=report_md,
+                structure_dict=structure_dict, markdown=report_md,
             )
             MockAnthropic.return_value = mock_client_inst
 
@@ -2926,7 +2955,7 @@ class TestVerificationPhase:
             mock_client_inst.messages.create.side_effect = [
                 _make_filter_response(),
                 _make_query_response(),
-                _make_claude_response(text=SAMPLE_STRUCTURE_JSON),
+                _make_tool_use_response(tool_input=SAMPLE_STRUCTURE_DICT),
                 _make_claude_response(text="# Review\n**Overall Rating:** AMBER"),
                 anthropic_module.APIError(message="Service unavailable", request=MagicMock(), body=None),
             ]

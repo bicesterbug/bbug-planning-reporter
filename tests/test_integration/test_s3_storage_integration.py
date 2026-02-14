@@ -32,16 +32,33 @@ def _make_claude_response(
     input_tokens: int = 1000,
     output_tokens: int = 2000,
 ):
-    """Build a mock Anthropic Messages response."""
+    """Build a mock Anthropic Messages response with a text content block."""
     text = markdown
     if key_documents_json is not None:
         text += "\n\n```key_documents_json\n"
         text += json.dumps(key_documents_json, indent=2)
         text += "\n```"
 
-    content_block = SimpleNamespace(text=text)
+    content_block = SimpleNamespace(type="text", text=text)
     usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
-    return SimpleNamespace(content=[content_block], usage=usage)
+    return SimpleNamespace(content=[content_block], usage=usage, stop_reason="end_turn")
+
+
+def _make_tool_use_response(
+    tool_input: dict,
+    tool_name: str = "submit_review_structure",
+    input_tokens: int = 1000,
+    output_tokens: int = 2000,
+):
+    """Build a mock Anthropic Messages response with a tool_use content block."""
+    content_block = SimpleNamespace(
+        type="tool_use",
+        id="toolu_test_123",
+        name=tool_name,
+        input=tool_input,
+    )
+    usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    return SimpleNamespace(content=[content_block], usage=usage, stop_reason="tool_use")
 
 
 def _search_side_effects(n: int = 7, response: dict | None = None):
@@ -200,9 +217,9 @@ def _local_download_responses():
 def _make_filter_response(doc_ids: list[str] | None = None):
     """Build a mock Anthropic Messages response for the document filter call."""
     ids = doc_ids or ["doc1", "doc2", "doc3"]
-    content_block = SimpleNamespace(text=json.dumps(ids))
+    content_block = SimpleNamespace(type="text", text=json.dumps(ids))
     usage = SimpleNamespace(input_tokens=500, output_tokens=100)
-    return SimpleNamespace(content=[content_block], usage=usage)
+    return SimpleNamespace(content=[content_block], usage=usage, stop_reason="end_turn")
 
 
 def _make_query_response():
@@ -325,30 +342,28 @@ class TestFullReviewWithS3Storage:
                 },
             ]
 
-            structure_resp = _make_claude_response(
-                markdown=(
-                    '{"overall_rating": "amber", "aspects": [], '
-                    '"policy_compliance": [], "recommendations": [], '
-                    '"suggested_conditions": [], "key_documents": []}'
-                ),
+            # Structure call now returns tool_use content block
+            structure_resp = _make_tool_use_response(
+                tool_input={
+                    "overall_rating": "amber",
+                    "summary": "The application provides basic infrastructure but requires further assessment.",
+                    "aspects": [
+                        {"name": "Cycle Parking", "rating": "amber",
+                         "key_issue": "Design unverified", "analysis": "Basic provision."},
+                    ],
+                    "policy_compliance": [],
+                    "recommendations": [],
+                    "suggested_conditions": [],
+                    "key_documents": [
+                        {
+                            "title": "Transport Assessment",
+                            "category": "Transport & Access",
+                            "summary": "Analyses traffic impacts.",
+                            "url": "https://test-bucket.nyc3.digitaloceanspaces.com/25_01178_REM/001_Transport Assessment.pdf",
+                        },
+                    ],
+                },
             )
-            # Overwrite content to be raw JSON (structure call returns JSON, not markdown)
-            structure_resp.content[0].text = json.dumps({
-                "overall_rating": "amber",
-                "summary": "The application provides basic infrastructure but requires further assessment.",
-                "aspects": [],
-                "policy_compliance": [],
-                "recommendations": [],
-                "suggested_conditions": [],
-                "key_documents": [
-                    {
-                        "title": "Transport Assessment",
-                        "category": "Transport & Access",
-                        "summary": "Analyses traffic impacts.",
-                        "url": "https://test-bucket.nyc3.digitaloceanspaces.com/25_01178_REM/001_Transport Assessment.pdf",
-                    },
-                ],
-            })
 
             report_resp = _make_claude_response(
                 markdown=(
@@ -506,23 +521,27 @@ class TestFullReviewWithLocalStorage:
         backend = LocalStorageBackend()
         local_downloads = _local_download_responses()
 
-        structure_resp = _make_claude_response()
-        structure_resp.content[0].text = json.dumps({
-            "overall_rating": "green",
-            "summary": "Good cycling provision with compliant infrastructure.",
-            "aspects": [],
-            "policy_compliance": [],
-            "recommendations": [],
-            "suggested_conditions": [],
-            "key_documents": [
-                {
-                    "title": "Transport Assessment",
-                    "category": "Transport & Access",
-                    "summary": "Analyses traffic impacts.",
-                    "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
-                },
-            ],
-        })
+        structure_resp = _make_tool_use_response(
+            tool_input={
+                "overall_rating": "green",
+                "summary": "Good cycling provision with compliant infrastructure.",
+                "aspects": [
+                    {"name": "Cycle Parking", "rating": "green",
+                     "key_issue": "Adequate provision", "analysis": "Good standards met."},
+                ],
+                "policy_compliance": [],
+                "recommendations": [],
+                "suggested_conditions": [],
+                "key_documents": [
+                    {
+                        "title": "Transport Assessment",
+                        "category": "Transport & Access",
+                        "summary": "Analyses traffic impacts.",
+                        "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
+                    },
+                ],
+            },
+        )
 
         report_resp = _make_claude_response(
             markdown=(
@@ -798,16 +817,20 @@ class TestS3UploadFailureMidJob:
         backend.public_url.side_effect = lambda key: f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
         backend.delete_local.return_value = None
 
-        structure_resp = _make_claude_response()
-        structure_resp.content[0].text = json.dumps({
-            "overall_rating": "amber",
-            "summary": "Basic cycling provision with partial policy compliance.",
-            "aspects": [],
-            "policy_compliance": [],
-            "recommendations": [],
-            "suggested_conditions": [],
-            "key_documents": [],
-        })
+        structure_resp = _make_tool_use_response(
+            tool_input={
+                "overall_rating": "amber",
+                "summary": "Basic cycling provision with partial policy compliance.",
+                "aspects": [
+                    {"name": "Cycle Parking", "rating": "amber",
+                     "key_issue": "Design unverified", "analysis": "Basic provision."},
+                ],
+                "policy_compliance": [],
+                "recommendations": [],
+                "suggested_conditions": [],
+                "key_documents": [],
+            },
+        )
 
         report_resp = _make_claude_response(
             markdown="# Review\n**Overall Rating:** AMBER\n",

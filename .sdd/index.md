@@ -10,6 +10,12 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-14 | [reliable-structure-extraction](reliable-structure-extraction/) | [spec](reliable-structure-extraction/specification.md) | [design](reliable-structure-extraction/design.md) | Draft | Enhancement |
+| 2026-02-14 | [rest-api-contract](rest-api-contract/) | [spec](rest-api-contract/specification.md) | — | As-Built | API Contract |
+| 2026-02-14 | [cherwell-scraper-api](cherwell-scraper-api/) | [spec](cherwell-scraper-api/specification.md) | — | As-Built | API Contract |
+| 2026-02-14 | [document-store-api](document-store-api/) | [spec](document-store-api/specification.md) | — | As-Built | API Contract |
+| 2026-02-14 | [policy-kb-api](policy-kb-api/) | [spec](policy-kb-api/specification.md) | — | As-Built | API Contract |
+| 2026-02-14 | [cycle-route-api](cycle-route-api/) | [spec](cycle-route-api/specification.md) | — | As-Built | API Contract |
 | 2026-02-14 | [cycle-route-assessment](cycle-route-assessment/) | [spec](cycle-route-assessment/specification.md) | — | Draft | Enhancement |
 | 2026-02-14 | [reliable-category-filtering](reliable-category-filtering/) | [spec](reliable-category-filtering/specification.md) | [design](reliable-category-filtering/design.md) | Implemented | Bugfix |
 | 2026-02-14 | [document-type-detection](document-type-detection/) | [spec](document-type-detection/specification.md) | [design](document-type-detection/design.md) | Implemented | Enhancement |

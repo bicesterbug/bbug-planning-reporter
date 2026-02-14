@@ -50,8 +50,9 @@ dependencies = [
     # PDF generation (Phase 5)
     "weasyprint>=60.0",
 
-    # Anthropic SDK (Phase 4)
-    "anthropic>=0.18.0",
+    # Anthropic SDK (Phase 4) — >=0.25.0 for tool_choice support
+    # Implements [reliable-structure-extraction:NFR-004]
+    "anthropic>=0.25.0",
 
     # S3-compatible object storage
     "boto3>=1.34.0",

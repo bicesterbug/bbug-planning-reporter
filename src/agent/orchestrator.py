@@ -1249,6 +1249,68 @@ class AgentOrchestrator:
 
         return app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text, plans_submitted_text, route_evidence_text
 
+    def _build_route_evidence_summary(self) -> str:
+        """
+        Build a condensed route evidence summary for the structure call.
+
+        Implements [reliable-structure-extraction:FR-004] - Route evidence summarization
+        Implements [reliable-structure-extraction:NFR-002] - Token reduction
+
+        Per destination includes: distance, LTN 1/20 score and rating,
+        provision breakdown as percentages, issue counts by severity,
+        and top 5 highest-severity issues with descriptions.
+
+        Excludes: full segment lists, geometry coordinates, S106 details,
+        and low-severity issues beyond the top 5.
+        """
+        if not self._route_assessments:
+            return "No cycling route assessments were performed."
+
+        summary_lines = []
+        for ra in self._route_assessments:
+            dest = ra.get("destination", "Unknown")
+            distance = ra.get("distance_m", 0)
+            score = ra.get("score", {})
+            rating = score.get("rating", "unknown")
+            score_val = score.get("score", 0)
+            issues = ra.get("issues", [])
+
+            summary_lines.append(f"### Route to {dest}")
+            summary_lines.append(f"- Distance: {distance}m, LTN 1/20 score: {score_val}/100 ({rating})")
+
+            # Provision breakdown as percentages
+            provision = ra.get("provision_breakdown", {})
+            if provision:
+                total = sum(provision.values())
+                if total > 0:
+                    prov_parts = [
+                        f"{k}: {v / total * 100:.0f}%"
+                        for k, v in provision.items() if v > 0
+                    ]
+                    if prov_parts:
+                        summary_lines.append(f"- Provision: {', '.join(prov_parts)}")
+
+            # Issue counts by severity
+            severity_order = {"high": 0, "medium": 1, "low": 2}
+            high_count = sum(1 for i in issues if i.get("severity") == "high")
+            med_count = sum(1 for i in issues if i.get("severity") == "medium")
+            low_count = sum(1 for i in issues if i.get("severity") == "low")
+            summary_lines.append(f"- Issues: {high_count} high, {med_count} medium, {low_count} low")
+
+            # Top 5 highest-severity issues
+            if issues:
+                sorted_issues = sorted(
+                    issues,
+                    key=lambda i: severity_order.get(i.get("severity", "low"), 3),
+                )
+                top_issues = sorted_issues[:5]
+                for issue in top_issues:
+                    summary_lines.append(
+                        f"  - [{issue.get('severity', 'unknown')}] {issue.get('problem', '')}"
+                    )
+
+        return "\n".join(summary_lines)
+
     async def _phase_generate_review(self) -> None:
         """
         Phase 5: Generate the review using two sequential Claude API calls.
@@ -1276,14 +1338,29 @@ class AgentOrchestrator:
             self._build_evidence_context()
         )
 
+        # Implements [reliable-structure-extraction:FR-004] - Condensed route summary for structure call
+        route_summary_text = self._build_route_evidence_summary()
+
         try:
             client = anthropic.Anthropic(api_key=api_key)
 
-            # --- Phase 5a: Structure call ---
+            # --- Phase 5a: Structure call via tool_use ---
+            # Implements [reliable-structure-extraction:FR-001] - Tool use instead of raw JSON
             structure: ReviewStructure | None = None
             structure_json_str: str | None = None
             structure_input_tokens = 0
             structure_output_tokens = 0
+
+            # Implements [reliable-structure-extraction:FR-002] - Schema from Pydantic model
+            tool_schema = ReviewStructure.model_json_schema()
+            tool_name = "submit_review_structure"
+            tools = [
+                {
+                    "name": tool_name,
+                    "description": "Submit the structured review assessment for this planning application.",
+                    "input_schema": tool_schema,
+                }
+            ]
 
             await self._progress.update_sub_progress("Structure call: getting JSON assessment")
 
@@ -1291,29 +1368,32 @@ class AgentOrchestrator:
             try:
                 system_prompt, user_prompt = build_structure_prompt(
                     app_summary, ingested_docs_text, app_evidence_text, policy_evidence_text,
-                    plans_submitted_text, route_evidence_text,
+                    plans_submitted_text, route_summary_text,
                 )
                 structure_msg = client.messages.create(
                     model=model,
                     max_tokens=8000,
                     system=system_prompt,
                     messages=[{"role": "user", "content": user_prompt}],
+                    tools=tools,
+                    tool_choice={"type": "tool", "name": tool_name},
                 )
                 structure_input_tokens = structure_msg.usage.input_tokens
                 structure_output_tokens = structure_msg.usage.output_tokens
 
-                raw_text = structure_msg.content[0].text.strip()
-                # Strip markdown code fence if present
-                if raw_text.startswith("```"):
-                    lines = raw_text.split("\n")
-                    # Remove first and last lines (```json and ```)
-                    lines = lines[1:]
-                    if lines and lines[-1].strip() == "```":
-                        lines = lines[:-1]
-                    raw_text = "\n".join(lines)
+                # Extract tool_use content block
+                tool_use_block = None
+                for block in structure_msg.content:
+                    if block.type == "tool_use":
+                        tool_use_block = block
+                        break
 
-                structure = ReviewStructure.model_validate_json(raw_text)
-                structure_json_str = raw_text
+                if tool_use_block is None:
+                    raise ValueError("Structure call returned no tool_use content block")
+
+                # Validate the tool input dict with Pydantic
+                structure = ReviewStructure.model_validate(tool_use_block.input)
+                structure_json_str = json.dumps(tool_use_block.input)
 
                 logger.info(
                     "Structure call succeeded",
@@ -1323,11 +1403,13 @@ class AgentOrchestrator:
                     aspects_count=len(structure.aspects),
                     compliance_count=len(structure.policy_compliance),
                     recommendations_count=len(structure.recommendations),
+                    stop_reason=structure_msg.stop_reason,
                 )
 
-            except (ValidationError, json.JSONDecodeError, ValueError) as e:
+            # Implements [reliable-structure-extraction:FR-006] - Fallback preserved
+            except (ValidationError, ValueError) as e:
                 logger.warning(
-                    "Structure call returned invalid JSON, falling back to single-call",
+                    "Structure call failed, falling back to single-call",
                     review_id=self._review_id,
                     error=str(e),
                     structure_call_seconds=round(time.monotonic() - structure_start, 2),

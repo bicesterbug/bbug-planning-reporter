@@ -2,6 +2,7 @@
 Tests for structure call prompt builder.
 
 Verifies [structured-review-output:StructureCallPrompt/TS-01] through [TS-03]
+Verifies [reliable-structure-extraction:StructurePrompt/TS-01] through [TS-06]
 """
 
 from src.agent.prompts.structure_prompt import build_structure_prompt
@@ -27,18 +28,123 @@ APP_EVIDENCE = "[ta.pdf] The proposed development includes 50 cycle parking spac
 POLICY_EVIDENCE = "[LTN_1_20] Table 5-2 sets out segregation triggers based on traffic speed and volume."
 
 
-class TestStructurePromptSchema:
+class TestStructurePromptToolUse:
     """
-    Verifies [structured-review-output:StructureCallPrompt/TS-01] - Prompt includes schema
+    Verifies [reliable-structure-extraction:StructurePrompt/TS-01] - No JSON-only instruction
+    Verifies [reliable-structure-extraction:StructurePrompt/TS-02] - No inline schema
+    Verifies [reliable-structure-extraction:StructurePrompt/TS-03] - Tool reference
     """
 
-    def test_system_prompt_contains_json_schema(self):
+    def test_no_json_only_instruction(self):
         """
-        Given: Application metadata and evidence
+        Verifies [reliable-structure-extraction:StructurePrompt/TS-01]
+
+        Given: Default arguments
         When: build_structure_prompt() called
-        Then: System prompt contains JSON schema with all required fields
+        Then: System prompt does NOT contain "respond with a single JSON object"
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "respond with a single JSON object" not in system
+        assert "No markdown" not in system
+
+    def test_no_inline_schema(self):
+        """
+        Verifies [reliable-structure-extraction:StructurePrompt/TS-02]
+
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt does NOT contain inline JSON schema block
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        # Old prompt had: "overall_rating": "red" | "amber" | "green",
+        assert '"overall_rating": "red" | "amber" | "green"' not in system
+        # Old prompt had JSON object with braces defining the schema
+        assert "must conform to this schema" not in system
+
+    def test_tool_reference(self):
+        """
+        Verifies [reliable-structure-extraction:StructurePrompt/TS-03]
+
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt contains "submit_review_structure"
         """
         system, user = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "submit_review_structure" in system
+        assert "submit_review_structure" in user
+
+
+class TestStructurePromptFlexibleAspects:
+    """
+    Verifies [reliable-structure-extraction:StructurePrompt/TS-04] - Flexible aspects
+    """
+
+    def test_no_exactly_five_aspects(self):
+        """
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt does NOT contain "Exactly 5 aspects"
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "Exactly 5 aspects" not in system
+        assert "exactly 5" not in system.lower()
+
+    def test_flexible_aspect_guidance(self):
+        """
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt contains guidance about selecting relevant aspects
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "relevant" in system.lower()
+        assert "Cycle Parking" in system
+        assert "Cycle Routes" in system
+        assert "at least one aspect" in system.lower()
+
+
+class TestStructurePromptFieldGuidance:
+    """
+    Verifies [reliable-structure-extraction:StructurePrompt/TS-05] - Field guidance retained
+    """
+
+    def test_rating_meanings(self):
+        """
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt contains rating meanings
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert '"red"' in system
+        assert '"amber"' in system
+        assert '"green"' in system
+        assert "Serious deficiencies" in system
+        assert "Acceptable provision" in system
+
+    def test_field_names_present(self):
+        """
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt contains all field names
+        """
+        system, _ = build_structure_prompt(
             APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
         )
 
@@ -49,58 +155,21 @@ class TestStructurePromptSchema:
         assert "recommendations" in system
         assert "suggested_conditions" in system
         assert "key_documents" in system
-        assert '"rating"' in system
-        assert '"key_issue"' in system
-        assert '"analysis"' in system
-        assert '"compliant"' in system
-        assert '"requirement"' in system
-        assert '"policy_source"' in system
 
-    def test_system_prompt_summary_field_description(self):
+    def test_summary_description(self):
         """
-        Verifies [review-workflow-redesign:build_structure_prompt/TS-01] - Summary field in schema
-        Verifies [review-workflow-redesign:build_structure_prompt/TS-02] - Summary description
-
         Given: Any input
         When: build_structure_prompt() called
-        Then: System prompt describes summary as 2-4 sentence summary including overall rating
+        Then: System prompt describes summary as 2-4 sentence summary
         """
         system, _ = build_structure_prompt(
             APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
         )
 
-        assert "summary" in system
         assert "2-4 sentence" in system
         assert "overall rating" in system
 
-    def test_system_prompt_specifies_json_only(self):
-        """
-        Given: Any input
-        When: build_structure_prompt() called
-        Then: System prompt instructs Claude to respond with JSON only
-        """
-        system, _ = build_structure_prompt(
-            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
-        )
-
-        assert "JSON" in system
-        assert "No markdown" in system
-
-    def test_system_prompt_defines_rating_values(self):
-        """
-        Given: Any input
-        When: build_structure_prompt() called
-        Then: System prompt defines valid rating values
-        """
-        system, _ = build_structure_prompt(
-            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
-        )
-
-        assert '"red"' in system
-        assert '"amber"' in system
-        assert '"green"' in system
-
-    def test_system_prompt_defines_categories(self):
+    def test_categories_defined(self):
         """
         Given: Any input
         When: build_structure_prompt() called
@@ -118,6 +187,7 @@ class TestStructurePromptSchema:
 class TestStructurePromptEvidence:
     """
     Verifies [structured-review-output:StructureCallPrompt/TS-02] - Evidence included
+    Verifies [reliable-structure-extraction:StructurePrompt/TS-06] - Route evidence in user prompt
     """
 
     def test_user_prompt_contains_app_evidence(self):
@@ -157,6 +227,23 @@ class TestStructurePromptEvidence:
 
         assert "25/01178/REM" in user
         assert "Land at Test Site" in user
+
+    def test_route_evidence_in_user_prompt(self):
+        """
+        Verifies [reliable-structure-extraction:StructurePrompt/TS-06]
+
+        Given: Route evidence text provided
+        When: build_structure_prompt() called
+        Then: User prompt contains the route evidence
+        """
+        route_text = "### Route to Bicester North Station\n- Distance: 2300m, LTN 1/20 score: 45/100 (red)"
+        _, user = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE,
+            route_evidence_text=route_text,
+        )
+
+        assert "Bicester North Station" in user
+        assert "45/100" in user
 
 
 class TestStructurePromptDocuments:
