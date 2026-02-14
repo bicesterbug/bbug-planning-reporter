@@ -103,5 +103,8 @@ sed -i 's/IMAGE_TAG=.*/IMAGE_TAG=v0.x.y/' .env
 
 | Date | Tag | Notes |
 |------|-----|-------|
-| 2025-02-13 | v0.1.6 | Review workflow redesign: 7-phase pipeline, LLM filtering, verification |
-| 2025-02-13 | v0.1.5 | Global webhooks, static secret auth |
+| 2026-02-14 | v0.1.9 | Detect image-based PDFs (plans/drawings), skip vector ingestion |
+| 2026-02-14 | v0.1.8 | Fix document download filename extraction from Cherwell portal URLs |
+| 2026-02-14 | v0.1.7 | Fix scraper health check: add /health endpoint replacing SSE probe |
+| 2026-02-14 | v0.1.6 | Review workflow redesign: 7-phase pipeline, LLM filtering, verification |
+| 2026-02-13 | v0.1.5 | Global webhooks, static secret auth |
