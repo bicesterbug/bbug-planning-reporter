@@ -122,11 +122,21 @@ services:
       - CHERWELL_SCRAPER_PORT=3001
       - SCRAPER_RATE_LIMIT=${SCRAPER_RATE_LIMIT:-1.0}
       - SCRAPER_USER_AGENT=${SCRAPER_USER_AGENT:-CherwellCycleReview/1.0}
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ${DATA_DIR:-./data}/raw:/data/raw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp-scraper.rule=Host(`bbug-planning.mmsio.com`) && PathPrefix(`/mcp/cherwell-scraper/`)"
+      - "traefik.http.routers.mcp-scraper.entrypoints=websecure"
+      - "traefik.http.routers.mcp-scraper.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.mcp-scraper-strip.stripprefix.prefixes=/mcp/cherwell-scraper"
+      - "traefik.http.routers.mcp-scraper.middlewares=mcp-scraper-strip"
+      - "traefik.http.services.mcp-scraper.loadbalancer.server.port=3001"
     networks:
       - agent-net
+      - traefik_default
     restart: unless-stopped
     deploy:
       resources:
@@ -142,12 +152,22 @@ services:
       - CHROMA_PERSIST_DIR=/data/chroma
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
       - ENABLE_OCR=${ENABLE_OCR:-true}
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ${DATA_DIR:-./data}/chroma:/data/chroma
       - ${DATA_DIR:-./data}/raw:/data/raw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp-docstore.rule=Host(`bbug-planning.mmsio.com`) && PathPrefix(`/mcp/document-store/`)"
+      - "traefik.http.routers.mcp-docstore.entrypoints=websecure"
+      - "traefik.http.routers.mcp-docstore.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.mcp-docstore-strip.stripprefix.prefixes=/mcp/document-store"
+      - "traefik.http.routers.mcp-docstore.middlewares=mcp-docstore-strip"
+      - "traefik.http.services.mcp-docstore.loadbalancer.server.port=3002"
     networks:
       - agent-net
+      - traefik_default
     restart: unless-stopped
     deploy:
       resources:
@@ -163,6 +183,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/data/chroma
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ${DATA_DIR:-./data}/chroma:/data/chroma
@@ -170,8 +191,17 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp-policykb.rule=Host(`bbug-planning.mmsio.com`) && PathPrefix(`/mcp/policy-kb/`)"
+      - "traefik.http.routers.mcp-policykb.entrypoints=websecure"
+      - "traefik.http.routers.mcp-policykb.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.mcp-policykb-strip.stripprefix.prefixes=/mcp/policy-kb"
+      - "traefik.http.routers.mcp-policykb.middlewares=mcp-policykb-strip"
+      - "traefik.http.services.mcp-policykb.loadbalancer.server.port=3003"
     networks:
       - agent-net
+      - traefik_default
     restart: unless-stopped
     deploy:
       resources:

@@ -220,11 +220,14 @@ assert response.ok
 
 ### Transport
 
-- Use SSE transport for containerized deployment
+- Use `create_mcp_app()` from `src.mcp_servers.shared.transport` for all MCP servers
+- Dual transport: SSE (`/sse`, `/messages/`) for internal worker + Streamable HTTP (`/mcp`) for external clients
+- Auth via `MCP_API_KEY` env var (opt-in, bearer token on all protocol endpoints, `/health` exempt)
 - Port allocation:
   - cherwell-scraper-mcp: 3001
   - document-store-mcp: 3002
   - policy-kb-mcp: 3003
+  - cycle-route-mcp: 3004
 
 ### Tool Naming
 

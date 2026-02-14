@@ -113,6 +113,7 @@ services:
       - CHROMA_PERSIST_DIR=/data/chroma
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
       - ENABLE_OCR=${ENABLE_OCR:-true}
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     ports:
       - "3002:3002"
@@ -135,6 +136,7 @@ services:
       - CHERWELL_SCRAPER_PORT=3001
       - SCRAPER_RATE_LIMIT=${SCRAPER_RATE_LIMIT:-1.0}
       - SCRAPER_USER_AGENT=${SCRAPER_USER_AGENT:-CherwellCycleReview/1.0}
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     ports:
       - "3001:3001"
@@ -156,6 +158,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/data/chroma
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     ports:
       - "3003:3003"
