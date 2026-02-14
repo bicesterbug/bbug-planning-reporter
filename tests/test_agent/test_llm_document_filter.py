@@ -72,21 +72,21 @@ class TestLLMDocumentFilter:
 
     @pytest.mark.asyncio
     @patch("src.agent.llm_document_filter.anthropic.Anthropic")
-    async def test_successful_filter(
-        self, mock_anthropic_cls, llm_filter, sample_documents
-    ):
+    async def test_successful_filter(self, mock_anthropic_cls, llm_filter, sample_documents):
         """LLM selects relevant documents and excludes irrelevant ones."""
-        response_json = json.dumps({
-            "selected": [
-                {"document_id": "doc1", "reason": "Transport assessment is core"},
-                {"document_id": "doc3", "reason": "DAS contains layout info"},
-                {"document_id": "doc5", "reason": "Site plan shows access"},
-            ],
-            "excluded": [
-                {"document_id": "doc2", "reason": "Ecology not relevant"},
-                {"document_id": "doc4", "reason": "Flood risk not relevant"},
-            ],
-        })
+        response_json = json.dumps(
+            {
+                "selected": [
+                    {"document_id": "doc1", "reason": "Transport assessment is core"},
+                    {"document_id": "doc3", "reason": "DAS contains layout info"},
+                    {"document_id": "doc5", "reason": "Site plan shows access"},
+                ],
+                "excluded": [
+                    {"document_id": "doc2", "reason": "Ecology not relevant"},
+                    {"document_id": "doc4", "reason": "Flood risk not relevant"},
+                ],
+            }
+        )
 
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_anthropic_response(response_json)
@@ -112,10 +112,12 @@ class TestLLMDocumentFilter:
         self, mock_anthropic_cls, llm_filter, sample_documents
     ):
         """LLM response wrapped in markdown code fences is handled."""
-        raw = json.dumps({
-            "selected": [{"document_id": "doc1", "reason": "relevant"}],
-            "excluded": [{"document_id": "doc2", "reason": "not relevant"}],
-        })
+        raw = json.dumps(
+            {
+                "selected": [{"document_id": "doc1", "reason": "relevant"}],
+                "excluded": [{"document_id": "doc2", "reason": "not relevant"}],
+            }
+        )
         fenced = f"```json\n{raw}\n```"
 
         mock_client = MagicMock()
@@ -130,9 +132,7 @@ class TestLLMDocumentFilter:
 
     @pytest.mark.asyncio
     @patch("src.agent.llm_document_filter.anthropic.Anthropic")
-    async def test_fallback_on_invalid_json(
-        self, mock_anthropic_cls, llm_filter, sample_documents
-    ):
+    async def test_fallback_on_invalid_json(self, mock_anthropic_cls, llm_filter, sample_documents):
         """Falls back to allow-all when LLM returns unparseable text."""
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_anthropic_response(
@@ -148,9 +148,7 @@ class TestLLMDocumentFilter:
 
     @pytest.mark.asyncio
     @patch("src.agent.llm_document_filter.anthropic.Anthropic")
-    async def test_fallback_on_api_error(
-        self, mock_anthropic_cls, llm_filter, sample_documents
-    ):
+    async def test_fallback_on_api_error(self, mock_anthropic_cls, llm_filter, sample_documents):
         """Falls back to allow-all when Anthropic API raises an error."""
         import anthropic as anthropic_mod
 
@@ -182,10 +180,12 @@ class TestLLMDocumentFilter:
         self, mock_anthropic_cls, llm_filter, sample_documents
     ):
         """Application summary is passed to the LLM in the user prompt."""
-        response_json = json.dumps({
-            "selected": [{"document_id": "doc1", "reason": "relevant"}],
-            "excluded": [],
-        })
+        response_json = json.dumps(
+            {
+                "selected": [{"document_id": "doc1", "reason": "relevant"}],
+                "excluded": [],
+            }
+        )
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_anthropic_response(response_json)
         mock_anthropic_cls.return_value = mock_client
@@ -202,9 +202,7 @@ class TestLLMDocumentFilter:
 
     @pytest.mark.asyncio
     @patch("src.agent.llm_document_filter.anthropic.Anthropic")
-    async def test_all_documents_in_prompt(
-        self, mock_anthropic_cls, llm_filter, sample_documents
-    ):
+    async def test_all_documents_in_prompt(self, mock_anthropic_cls, llm_filter, sample_documents):
         """All document IDs and descriptions appear in the LLM prompt."""
         response_json = json.dumps({"selected": [], "excluded": []})
         mock_client = MagicMock()
@@ -221,9 +219,11 @@ class TestLLMDocumentFilter:
 
     def test_missing_api_key_raises(self):
         """Raises ValueError when no API key is available."""
-        with patch.dict("os.environ", {}, clear=True):
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-                LLMDocumentFilter(api_key=None)
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            pytest.raises(ValueError, match="ANTHROPIC_API_KEY"),
+        ):
+            LLMDocumentFilter(api_key=None)
 
 
 class TestLLMFilterResult:

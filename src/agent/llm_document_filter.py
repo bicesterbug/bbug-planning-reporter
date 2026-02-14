@@ -151,8 +151,7 @@ class LLMDocumentFilter:
 
         user_prompt = (
             f"## Planning Application\n{application_summary}\n\n"
-            f"## Documents ({len(documents)} total)\n"
-            + "\n".join(doc_lines)
+            f"## Documents ({len(documents)} total)\n" + "\n".join(doc_lines)
         )
 
         try:
@@ -183,16 +182,20 @@ class LLMDocumentFilter:
             )
 
             for item in parsed.get("selected", []):
-                result.selected.append(FilteredDocument(
-                    document_id=item.get("document_id", ""),
-                    reason=item.get("reason", ""),
-                ))
+                result.selected.append(
+                    FilteredDocument(
+                        document_id=item.get("document_id", ""),
+                        reason=item.get("reason", ""),
+                    )
+                )
 
             for item in parsed.get("excluded", []):
-                result.excluded.append(FilteredDocument(
-                    document_id=item.get("document_id", ""),
-                    reason=item.get("reason", ""),
-                ))
+                result.excluded.append(
+                    FilteredDocument(
+                        document_id=item.get("document_id", ""),
+                        reason=item.get("reason", ""),
+                    )
+                )
 
             logger.info(
                 "LLM document filter complete",

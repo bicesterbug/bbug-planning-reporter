@@ -188,9 +188,7 @@ class CherwellScraperMCP:
                         ListApplicationDocumentsInput(**arguments)
                     )
                 elif name == "download_document":
-                    result = await self._download_document(
-                        DownloadDocumentInput(**arguments)
-                    )
+                    result = await self._download_document(DownloadDocumentInput(**arguments))
                 elif name == "download_all_documents":
                     result = await self._download_all_documents(
                         DownloadAllDocumentsInput(**arguments)
@@ -209,12 +207,14 @@ class CherwellScraperMCP:
                 return [
                     TextContent(
                         type="text",
-                        text=json.dumps({
-                            "status": "error",
-                            "error_code": e.error_code,
-                            "message": e.message,
-                            "details": e.details,
-                        }),
+                        text=json.dumps(
+                            {
+                                "status": "error",
+                                "error_code": e.error_code,
+                                "message": e.message,
+                                "details": e.details,
+                            }
+                        ),
                     )
                 ]
             except CherwellClientError as e:
@@ -227,12 +227,14 @@ class CherwellScraperMCP:
                 return [
                     TextContent(
                         type="text",
-                        text=json.dumps({
-                            "status": "error",
-                            "error_code": e.error_code,
-                            "message": e.message,
-                            "details": e.details,
-                        }),
+                        text=json.dumps(
+                            {
+                                "status": "error",
+                                "error_code": e.error_code,
+                                "message": e.message,
+                                "details": e.details,
+                            }
+                        ),
                     )
                 ]
             except Exception as e:
@@ -240,17 +242,17 @@ class CherwellScraperMCP:
                 return [
                     TextContent(
                         type="text",
-                        text=json.dumps({
-                            "status": "error",
-                            "error_code": "internal_error",
-                            "message": str(e),
-                        }),
+                        text=json.dumps(
+                            {
+                                "status": "error",
+                                "error_code": "internal_error",
+                                "message": str(e),
+                            }
+                        ),
                     )
                 ]
 
-    async def _get_application_details(
-        self, input: GetApplicationDetailsInput
-    ) -> dict[str, Any]:
+    async def _get_application_details(self, input: GetApplicationDetailsInput) -> dict[str, Any]:
         """
         Get application metadata.
 
@@ -273,9 +275,7 @@ class CherwellScraperMCP:
                 "application": metadata.to_dict(),
             }
 
-    async def _fetch_all_document_info(
-        self, application_ref: str
-    ) -> list:
+    async def _fetch_all_document_info(self, application_ref: str) -> list:
         """
         Fetch and parse all documents for an application.
 
@@ -292,9 +292,7 @@ class CherwellScraperMCP:
         async with self._get_client() as client:
             # Fetch first page
             html = await client.get_documents_page(application_ref)
-            documents = self._parser.parse_document_list(
-                html, application_ref, client.base_url
-            )
+            documents = self._parser.parse_document_list(html, application_ref, client.base_url)
             all_documents.extend(documents)
 
             # Handle pagination
@@ -304,9 +302,7 @@ class CherwellScraperMCP:
 
             while next_url and page <= max_pages:
                 html = await client.get_page(next_url)
-                documents = self._parser.parse_document_list(
-                    html, application_ref, client.base_url
-                )
+                documents = self._parser.parse_document_list(html, application_ref, client.base_url)
                 if not documents:
                     break
                 all_documents.extend(documents)
@@ -340,9 +336,7 @@ class CherwellScraperMCP:
             "documents": [doc.to_dict() for doc in all_documents],
         }
 
-    async def _download_document(
-        self, input: DownloadDocumentInput
-    ) -> dict[str, Any]:
+    async def _download_document(self, input: DownloadDocumentInput) -> dict[str, Any]:
         """
         Download a single document.
 
@@ -373,9 +367,7 @@ class CherwellScraperMCP:
                 "file_size": file_size,
             }
 
-    async def _download_all_documents(
-        self, input: DownloadAllDocumentsInput
-    ) -> dict[str, Any]:
+    async def _download_all_documents(self, input: DownloadAllDocumentsInput) -> dict[str, Any]:
         """
         Download all documents for an application.
 
@@ -415,9 +407,7 @@ class CherwellScraperMCP:
         # Pre-filter by selected_document_ids when provided (LLM filter stage)
         if input.selected_document_ids is not None:
             selected_set = set(input.selected_document_ids)
-            all_documents = [
-                doc for doc in all_documents if doc.document_id in selected_set
-            ]
+            all_documents = [doc for doc in all_documents if doc.document_id in selected_set]
             logger.info(
                 "Pre-filtered to selected document IDs",
                 application_ref=input.application_ref,
@@ -469,9 +459,9 @@ class CherwellScraperMCP:
                 # Generate filename from description and index
                 description = doc.description or f"document_{i}"
                 # Sanitize filename
-                safe_name = "".join(
-                    c if c.isalnum() or c in "._- " else "_" for c in description
-                )[:100]
+                safe_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in description)[
+                    :100
+                ]
                 filename = f"{i:03d}_{safe_name}.pdf"
                 output_path = output_dir / filename
 
@@ -560,9 +550,7 @@ def create_app(
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request):
-        async with sse.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
+        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await mcp_server.server.run(
                 streams[0], streams[1], mcp_server.server.create_initialization_options()
             )

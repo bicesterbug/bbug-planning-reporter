@@ -183,7 +183,9 @@ class AgentOrchestrator:
             logger.info(
                 "Recovered workflow state",
                 review_id=self._review_id,
-                current_phase=self._progress.current_phase.value if self._progress.current_phase else None,
+                current_phase=self._progress.current_phase.value
+                if self._progress.current_phase
+                else None,
             )
 
         # Initialize MCP client if not provided
@@ -443,9 +445,7 @@ class AgentOrchestrator:
                 )
 
                 if not llm_filter_result.fallback_used:
-                    selected_ids = [
-                        doc.document_id for doc in llm_filter_result.selected
-                    ]
+                    selected_ids = [doc.document_id for doc in llm_filter_result.selected]
                     logger.info(
                         "LLM filter selected documents",
                         review_id=self._review_id,
@@ -453,7 +453,8 @@ class AgentOrchestrator:
                         selected=len(selected_ids),
                         excluded=len(llm_filter_result.excluded),
                         model=llm_filter_result.model_used,
-                        filter_tokens=llm_filter_result.input_tokens + llm_filter_result.output_tokens,
+                        filter_tokens=llm_filter_result.input_tokens
+                        + llm_filter_result.output_tokens,
                     )
                 else:
                     logger.warning(
@@ -553,9 +554,7 @@ class AgentOrchestrator:
             )
 
             # Include LLM filter metadata in progress
-            download_detail = (
-                f"Downloaded {len(downloaded)} of {total_listed} documents"
-            )
+            download_detail = f"Downloaded {len(downloaded)} of {total_listed} documents"
             if selected_ids is not None:
                 download_detail += f" (LLM selected {len(selected_ids)})"
 
@@ -660,10 +659,9 @@ class AgentOrchestrator:
                     )
                     return False
 
-        await asyncio.gather(*(
-            ingest_one(doc_path)
-            for doc_path in self._ingestion_result.document_paths
-        ))
+        await asyncio.gather(
+            *(ingest_one(doc_path) for doc_path in self._ingestion_result.document_paths)
+        )
 
         self._ingestion_result.documents_ingested = ingested_count
 
@@ -717,12 +715,14 @@ class AgentOrchestrator:
                 )
                 results_list = result.get("results", [])
                 for r in results_list:
-                    self._evidence_chunks.append({
-                        "source": "application",
-                        "query": query,
-                        "text": r.get("text", r.get("document", "")),
-                        "metadata": r.get("metadata", {}),
-                    })
+                    self._evidence_chunks.append(
+                        {
+                            "source": "application",
+                            "query": query,
+                            "text": r.get("text", r.get("document", "")),
+                            "metadata": r.get("metadata", {}),
+                        }
+                    )
             except (MCPToolError, MCPConnectionError) as e:
                 logger.warning("Doc search failed", query=query, error=str(e))
 
@@ -754,12 +754,14 @@ class AgentOrchestrator:
                 )
                 results_list = result.get("results", [])
                 for r in results_list:
-                    self._evidence_chunks.append({
-                        "source": "policy",
-                        "query": query,
-                        "text": r.get("text", r.get("document", "")),
-                        "metadata": r.get("metadata", {}),
-                    })
+                    self._evidence_chunks.append(
+                        {
+                            "source": "policy",
+                            "query": query,
+                            "text": r.get("text", r.get("document", "")),
+                            "metadata": r.get("metadata", {}),
+                        }
+                    )
             except (MCPToolError, MCPConnectionError) as e:
                 logger.warning("Policy search failed", query=query, error=str(e))
 
@@ -800,8 +802,16 @@ class AgentOrchestrator:
                 source_file = meta.get("source_file", "Unknown document")
                 app_evidence.append(f"[{source_file}] {text}")
 
-        app_evidence_text = "\n\n---\n\n".join(app_evidence[:20]) if app_evidence else "No application document content retrieved."
-        policy_evidence_text = "\n\n---\n\n".join(policy_evidence[:15]) if policy_evidence else "No policy content retrieved."
+        app_evidence_text = (
+            "\n\n---\n\n".join(app_evidence[:20])
+            if app_evidence
+            else "No application document content retrieved."
+        )
+        policy_evidence_text = (
+            "\n\n---\n\n".join(policy_evidence[:15])
+            if policy_evidence
+            else "No policy content retrieved."
+        )
 
         # Implements [key-documents:FR-005] - Build ingested document list for LLM
         ingested_docs_text = "No document metadata available."
@@ -920,8 +930,11 @@ class AgentOrchestrator:
 
                 report_start = time.monotonic()
                 report_system, report_user = build_report_prompt(
-                    structure_json_str, app_summary, ingested_docs_text,
-                    app_evidence_text, policy_evidence_text,
+                    structure_json_str,
+                    app_summary,
+                    ingested_docs_text,
+                    app_evidence_text,
+                    policy_evidence_text,
                 )
                 report_msg = client.messages.create(
                     model=model,
@@ -971,14 +984,14 @@ class AgentOrchestrator:
             else:
                 # Fallback: single markdown call (no structured field extraction)
                 # Implements [structured-review-output:FR-007]
-                await self._progress.update_sub_progress(
-                    "Fallback: generating markdown review"
-                )
+                await self._progress.update_sub_progress("Fallback: generating markdown review")
 
                 fallback_system, fallback_user = build_report_prompt(
                     "{}",  # empty JSON — report call will just produce a review
-                    app_summary, ingested_docs_text,
-                    app_evidence_text, policy_evidence_text,
+                    app_summary,
+                    ingested_docs_text,
+                    app_evidence_text,
+                    policy_evidence_text,
                 )
                 # Override the system prompt for fallback — don't reference JSON
                 fallback_system = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
@@ -1009,9 +1022,15 @@ Always cite specific policy references. Be constructive and evidence-based."""
                 # Parse overall rating from the markdown (best effort)
                 overall_rating = "amber"
                 rating_lower = review_markdown.lower()
-                if "overall rating:** red" in rating_lower or "overall rating:** 🔴" in rating_lower:
+                if (
+                    "overall rating:** red" in rating_lower
+                    or "overall rating:** 🔴" in rating_lower
+                ):
                     overall_rating = "red"
-                elif "overall rating:** green" in rating_lower or "overall rating:** 🟢" in rating_lower:
+                elif (
+                    "overall rating:** green" in rating_lower
+                    or "overall rating:** 🟢" in rating_lower
+                ):
                     overall_rating = "green"
 
                 # No structured fields available in fallback
@@ -1048,9 +1067,7 @@ Always cite specific policy references. Be constructive and evidence-based."""
                     "total_tokens_used": total_input + total_output,
                     "evidence_chunks_used": len(getattr(self, "_evidence_chunks", [])),
                     "documents_analysed": (
-                        self._ingestion_result.documents_ingested
-                        if self._ingestion_result
-                        else 0
+                        self._ingestion_result.documents_ingested if self._ingestion_result else 0
                     ),
                 },
                 success=True,
