@@ -338,6 +338,8 @@ class CherwellScraperMCP:
         Download a single document.
 
         Implements [foundation-api:CherwellScraperMCP/TS-04] - Download single document
+        Implements [download-filename-fix:FR-001] - Extract filename from query parameter
+        Implements [download-filename-fix:FR-002] - Disambiguate duplicate filenames
         """
         output_dir = Path(input.output_dir)
 
@@ -345,15 +347,29 @@ class CherwellScraperMCP:
         if input.filename:
             filename = input.filename
         else:
-            # Extract filename from URL
-            from urllib.parse import unquote, urlparse
+            from urllib.parse import parse_qs, unquote, urlparse
 
             parsed = urlparse(input.document_url)
-            filename = unquote(parsed.path.split("/")[-1])
-            if not filename or filename == "":
-                filename = f"document_{hash(input.document_url) & 0xFFFFFFFF}.pdf"
 
+            # Cherwell portal URLs use fileName query parameter
+            query_params = parse_qs(parsed.query)
+            if "fileName" in query_params and query_params["fileName"][0]:
+                filename = unquote(query_params["fileName"][0])
+            else:
+                # Fallback: extract from URL path
+                filename = unquote(parsed.path.split("/")[-1])
+                if not filename or filename == "":
+                    filename = f"document_{hash(input.document_url) & 0xFFFFFFFF}.pdf"
+
+        # Disambiguate duplicate filenames in the same directory
         output_path = output_dir / filename
+        if output_path.exists():
+            stem = output_path.stem
+            suffix = output_path.suffix
+            counter = 1
+            while output_path.exists():
+                output_path = output_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
 
         async with self._get_client() as client:
             file_size = await client.download_document(input.document_url, output_path)
