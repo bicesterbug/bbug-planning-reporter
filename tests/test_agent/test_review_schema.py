@@ -16,6 +16,7 @@ from src.agent.review_schema import (
 
 VALID_STRUCTURE_JSON = {
     "overall_rating": "red",
+    "summary": "This application receives a RED rating due to serious deficiencies in cycling provision. There are no off-site cycle connections, no cycle priority at junctions, and the site layout is car-dominated. Key NPPF and LTN 1/20 requirements are not met.",
     "aspects": [
         {
             "name": "Cycle Parking",
@@ -100,6 +101,7 @@ class TestReviewStructureValidJSON:
         structure = ReviewStructure.model_validate(VALID_STRUCTURE_JSON)
 
         assert structure.overall_rating == "red"
+        assert structure.summary.startswith("This application receives a RED rating")
         assert len(structure.aspects) == 5
         assert structure.aspects[0].name == "Cycle Parking"
         assert structure.aspects[0].rating == "amber"
@@ -149,6 +151,21 @@ class TestReviewStructureMissingField:
         with pytest.raises(ValidationError) as exc_info:
             ReviewStructure.model_validate(data)
         assert "overall_rating" in str(exc_info.value)
+
+    def test_missing_summary(self):
+        """
+        Verifies [review-workflow-redesign:ReviewStructure/TS-02] - Missing summary fails validation
+
+        Given: JSON missing summary field
+        When: ReviewStructure.model_validate() called
+        Then: ValidationError raised
+        """
+        data = {**VALID_STRUCTURE_JSON}
+        del data["summary"]
+
+        with pytest.raises(ValidationError) as exc_info:
+            ReviewStructure.model_validate(data)
+        assert "summary" in str(exc_info.value)
 
     def test_missing_aspects(self):
         """

@@ -49,6 +49,7 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required — set in .env}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-5-20250929}
+      - DOCUMENT_FILTER_MODEL=${DOCUMENT_FILTER_MODEL:-claude-haiku-4-5-20251001}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/data/chroma
       - RAW_DOCS_DIR=/data/raw

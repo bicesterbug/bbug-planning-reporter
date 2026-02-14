@@ -484,16 +484,18 @@ class TestPhaseNumberMap:
 
         Given: PHASE_NUMBER_MAP constant
         When: Inspect all entries
-        Then: 5 entries, values 1 through 5, matching ReviewPhase enum order
+        Then: 7 entries, values 1 through 7, matching ReviewPhase enum order
         """
-        assert len(PHASE_NUMBER_MAP) == 5
-        assert set(PHASE_NUMBER_MAP.values()) == {1, 2, 3, 4, 5}
+        assert len(PHASE_NUMBER_MAP) == 7
+        assert set(PHASE_NUMBER_MAP.values()) == {1, 2, 3, 4, 5, 6, 7}
 
         assert PHASE_NUMBER_MAP[ReviewPhase.FETCHING_METADATA] == 1
-        assert PHASE_NUMBER_MAP[ReviewPhase.DOWNLOADING_DOCUMENTS] == 2
-        assert PHASE_NUMBER_MAP[ReviewPhase.INGESTING_DOCUMENTS] == 3
-        assert PHASE_NUMBER_MAP[ReviewPhase.ANALYSING_APPLICATION] == 4
-        assert PHASE_NUMBER_MAP[ReviewPhase.GENERATING_REVIEW] == 5
+        assert PHASE_NUMBER_MAP[ReviewPhase.FILTERING_DOCUMENTS] == 2
+        assert PHASE_NUMBER_MAP[ReviewPhase.DOWNLOADING_DOCUMENTS] == 3
+        assert PHASE_NUMBER_MAP[ReviewPhase.INGESTING_DOCUMENTS] == 4
+        assert PHASE_NUMBER_MAP[ReviewPhase.ANALYSING_APPLICATION] == 5
+        assert PHASE_NUMBER_MAP[ReviewPhase.GENERATING_REVIEW] == 6
+        assert PHASE_NUMBER_MAP[ReviewPhase.VERIFYING_REVIEW] == 7
 
 
 class TestSyncJobProgress:
@@ -566,8 +568,8 @@ class TestSyncJobProgress:
 
         assert job["progress"] is not None
         assert job["progress"]["phase"] == "downloading_documents"
-        assert job["progress"]["phase_number"] == 2
-        assert job["progress"]["total_phases"] == 5
+        assert job["progress"]["phase_number"] == 3
+        assert job["progress"]["total_phases"] == 7
         assert job["progress"]["percent_complete"] >= 0
 
     @pytest.mark.asyncio

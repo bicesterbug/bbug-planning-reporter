@@ -41,9 +41,10 @@ class TextChunker:
     - [document-processing:TextChunker/TS-06] Include page context
     """
 
-    # Default parameters matching design spec
-    DEFAULT_CHUNK_SIZE = 1000  # tokens (approximated as chars/4)
-    DEFAULT_CHUNK_OVERLAP = 200  # tokens
+    # Implements [review-workflow-redesign:FR-003] - Chunk sizes fit embedding model limit
+    # 200 tokens * 4 chars/token = 800 chars, well within all-MiniLM-L6-v2's 1024-char max
+    DEFAULT_CHUNK_SIZE = 200  # tokens (approximated as chars/4)
+    DEFAULT_CHUNK_OVERLAP = 50  # tokens
     CHARS_PER_TOKEN = 4  # Rough approximation
 
     def __init__(

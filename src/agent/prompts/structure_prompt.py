@@ -40,6 +40,7 @@ The JSON object must conform to this schema:
 
 {
   "overall_rating": "red" | "amber" | "green",
+  "summary": string,
   "aspects": [
     {
       "name": string,
@@ -74,6 +75,8 @@ Field guidance:
 - "red" = Serious deficiencies requiring objection
 - "amber" = Concerns that need addressing but could be resolved with conditions
 - "green" = Acceptable provision for cycling and walking
+
+**summary**: A concise 2-4 sentence summary of the review including the overall rating. This should capture the key finding, main concerns, and overall recommendation. Do not use markdown formatting.
 
 **aspects**: Exactly 5 aspects, in this order:
 1. "Cycle Parking" — quantity, type, location, security, accessibility

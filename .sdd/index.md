@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-13 | [review-workflow-redesign](review-workflow-redesign/) | [spec](review-workflow-redesign/specification.md) | [design](review-workflow-redesign/design.md) | Implemented | Enhancement |
 | 2026-02-13 | [global-webhooks](global-webhooks/) | [spec](global-webhooks/specification.md) | [design](global-webhooks/design.md) | Implementation Complete | Enhancement |
 | 2026-02-13 | [webhook-review-data](webhook-review-data/) | [spec](webhook-review-data/specification.md) | [design](webhook-review-data/design.md) | Superseded by global-webhooks | Bugfix |
 | 2026-02-10 | [review-progress](review-progress/) | [spec](review-progress/specification.md) | [design](review-progress/design.md) | Implementation Complete | Bugfix |

@@ -264,3 +264,88 @@ class TestEstimateTokens:
         """Test token estimation for empty text."""
         tokens = chunker.estimate_tokens("")
         assert tokens == 0
+
+
+class TestChunkEmbeddingLimit:
+    """
+    Verifies [review-workflow-redesign:TextChunker/TS-01] - Chunks fit embedding limit
+    Verifies [review-workflow-redesign:ITS-05] - Chunk size prevents truncation
+    """
+
+    EMBEDDING_MAX_CHARS = 1024
+
+    def test_chunks_fit_embedding_limit(self, chunker: TextChunker) -> None:
+        """
+        Verifies [review-workflow-redesign:TextChunker/TS-01]
+
+        Given: 10,000-character document
+        When: Chunked with new defaults
+        Then: All chunks are <= 1024 characters
+        """
+        text = "This is a test sentence with some content. " * 250  # ~11,000 chars
+        chunks = chunker.chunk_text(text)
+
+        assert len(chunks) > 1, "Should produce multiple chunks"
+        for chunk in chunks:
+            assert chunk.char_count <= self.EMBEDDING_MAX_CHARS, (
+                f"Chunk {chunk.chunk_index} has {chunk.char_count} chars, "
+                f"exceeds embedding limit of {self.EMBEDDING_MAX_CHARS}"
+            )
+
+    def test_overlap_preserved_with_new_defaults(self, chunker: TextChunker) -> None:
+        """
+        Verifies [review-workflow-redesign:TextChunker/TS-02]
+
+        Given: Document with clear sentence boundaries
+        When: Chunked with new defaults
+        Then: Adjacent chunks share overlapping text
+        """
+        text = "This is a sentence about the planning application. " * 100
+        chunks = chunker.chunk_text(text)
+
+        assert len(chunks) > 2, "Should produce enough chunks to verify overlap"
+        # Check that consecutive chunks share some text
+        for i in range(len(chunks) - 1):
+            this_text = chunks[i].text
+            next_text = chunks[i + 1].text
+            # The end of this chunk should overlap with the start of the next
+            overlap_found = any(
+                word in next_text[:300]
+                for word in this_text[-200:].split()
+                if len(word) > 3
+            )
+            assert overlap_found, f"No overlap found between chunk {i} and {i + 1}"
+
+    def test_short_document_single_chunk(self, chunker: TextChunker) -> None:
+        """
+        Verifies [review-workflow-redesign:TextChunker/TS-03]
+
+        Given: 500-character document
+        When: Chunked with new defaults
+        Then: Single chunk containing full text
+        """
+        text = "Short document content. " * 20  # ~480 chars
+        chunks = chunker.chunk_text(text)
+
+        assert len(chunks) == 1
+        assert chunks[0].text.strip() == text.strip()
+
+    def test_chunk_pages_fit_embedding_limit(self, chunker: TextChunker) -> None:
+        """
+        Given: Multi-page document
+        When: chunk_pages() called with new defaults
+        Then: All chunks are <= 1024 characters
+        """
+        pages = [
+            (1, "Content from page one with detailed information. " * 30),
+            (2, "Content from page two about transport assessment. " * 30),
+            (3, "Content from page three covering site layout. " * 30),
+        ]
+        chunks = chunker.chunk_pages(pages)
+
+        assert len(chunks) > 1
+        for chunk in chunks:
+            assert chunk.char_count <= self.EMBEDDING_MAX_CHARS, (
+                f"Chunk {chunk.chunk_index} has {chunk.char_count} chars, "
+                f"exceeds embedding limit of {self.EMBEDDING_MAX_CHARS}"
+            )

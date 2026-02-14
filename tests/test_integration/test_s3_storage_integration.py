@@ -122,77 +122,122 @@ def sample_application_response():
 
 
 @pytest.fixture
-def sample_s3_download_response():
-    """Sample download response with /tmp/raw paths for S3 mode."""
+def sample_list_documents_response():
+    """Sample response from list_application_documents."""
     return {
         "status": "success",
-        "downloads": [
+        "documents": [
             {
                 "document_id": "doc1",
-                "file_path": "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
-                "file_size": 150000,
-                "success": True,
                 "description": "Transport Assessment",
                 "document_type": "Transport Assessment",
                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
+                "date_published": "2024-01-01",
             },
             {
                 "document_id": "doc2",
-                "file_path": "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
-                "file_size": 80000,
-                "success": True,
                 "description": "Site Plan",
                 "document_type": "Plans - Site Plan",
                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2",
+                "date_published": "2024-01-02",
             },
             {
                 "document_id": "doc3",
-                "file_path": "/tmp/raw/25_01178_REM/003_Design Statement.pdf",
-                "file_size": 120000,
-                "success": True,
                 "description": "Design and Access Statement",
                 "document_type": "Design and Access Statement",
                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3",
+                "date_published": "2024-01-03",
             },
         ],
     }
 
 
-@pytest.fixture
-def sample_local_download_response():
-    """Sample download response with /data/raw paths for local mode."""
-    return {
-        "status": "success",
-        "downloads": [
-            {
-                "document_id": "doc1",
-                "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
-                "file_size": 150000,
-                "success": True,
-                "description": "Transport Assessment",
-                "document_type": "Transport Assessment",
-                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
-            },
-            {
-                "document_id": "doc2",
-                "file_path": "/data/raw/25_01178_REM/002_Site Plan.pdf",
-                "file_size": 80000,
-                "success": True,
-                "description": "Site Plan",
-                "document_type": "Plans - Site Plan",
-                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2",
-            },
-            {
-                "document_id": "doc3",
-                "file_path": "/data/raw/25_01178_REM/003_Design Statement.pdf",
-                "file_size": 120000,
-                "success": True,
-                "description": "Design and Access Statement",
-                "document_type": "Design and Access Statement",
-                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3",
-            },
+def _s3_download_responses():
+    """Per-document download responses with /tmp/raw paths for S3 mode."""
+    return [
+        {
+            "status": "success",
+            "file_path": "/tmp/raw/25_01178_REM/001_Transport Assessment.pdf",
+            "file_size": 150000,
+        },
+        {
+            "status": "success",
+            "file_path": "/tmp/raw/25_01178_REM/002_Site Plan.pdf",
+            "file_size": 80000,
+        },
+        {
+            "status": "success",
+            "file_path": "/tmp/raw/25_01178_REM/003_Design Statement.pdf",
+            "file_size": 120000,
+        },
+    ]
+
+
+def _local_download_responses():
+    """Per-document download responses with /data/raw paths for local mode."""
+    return [
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
+            "file_size": 150000,
+        },
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/002_Site Plan.pdf",
+            "file_size": 80000,
+        },
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/003_Design Statement.pdf",
+            "file_size": 120000,
+        },
+    ]
+
+
+def _make_filter_response(doc_ids: list[str] | None = None):
+    """Build a mock Anthropic Messages response for the document filter call."""
+    ids = doc_ids or ["doc1", "doc2", "doc3"]
+    content_block = SimpleNamespace(text=json.dumps(ids))
+    usage = SimpleNamespace(input_tokens=500, output_tokens=100)
+    return SimpleNamespace(content=[content_block], usage=usage)
+
+
+def _make_query_response():
+    """Build a mock Anthropic Messages response for the query generation call."""
+    query_json = json.dumps({
+        "application_queries": [
+            "cycle parking provision quantity type location",
+            "cycle route design connectivity network",
+            "junction design safety for cyclists",
+            "pedestrian cycle permeability through site",
         ],
-    }
+        "policy_queries": [
+            {"query": "cycle infrastructure design segregation", "sources": ["LTN_1_20"]},
+            {"query": "sustainable transport cycling policy", "sources": ["NPPF", "CHERWELL_LP_2015"]},
+            {"query": "cycling walking infrastructure plan", "sources": ["OCC_LTCP", "BICESTER_LCWIP"]},
+        ],
+    })
+    return _make_claude_response(
+        markdown=query_json,
+        input_tokens=300,
+        output_tokens=150,
+    )
+
+
+def _make_verification_response():
+    """Build a mock Anthropic Messages response for the verification call."""
+    verification_json = json.dumps({
+        "claims": [
+            {"claim": "The development includes cycle parking", "verified": True, "source": "Transport Assessment"},
+            {"claim": "NPPF paragraph 115 requires sustainable transport", "verified": True, "source": "NPPF evidence chunk"},
+            {"claim": "No off-site cycle connections provided", "verified": True, "source": "Transport Assessment"},
+        ],
+    })
+    return _make_claude_response(
+        markdown=verification_json,
+        input_tokens=400,
+        output_tokens=200,
+    )
 
 
 @pytest.fixture
@@ -239,7 +284,7 @@ class TestFullReviewWithS3Storage:
         mock_redis_wrapper,
         monkeypatch,
         sample_application_response,
-        sample_s3_download_response,
+        sample_list_documents_response,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -255,9 +300,10 @@ class TestFullReviewWithS3Storage:
         raw_dir = Path("/tmp/raw/25_01178_REM")
         raw_dir.mkdir(parents=True, exist_ok=True)
         created_files: list[Path] = []
+        s3_downloads = _s3_download_responses()
 
         try:
-            for dl in sample_s3_download_response["downloads"]:
+            for dl in s3_downloads:
                 fp = Path(dl["file_path"])
                 fp.write_bytes(b"%PDF-1.4 fake content for " + fp.name.encode())
                 created_files.append(fp)
@@ -276,7 +322,32 @@ class TestFullReviewWithS3Storage:
                 },
             ]
 
-            claude_resp = _make_claude_response(
+            structure_resp = _make_claude_response(
+                markdown=(
+                    '{"overall_rating": "amber", "aspects": [], '
+                    '"policy_compliance": [], "recommendations": [], '
+                    '"suggested_conditions": [], "key_documents": []}'
+                ),
+            )
+            # Overwrite content to be raw JSON (structure call returns JSON, not markdown)
+            structure_resp.content[0].text = json.dumps({
+                "overall_rating": "amber",
+                "summary": "The application provides basic infrastructure but requires further assessment.",
+                "aspects": [],
+                "policy_compliance": [],
+                "recommendations": [],
+                "suggested_conditions": [],
+                "key_documents": [
+                    {
+                        "title": "Transport Assessment",
+                        "category": "Transport & Access",
+                        "summary": "Analyses traffic impacts.",
+                        "url": "https://test-bucket.nyc3.digitaloceanspaces.com/25_01178_REM/001_Transport Assessment.pdf",
+                    },
+                ],
+            })
+
+            report_resp = _make_claude_response(
                 markdown=(
                     "# Cycle Advocacy Review: 25/01178/REM\n\n"
                     "## Application Summary\n...\n"
@@ -286,13 +357,16 @@ class TestFullReviewWithS3Storage:
                 key_documents_json=key_docs,
             )
 
+            filter_resp = _make_filter_response(["doc1", "doc2", "doc3"])
+
             mock_mcp_client.call_tool.side_effect = [
-                sample_application_response,       # Phase 1
-                sample_s3_download_response,       # Phase 2
-                sample_ingest_response,            # Phase 3 doc 1
-                sample_ingest_response,            # Phase 3 doc 2
-                sample_ingest_response,            # Phase 3 doc 3
-                *_search_side_effects(7, sample_search_response),  # Phase 4
+                sample_application_response,          # Phase 1: get_application_details
+                sample_list_documents_response,       # Phase 2: list_application_documents
+                *s3_downloads,                        # Phase 3: download_document x3
+                sample_ingest_response,               # Phase 4: ingest_document x3
+                sample_ingest_response,
+                sample_ingest_response,
+                *_search_side_effects(7, sample_search_response),  # Phase 5: searches
             ]
 
             with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic, \
@@ -311,7 +385,14 @@ class TestFullReviewWithS3Storage:
                 MockOrchCls.return_value = real_orchestrator
 
                 mock_claude_client = MagicMock()
-                mock_claude_client.messages.create.return_value = claude_resp
+                # Filter call, then query generation, then structure call, then report call, then verify
+                mock_claude_client.messages.create.side_effect = [
+                    filter_resp,
+                    _make_query_response(),
+                    structure_resp,
+                    report_resp,
+                    _make_verification_response(),
+                ]
                 MockAnthropic.return_value = mock_claude_client
 
                 ctx = {
@@ -407,7 +488,7 @@ class TestFullReviewWithLocalStorage:
         mock_redis_wrapper,
         monkeypatch,
         sample_application_response,
-        sample_local_download_response,
+        sample_list_documents_response,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -420,8 +501,27 @@ class TestFullReviewWithLocalStorage:
 
         # Real LocalStorageBackend
         backend = LocalStorageBackend()
+        local_downloads = _local_download_responses()
 
-        claude_resp = _make_claude_response(
+        structure_resp = _make_claude_response()
+        structure_resp.content[0].text = json.dumps({
+            "overall_rating": "green",
+            "summary": "Good cycling provision with compliant infrastructure.",
+            "aspects": [],
+            "policy_compliance": [],
+            "recommendations": [],
+            "suggested_conditions": [],
+            "key_documents": [
+                {
+                    "title": "Transport Assessment",
+                    "category": "Transport & Access",
+                    "summary": "Analyses traffic impacts.",
+                    "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
+                },
+            ],
+        })
+
+        report_resp = _make_claude_response(
             markdown=(
                 "# Cycle Advocacy Review: 25/01178/REM\n\n"
                 "## Assessment Summary\n**Overall Rating:** GREEN\n"
@@ -436,13 +536,16 @@ class TestFullReviewWithLocalStorage:
             ],
         )
 
+        filter_resp = _make_filter_response(["doc1", "doc2", "doc3"])
+
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_local_download_response,
+            sample_application_response,          # Phase 1: get_application_details
+            sample_list_documents_response,       # Phase 2: list_application_documents
+            *local_downloads,                     # Phase 3: download_document x3
+            sample_ingest_response,               # Phase 4: ingest_document x3
             sample_ingest_response,
             sample_ingest_response,
-            sample_ingest_response,
-            *_search_side_effects(7, sample_search_response),
+            *_search_side_effects(7, sample_search_response),  # Phase 5: searches
         ]
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic, \
@@ -460,7 +563,14 @@ class TestFullReviewWithLocalStorage:
             MockOrchCls.return_value = real_orchestrator
 
             mock_claude_client = MagicMock()
-            mock_claude_client.messages.create.return_value = claude_resp
+            # Filter call, then query generation, then structure call, then report call, then verify
+            mock_claude_client.messages.create.side_effect = [
+                filter_resp,
+                _make_query_response(),
+                structure_resp,
+                report_resp,
+                _make_verification_response(),
+            ]
             MockAnthropic.return_value = mock_claude_client
 
             ctx = {
@@ -479,9 +589,11 @@ class TestFullReviewWithLocalStorage:
         # Review completed successfully
         assert result["status"] == "completed"
 
-        # Verify output_dir was /data/raw (local mode)
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
-        assert download_call[0][1]["output_dir"] == "/data/raw"
+        # Verify first download_document call used the correct output_dir
+        # call_args_list: [0]=get_application_details, [1]=list_documents,
+        # [2]=download_doc1, [3]=download_doc2, [4]=download_doc3, ...
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
+        assert download_call[0][1]["output_dir"] == "/data/raw/25_01178_REM"
 
         # Verify Cherwell URLs are preserved in the review's document metadata
         # (The orchestrator builds document_metadata with Cherwell URLs when local)
@@ -652,7 +764,7 @@ class TestS3UploadFailureMidJob:
         mock_redis_wrapper,
         monkeypatch,
         sample_application_response,
-        sample_s3_download_response,
+        sample_list_documents_response,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -662,6 +774,8 @@ class TestS3UploadFailureMidJob:
         End-to-end: process_review → AgentOrchestrator → failing mock backend
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        s3_downloads = _s3_download_responses()
 
         # Create a mock backend that fails on the 3rd upload
         backend = MagicMock()
@@ -681,17 +795,31 @@ class TestS3UploadFailureMidJob:
         backend.public_url.side_effect = lambda key: f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
         backend.delete_local.return_value = None
 
-        claude_resp = _make_claude_response(
+        structure_resp = _make_claude_response()
+        structure_resp.content[0].text = json.dumps({
+            "overall_rating": "amber",
+            "summary": "Basic cycling provision with partial policy compliance.",
+            "aspects": [],
+            "policy_compliance": [],
+            "recommendations": [],
+            "suggested_conditions": [],
+            "key_documents": [],
+        })
+
+        report_resp = _make_claude_response(
             markdown="# Review\n**Overall Rating:** AMBER\n",
         )
 
+        filter_resp = _make_filter_response(["doc1", "doc2", "doc3"])
+
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_s3_download_response,
+            sample_application_response,          # Phase 1: get_application_details
+            sample_list_documents_response,       # Phase 2: list_application_documents
+            *s3_downloads,                        # Phase 3: download_document x3
+            sample_ingest_response,               # Phase 4: ingest_document x3
             sample_ingest_response,
             sample_ingest_response,
-            sample_ingest_response,
-            *_search_side_effects(7, sample_search_response),
+            *_search_side_effects(7, sample_search_response),  # Phase 5: searches
         ]
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic, \
@@ -709,7 +837,14 @@ class TestS3UploadFailureMidJob:
             MockOrchCls.return_value = real_orchestrator
 
             mock_claude_client = MagicMock()
-            mock_claude_client.messages.create.return_value = claude_resp
+            # Filter call, then query generation, then structure call, then report call, then verify
+            mock_claude_client.messages.create.side_effect = [
+                filter_resp,
+                _make_query_response(),
+                structure_resp,
+                report_resp,
+                _make_verification_response(),
+            ]
             MockAnthropic.return_value = mock_claude_client
 
             ctx = {

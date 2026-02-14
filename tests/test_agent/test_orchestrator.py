@@ -141,6 +141,59 @@ def sample_search_response():
     }
 
 
+@pytest.fixture
+def sample_list_documents_response():
+    """Sample response from list_application_documents tool."""
+    return {
+        "status": "success",
+        "documents": [
+            {
+                "document_id": "doc1",
+                "description": "Transport Assessment",
+                "document_type": "Transport Assessment",
+                "url": "https://example.com/doc1",
+                "date_published": "2024-01-01",
+            },
+            {
+                "document_id": "doc2",
+                "description": "Site Plan",
+                "document_type": "Plans - Site Plan",
+                "url": "https://example.com/doc2",
+                "date_published": "2024-01-01",
+            },
+            {
+                "document_id": "doc3",
+                "description": "Design and Access Statement",
+                "document_type": "Design and Access Statement",
+                "url": "https://example.com/doc3",
+                "date_published": "2024-01-01",
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def sample_per_doc_download_responses():
+    """Sample responses for per-document download_document calls (3 docs)."""
+    return [
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
+            "file_size": 150000,
+        },
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/002_Site Plan.pdf",
+            "file_size": 80000,
+        },
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/003_Design Statement.pdf",
+            "file_size": 120000,
+        },
+    ]
+
+
 def _make_claude_response(
     text: str = "# Review\n## Application Summary\n...\n## Key Documents\n...",
     input_tokens: int = 1000,
@@ -155,6 +208,7 @@ def _make_claude_response(
 # Default structure call JSON used across tests
 SAMPLE_STRUCTURE_JSON = json.dumps({
     "overall_rating": "amber",
+    "summary": "The application provides basic cycle parking but lacks safe cycle routes and adequate junction design. Partial policy compliance with room for improvement.",
     "aspects": [
         {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
          "analysis": "Minimum spaces provided."},
@@ -186,7 +240,28 @@ def _make_two_phase_side_effect(
     structure_tokens: tuple[int, int] = (500, 1500),
     report_tokens: tuple[int, int] = (1000, 3000),
 ):
-    """Build side_effect for messages.create that handles structure + report calls."""
+    """Build side_effect for messages.create that handles queries + structure + report + verify calls."""
+    query_resp = _make_query_response()
+    structure_resp = _make_claude_response(
+        text=structure_json,
+        input_tokens=structure_tokens[0],
+        output_tokens=structure_tokens[1],
+    )
+    report_resp = _make_claude_response(
+        text=markdown,
+        input_tokens=report_tokens[0],
+        output_tokens=report_tokens[1],
+    )
+    return [query_resp, structure_resp, report_resp, _make_verification_response()]
+
+
+def _make_review_side_effect(
+    structure_json: str = SAMPLE_STRUCTURE_JSON,
+    markdown: str = "# Review\n## Application Summary\n...\n**Overall Rating:** AMBER",
+    structure_tokens: tuple[int, int] = (500, 1500),
+    report_tokens: tuple[int, int] = (1000, 3000),
+):
+    """Build side_effect for messages.create for direct _phase_generate_review calls (structure + report only)."""
     structure_resp = _make_claude_response(
         text=structure_json,
         input_tokens=structure_tokens[0],
@@ -198,6 +273,96 @@ def _make_two_phase_side_effect(
         output_tokens=report_tokens[1],
     )
     return [structure_resp, report_resp]
+
+
+# Default filter response: selects all 3 docs (doc1, doc2, doc3)
+SAMPLE_FILTER_DOC_IDS = json.dumps(["doc1", "doc2", "doc3"])
+
+# Default query generation response JSON
+SAMPLE_QUERY_RESPONSE_JSON = json.dumps({
+    "application_queries": [
+        "cycle parking provision quantity type location",
+        "cycle route design connectivity network",
+        "junction design safety for cyclists",
+        "pedestrian cycle permeability through site",
+    ],
+    "policy_queries": [
+        {"query": "cycle infrastructure design segregation", "sources": ["LTN_1_20"]},
+        {"query": "sustainable transport cycling policy", "sources": ["NPPF", "CHERWELL_LP_2015"]},
+        {"query": "cycling walking infrastructure plan", "sources": ["OCC_LTCP", "BICESTER_LCWIP"]},
+    ],
+})
+
+# Default verification response JSON
+SAMPLE_VERIFICATION_RESPONSE_JSON = json.dumps({
+    "claims": [
+        {"claim": "The development includes cycle parking", "verified": True, "source": "Transport Assessment"},
+        {"claim": "NPPF paragraph 115 requires sustainable transport", "verified": True, "source": "NPPF evidence chunk"},
+        {"claim": "No off-site cycle connections provided", "verified": True, "source": "Transport Assessment"},
+    ],
+})
+
+
+def _make_filter_response(
+    doc_ids_json: str = SAMPLE_FILTER_DOC_IDS,
+    input_tokens: int = 200,
+    output_tokens: int = 50,
+):
+    """Build a mock Claude response for the document filter call."""
+    return _make_claude_response(
+        text=doc_ids_json,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
+
+def _make_query_response(
+    query_json: str = SAMPLE_QUERY_RESPONSE_JSON,
+    input_tokens: int = 300,
+    output_tokens: int = 150,
+):
+    """Build a mock Claude response for the query generation call."""
+    return _make_claude_response(
+        text=query_json,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
+
+def _make_verification_response(
+    verification_json: str = SAMPLE_VERIFICATION_RESPONSE_JSON,
+    input_tokens: int = 400,
+    output_tokens: int = 200,
+):
+    """Build a mock Claude response for the verification call."""
+    return _make_claude_response(
+        text=verification_json,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
+
+def _make_three_phase_side_effect(
+    filter_doc_ids: str = SAMPLE_FILTER_DOC_IDS,
+    structure_json: str = SAMPLE_STRUCTURE_JSON,
+    markdown: str = "# Review\n## Application Summary\n...\n**Overall Rating:** AMBER",
+    structure_tokens: tuple[int, int] = (500, 1500),
+    report_tokens: tuple[int, int] = (1000, 3000),
+):
+    """Build side_effect for messages.create: filter + queries + structure + report + verify calls."""
+    filter_resp = _make_filter_response(doc_ids_json=filter_doc_ids)
+    query_resp = _make_query_response()
+    structure_resp = _make_claude_response(
+        text=structure_json,
+        input_tokens=structure_tokens[0],
+        output_tokens=structure_tokens[1],
+    )
+    report_resp = _make_claude_response(
+        text=markdown,
+        input_tokens=report_tokens[0],
+        output_tokens=report_tokens[1],
+    )
+    return [filter_resp, query_resp, structure_resp, report_resp, _make_verification_response()]
 
 
 def _search_side_effects(n: int = 7, response: dict | None = None):
@@ -255,7 +420,8 @@ class TestCompleteWorkflowExecution:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -264,22 +430,23 @@ class TestCompleteWorkflowExecution:
 
         Given: Valid review job
         When: Orchestrator executes workflow
-        Then: All 5 phases complete in order; review result produced
+        Then: All 7 phases complete in order; review result produced
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,   # Phase 1
-            sample_download_response,      # Phase 2
-            sample_ingest_response,        # Phase 3 doc 1
-            sample_ingest_response,        # Phase 3 doc 2
-            sample_ingest_response,        # Phase 3 doc 3
-            *_search_side_effects(7, sample_search_response),  # Phase 4
+            sample_application_response,       # Phase 1: get_application_details
+            sample_list_documents_response,    # Phase 2: list_application_documents
+            *sample_per_doc_download_responses, # Phase 3: download_document x3
+            sample_ingest_response,            # Phase 4: ingest doc 1
+            sample_ingest_response,            # Phase 4: ingest doc 2
+            sample_ingest_response,            # Phase 4: ingest doc 3
+            *_search_side_effects(7, sample_search_response),  # Phase 5
         ]
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -299,10 +466,12 @@ class TestCompleteWorkflowExecution:
         # Verify all phases were executed
         completed_phases = orchestrator.progress.state.completed_phases
         assert "fetching_metadata" in completed_phases
+        assert "filtering_documents" in completed_phases
         assert "downloading_documents" in completed_phases
         assert "ingesting_documents" in completed_phases
         assert "analysing_application" in completed_phases
         assert "generating_review" in completed_phases
+        assert "verifying_review" in completed_phases
 
         await orchestrator.close()
 
@@ -322,12 +491,15 @@ class TestCompleteWorkflowExecution:
                     "documents": [],
                 },
             },
-            {"status": "success", "downloads": []},  # Phase 2: no downloads
-            *_search_side_effects(7, sample_search_response),  # Phase 4
+            {"status": "success", "documents": []},  # Phase 2: list_application_documents (empty)
+            # Phase 3: no downloads (no selected docs)
+            # Phase 4: no ingestion (no docs)
+            *_search_side_effects(7, sample_search_response),  # Phase 5
         ]
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
+            # No filter call needed (0 documents), just structure + report
             mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
@@ -425,7 +597,8 @@ class TestPartialDocumentIngestion:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -439,9 +612,10 @@ class TestPartialDocumentIngestion:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            sample_ingest_response,  # doc 1 succeeds
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            sample_ingest_response,  # Phase 4: doc 1 succeeds
             MCPToolError("ingest_document", "OCR failed - corrupt file"),  # doc 2 fails
             MCPToolError("ingest_document", "Unsupported format"),  # doc 3 fails
             *_search_side_effects(7, sample_search_response),
@@ -449,7 +623,7 @@ class TestPartialDocumentIngestion:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -474,26 +648,36 @@ class TestPartialDocumentIngestion:
         self,
         mock_mcp_client,
         mock_redis,
+        monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
     ):
         """Test that workflow fails if all documents fail to ingest."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            MCPToolError("ingest_document", "Failed"),
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            MCPToolError("ingest_document", "Failed"),  # Phase 4: all fail
             MCPToolError("ingest_document", "Failed"),
             MCPToolError("ingest_document", "Failed"),
         ]
 
-        orchestrator = AgentOrchestrator(
-            review_id="rev_test123",
-            application_ref="25/01178/REM",
-            mcp_client=mock_mcp_client,
-            redis_client=mock_redis,
-        )
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = [_make_filter_response()]
+            MockAnthropic.return_value = mock_client_inst
 
-        result = await orchestrator.run()
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
 
         assert result.success is False
         assert "No documents could be ingested" in result.error
@@ -564,7 +748,6 @@ class TestStatePersistence:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -582,7 +765,7 @@ class TestStatePersistence:
             "review_id": "rev_test123",
             "application_ref": "25/01178/REM",
             "current_phase": "ingesting_documents",
-            "completed_phases": ["fetching_metadata", "downloading_documents"],
+            "completed_phases": ["fetching_metadata", "filtering_documents", "downloading_documents"],
             "phase_info": {},
             "documents_processed": 0,
             "documents_total": 3,
@@ -627,11 +810,12 @@ class TestStatePersistence:
 
             await orchestrator.run()
 
-        # Should not have called get_application_details or download
-        # (those phases were completed in previous run)
+        # Should not have called get_application_details, list_application_documents,
+        # or download_document (those phases were completed in previous run)
         tool_calls = [c[0][0] for c in mock_mcp_client.call_tool.call_args_list]
         assert "get_application_details" not in tool_calls
-        assert "download_all_documents" not in tool_calls
+        assert "list_application_documents" not in tool_calls
+        assert "download_document" not in tool_calls
 
         await orchestrator.close()
 
@@ -687,7 +871,8 @@ class TestReconnectionOnTransientFailure:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -702,16 +887,17 @@ class TestReconnectionOnTransientFailure:
 
         mock_mcp_client.call_tool.side_effect = [
             MCPConnectionError(MCPServerType.CHERWELL_SCRAPER, "Connection lost"),  # Phase 1 fails
-            sample_download_response,  # Phase 2
-            sample_ingest_response,    # Phase 3 (1 downloaded doc)
-            sample_ingest_response,
-            sample_ingest_response,
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            sample_ingest_response,             # Phase 4: ingest doc 1
+            sample_ingest_response,             # Phase 4: ingest doc 2
+            sample_ingest_response,             # Phase 4: ingest doc 3
             *_search_side_effects(7, sample_search_response),
         ]
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -812,57 +998,27 @@ class TestGracefulDegradation:
         mock_redis,
         monkeypatch,
         sample_application_response,
+        sample_list_documents_response,
         sample_ingest_response,
         sample_search_response,
     ):
         """Test workflow continues with partial download failures."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        download_response = {
-            "status": "success",
-            "downloads": [
-                {
-                    "document_id": "doc1",
-                    "file_path": "/data/raw/doc1.pdf",
-                    "file_size": 100000,
-                    "success": True,
-                    "description": "Transport Assessment",
-                    "document_type": "Transport Assessment",
-                    "url": "https://example.com/doc1.pdf",
-                },
-                {
-                    "document_id": "doc2",
-                    "file_path": "",
-                    "file_size": 0,
-                    "success": False,
-                    "error": "Timeout",
-                    "description": "Site Plan",
-                    "document_type": "Plans - Site Plan",
-                    "url": "https://example.com/doc2.pdf",
-                },
-                {
-                    "document_id": "doc3",
-                    "file_path": "",
-                    "file_size": 0,
-                    "success": False,
-                    "error": "404 Not Found",
-                    "description": "Design Statement",
-                    "document_type": "Design and Access Statement",
-                    "url": "https://example.com/doc3.pdf",
-                },
-            ],
-        }
-
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            download_response,
-            sample_ingest_response,  # Only 1 doc to ingest
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            # Phase 3: per-doc downloads (doc1 succeeds, doc2 and doc3 fail)
+            {"status": "success", "file_path": "/data/raw/doc1.pdf", "file_size": 100000},
+            MCPToolError("download_document", "Timeout"),
+            MCPToolError("download_document", "404 Not Found"),
+            sample_ingest_response,  # Phase 4: Only 1 doc to ingest
             *_search_side_effects(7, sample_search_response),
         ]
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -886,16 +1042,18 @@ class TestGracefulDegradation:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_search_response,
     ):
         """Test handling of ingest_document returning error status."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            {"status": "error", "message": "Corrupt PDF"},  # doc 1 fails
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            {"status": "error", "message": "Corrupt PDF"},  # Phase 4: doc 1 fails
             {"status": "success", "chunks_created": 10},    # doc 2 succeeds
             {"status": "success", "chunks_created": 5},     # doc 3 succeeds
             *_search_side_effects(7, sample_search_response),
@@ -903,7 +1061,7 @@ class TestGracefulDegradation:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -931,16 +1089,18 @@ class TestGracefulDegradation:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_search_response,
     ):
         """Test that already_ingested status is counted as success."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            {"status": "already_ingested", "document_id": "doc_123"},
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            {"status": "already_ingested", "document_id": "doc_123"},  # Phase 4
             {"status": "already_ingested", "document_id": "doc_456"},
             {"status": "already_ingested", "document_id": "doc_789"},
             *_search_side_effects(7, sample_search_response),
@@ -948,7 +1108,7 @@ class TestGracefulDegradation:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -1040,18 +1200,18 @@ class TestDownloadPhaseMetadata:
         mock_mcp_client,
         mock_redis,
         sample_application_response,
-        sample_download_response,
+        sample_per_doc_download_responses,
     ):
         """
         Verifies [key-documents:AgentOrchestrator._phase_download_documents/TS-01]
 
         Given: Download results contain document_id, description, document_type, url
-        When: Phase 2 completes
+        When: Phase 3 completes
         Then: DocumentIngestionResult.document_metadata contains a dict mapping file_path to metadata
         """
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
-            sample_download_response,
+            *sample_per_doc_download_responses,  # download_document x3
         ]
 
         orchestrator = AgentOrchestrator(
@@ -1062,8 +1222,34 @@ class TestDownloadPhaseMetadata:
         )
         await orchestrator.initialize()
 
-        # Run just Phase 1 and Phase 2
+        # Run Phase 1 to populate application metadata
         await orchestrator._phase_fetch_metadata()
+
+        # Set selected documents (normally done by filter phase)
+        orchestrator._selected_documents = [
+            {
+                "document_id": "doc1",
+                "description": "Transport Assessment",
+                "document_type": "Transport Assessment",
+                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
+                "date_published": "2024-01-01",
+            },
+            {
+                "document_id": "doc2",
+                "description": "Site Plan",
+                "document_type": "Plans - Site Plan",
+                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2",
+                "date_published": "2024-01-01",
+            },
+            {
+                "document_id": "doc3",
+                "description": "Design and Access Statement",
+                "document_type": "Design and Access Statement",
+                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3",
+                "date_published": "2024-01-01",
+            },
+        ]
+
         await orchestrator._phase_download_documents()
 
         meta = orchestrator._ingestion_result.document_metadata
@@ -1089,37 +1275,14 @@ class TestDownloadPhaseMetadata:
         Verifies [key-documents:AgentOrchestrator._phase_download_documents/TS-02]
 
         Given: A document fails to download
-        When: Phase 2 completes
+        When: Phase 3 completes
         Then: The failed document has no entry in document_metadata
         """
-        download_response = {
-            "status": "success",
-            "downloads": [
-                {
-                    "document_id": "doc1",
-                    "file_path": "/data/raw/doc1.pdf",
-                    "file_size": 100000,
-                    "success": True,
-                    "description": "Transport Assessment",
-                    "document_type": "Transport Assessment",
-                    "url": "https://example.com/doc1.pdf",
-                },
-                {
-                    "document_id": "doc2",
-                    "file_path": "",
-                    "file_size": 0,
-                    "success": False,
-                    "error": "Download timeout",
-                    "description": "Site Plan",
-                    "document_type": "Plans - Site Plan",
-                    "url": "https://example.com/doc2.pdf",
-                },
-            ],
-        }
-
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
-            download_response,
+            # Per-doc download: doc1 succeeds, doc2 fails
+            {"status": "success", "file_path": "/data/raw/doc1.pdf", "file_size": 100000},
+            MCPToolError("download_document", "Download timeout"),
         ]
 
         orchestrator = AgentOrchestrator(
@@ -1131,10 +1294,29 @@ class TestDownloadPhaseMetadata:
         await orchestrator.initialize()
 
         await orchestrator._phase_fetch_metadata()
+
+        # Set selected documents (normally done by filter phase)
+        orchestrator._selected_documents = [
+            {
+                "document_id": "doc1",
+                "description": "Transport Assessment",
+                "document_type": "Transport Assessment",
+                "url": "https://example.com/doc1.pdf",
+                "date_published": "2024-01-01",
+            },
+            {
+                "document_id": "doc2",
+                "description": "Site Plan",
+                "document_type": "Plans - Site Plan",
+                "url": "https://example.com/doc2.pdf",
+                "date_published": "2024-01-01",
+            },
+        ]
+
         await orchestrator._phase_download_documents()
 
         meta = orchestrator._ingestion_result.document_metadata
-        # Only the successful download should appear (failed has empty file_path)
+        # Only the successful download should appear
         assert len(meta) == 1
         assert "/data/raw/doc1.pdf" in meta
 
@@ -1170,6 +1352,7 @@ class TestGenerateReviewKeyDocuments:
 
         structure_json = json.dumps({
             "overall_rating": "amber",
+            "summary": "Basic cycle parking provided but lacks safe routes and detailed junction design.",
             "aspects": [
                 {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
                  "analysis": "Minimum spaces provided."},
@@ -1222,7 +1405,7 @@ class TestGenerateReviewKeyDocuments:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect(
                 structure_json=structure_json,
             )
             MockAnthropic.return_value = mock_client_inst
@@ -1275,7 +1458,7 @@ class TestGenerateReviewKeyDocuments:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect(
                 markdown=markdown,
             )
             MockAnthropic.return_value = mock_client_inst
@@ -1372,7 +1555,7 @@ class TestGenerateReviewKeyDocuments:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
@@ -1402,7 +1585,8 @@ class TestKeyDocumentsIntegration:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -1417,6 +1601,7 @@ class TestKeyDocumentsIntegration:
 
         structure_json = json.dumps({
             "overall_rating": "amber",
+            "summary": "Mixed provision with some cycle parking but lacking safe routes and junction detail.",
             "aspects": [
                 {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
                  "analysis": "Minimum spaces."},
@@ -1449,9 +1634,10 @@ class TestKeyDocumentsIntegration:
         })
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            sample_ingest_response,
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            sample_ingest_response,             # Phase 4: ingest x3
             sample_ingest_response,
             sample_ingest_response,
             *_search_side_effects(7, sample_search_response),
@@ -1459,7 +1645,7 @@ class TestKeyDocumentsIntegration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect(
                 structure_json=structure_json,
             )
             MockAnthropic.return_value = mock_client_inst
@@ -1494,7 +1680,8 @@ class TestKeyDocumentsIntegration:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_ingest_response,
         sample_search_response,
     ):
@@ -1508,9 +1695,10 @@ class TestKeyDocumentsIntegration:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            sample_ingest_response,
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            sample_ingest_response,             # Phase 4: ingest x3
             sample_ingest_response,
             sample_ingest_response,
             *_search_side_effects(7, sample_search_response),
@@ -1519,7 +1707,7 @@ class TestKeyDocumentsIntegration:
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
             # Default SAMPLE_STRUCTURE_JSON includes 1 key_document
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -1551,27 +1739,33 @@ class TestKeyDocumentsIntegration:
 
 class TestOrchestratorPassesToggleFlags:
     """
-    Tests that AgentOrchestrator passes toggle flags to the download_all_documents tool call.
+    Tests that AgentOrchestrator handles options parameter.
 
-    Verifies [review-scope-control:AgentOrchestrator/TS-01] and [TS-02]
+    With the new LLM filter phase, document selection is handled by the filter,
+    not by toggle flags on the download call. These tests verify the workflow
+    still completes when options are provided and that the new filter/download
+    flow uses list_application_documents + per-doc download_document.
+
+    Updated from [review-scope-control:AgentOrchestrator/TS-01] and [TS-02]
     """
 
     @pytest.mark.asyncio
-    async def test_passes_toggle_flags_when_options_set(
+    async def test_workflow_with_options_set(
         self, mock_mcp_client, mock_redis, sample_application_response,
-        sample_download_response, sample_ingest_response, sample_search_response,
+        sample_list_documents_response, sample_per_doc_download_responses,
+        sample_ingest_response, sample_search_response,
         monkeypatch,
     ):
         """
-        Verifies [review-scope-control:AgentOrchestrator/TS-01] - Passes toggle flags
+        Verifies workflow completes when options are provided.
 
-        Given: Orchestrator created with options having include_consultation_responses=True
-        When: _phase_download_documents executes
-        Then: download_all_documents MCP tool is called with include_consultation_responses: true
+        Given: Orchestrator created with options
+        When: Workflow executes
+        Then: Filter phase selects documents via LLM; per-doc downloads succeed
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        # Create options-like object with toggle flags
+        # Create options-like object
         from types import SimpleNamespace as _NS
         options = _NS(
             include_consultation_responses=True,
@@ -1579,16 +1773,17 @@ class TestOrchestratorPassesToggleFlags:
         )
 
         mock_mcp_client.call_tool = AsyncMock(side_effect=[
-            sample_application_response,  # Phase 1: get_application_details
-            sample_download_response,     # Phase 2: download_all_documents
-            sample_ingest_response,       # Phase 3: ingest doc1
-            sample_ingest_response,       # Phase 3: ingest doc2
-            sample_ingest_response,       # Phase 3: ingest doc3
-        ] + _search_side_effects(7, sample_search_response))  # Phase 4
+            sample_application_response,        # Phase 1: get_application_details
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            sample_ingest_response,             # Phase 4: ingest doc1
+            sample_ingest_response,             # Phase 4: ingest doc2
+            sample_ingest_response,             # Phase 4: ingest doc3
+        ] + _search_side_effects(7, sample_search_response))
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
             mock_client_instance = MagicMock()
-            mock_client_instance.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_instance.messages.create.side_effect = _make_three_phase_side_effect()
             mock_anthropic_cls.return_value = mock_client_instance
 
             orchestrator = AgentOrchestrator(
@@ -1603,41 +1798,45 @@ class TestOrchestratorPassesToggleFlags:
 
         assert result.success is True
 
-        # Verify the download_all_documents call (second call_tool invocation)
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
-        assert download_call[0][0] == "download_all_documents"
-        download_args = download_call[0][1]
-        assert download_args["include_consultation_responses"] is True
-        assert "include_public_comments" not in download_args  # False is not passed
+        # Verify list_application_documents was called (second call_tool invocation)
+        list_call = mock_mcp_client.call_tool.call_args_list[1]
+        assert list_call[0][0] == "list_application_documents"
+
+        # Verify per-doc download_document calls (3rd, 4th, 5th invocations)
+        for i in range(2, 5):
+            dl_call = mock_mcp_client.call_tool.call_args_list[i]
+            assert dl_call[0][0] == "download_document"
 
         await orchestrator.close()
 
     @pytest.mark.asyncio
-    async def test_default_options_omit_toggle_flags(
+    async def test_default_options_uses_filter_phase(
         self, mock_mcp_client, mock_redis, sample_application_response,
-        sample_download_response, sample_ingest_response, sample_search_response,
+        sample_list_documents_response, sample_per_doc_download_responses,
+        sample_ingest_response, sample_search_response,
         monkeypatch,
     ):
         """
-        Verifies [review-scope-control:AgentOrchestrator/TS-02] - Default options
+        Verifies workflow uses filter phase with default options.
 
         Given: Orchestrator created with no options
-        When: _phase_download_documents executes
-        Then: download_all_documents MCP tool is called without toggle flags
+        When: Workflow executes
+        Then: Filter phase lists and selects documents; per-doc downloads succeed
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool = AsyncMock(side_effect=[
-            sample_application_response,
-            sample_download_response,
-            sample_ingest_response,
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            sample_ingest_response,             # Phase 4: ingest x3
             sample_ingest_response,
             sample_ingest_response,
         ] + _search_side_effects(7, sample_search_response))
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
             mock_client_instance = MagicMock()
-            mock_client_instance.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_instance.messages.create.side_effect = _make_three_phase_side_effect()
             mock_anthropic_cls.return_value = mock_client_instance
 
             orchestrator = AgentOrchestrator(
@@ -1652,12 +1851,13 @@ class TestOrchestratorPassesToggleFlags:
 
         assert result.success is True
 
-        # Verify the download_all_documents call has no toggle flags
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
-        assert download_call[0][0] == "download_all_documents"
-        download_args = download_call[0][1]
-        assert "include_consultation_responses" not in download_args
-        assert "include_public_comments" not in download_args
+        # Verify list_application_documents was called
+        list_call = mock_mcp_client.call_tool.call_args_list[1]
+        assert list_call[0][0] == "list_application_documents"
+
+        # Verify no download_all_documents calls (replaced by per-doc downloads)
+        tool_names = [c[0][0] for c in mock_mcp_client.call_tool.call_args_list]
+        assert "download_all_documents" not in tool_names
 
         await orchestrator.close()
 
@@ -1690,40 +1890,51 @@ def _make_local_backend_mock():
 
 
 @pytest.fixture
-def sample_s3_download_response():
-    """Sample download response with /tmp/raw paths (S3 mode)."""
-    return {
-        "status": "success",
-        "downloads": [
-            {
-                "document_id": "doc1",
-                "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
-                "file_size": 150000,
-                "success": True,
-                "description": "Transport Assessment",
-                "document_type": "Transport Assessment",
-                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
-            },
-            {
-                "document_id": "doc2",
-                "file_path": "/data/raw/25_01178_REM/002_Site Plan.pdf",
-                "file_size": 80000,
-                "success": True,
-                "description": "Site Plan",
-                "document_type": "Plans - Site Plan",
-                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2",
-            },
-            {
-                "document_id": "doc3",
-                "file_path": "/data/raw/25_01178_REM/003_Design Statement.pdf",
-                "file_size": 120000,
-                "success": True,
-                "description": "Design and Access Statement",
-                "document_type": "Design and Access Statement",
-                "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3",
-            },
-        ],
-    }
+def sample_s3_per_doc_download_responses():
+    """Sample per-document download responses for S3 mode."""
+    return [
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
+            "file_size": 150000,
+        },
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/002_Site Plan.pdf",
+            "file_size": 80000,
+        },
+        {
+            "status": "success",
+            "file_path": "/data/raw/25_01178_REM/003_Design Statement.pdf",
+            "file_size": 120000,
+        },
+    ]
+
+
+# Selected documents used by S3 tests (contains URLs that get rewritten)
+S3_SELECTED_DOCUMENTS = [
+    {
+        "document_id": "doc1",
+        "description": "Transport Assessment",
+        "document_type": "Transport Assessment",
+        "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
+        "date_published": "2024-01-01",
+    },
+    {
+        "document_id": "doc2",
+        "description": "Site Plan",
+        "document_type": "Plans - Site Plan",
+        "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2",
+        "date_published": "2024-01-01",
+    },
+    {
+        "document_id": "doc3",
+        "description": "Design and Access Statement",
+        "document_type": "Design and Access Statement",
+        "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3",
+        "date_published": "2024-01-01",
+    },
+]
 
 
 class TestS3StorageDownloadPhase:
@@ -1740,20 +1951,20 @@ class TestS3StorageDownloadPhase:
         mock_mcp_client,
         mock_redis,
         sample_application_response,
-        sample_s3_download_response,
+        sample_s3_per_doc_download_responses,
     ):
         """
         Verifies [s3-document-storage:AgentOrchestrator/TS-01] and [DownloadPhase/TS-01]
 
         Given: S3 backend configured
         When: Download phase completes
-        Then: output_dir is /tmp/raw, each file uploaded to S3, URLs rewritten to S3 public URLs
+        Then: Each file uploaded to S3, URLs rewritten to S3 public URLs
         """
         backend = _make_s3_backend_mock()
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
-            sample_s3_download_response,
+            *sample_s3_per_doc_download_responses,  # download_document x3
         ]
 
         orchestrator = AgentOrchestrator(
@@ -1766,11 +1977,8 @@ class TestS3StorageDownloadPhase:
         await orchestrator.initialize()
 
         await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = S3_SELECTED_DOCUMENTS[:]
         await orchestrator._phase_download_documents()
-
-        # Verify output_dir was /tmp/raw
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
-        assert download_call[0][1]["output_dir"] == "/data/raw"
 
         # Verify upload was called for each file
         assert backend.upload.call_count == 3
@@ -1803,7 +2011,7 @@ class TestS3StorageDownloadPhase:
         mock_mcp_client,
         mock_redis,
         sample_application_response,
-        sample_s3_download_response,
+        sample_s3_per_doc_download_responses,
     ):
         """
         Verifies [s3-document-storage:AgentOrchestrator/TS-04] - S3 upload failure
@@ -1822,7 +2030,7 @@ class TestS3StorageDownloadPhase:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
-            sample_s3_download_response,
+            *sample_s3_per_doc_download_responses,  # download_document x3
         ]
 
         orchestrator = AgentOrchestrator(
@@ -1835,6 +2043,7 @@ class TestS3StorageDownloadPhase:
         await orchestrator.initialize()
 
         await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = S3_SELECTED_DOCUMENTS[:]
         await orchestrator._phase_download_documents()
 
         meta = orchestrator._ingestion_result.document_metadata
@@ -1857,20 +2066,20 @@ class TestS3StorageDownloadPhase:
         mock_mcp_client,
         mock_redis,
         sample_application_response,
-        sample_download_response,
+        sample_per_doc_download_responses,
     ):
         """
         Verifies [s3-document-storage:AgentOrchestrator/TS-05] and [DownloadPhase/TS-02]
 
         Given: Local storage backend (no S3)
         When: Download phase runs
-        Then: output_dir is /data/raw, no upload calls, Cherwell URLs preserved
+        Then: No upload calls, Cherwell URLs preserved
         """
         backend = _make_local_backend_mock()
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
-            sample_download_response,
+            *sample_per_doc_download_responses,  # download_document x3
         ]
 
         orchestrator = AgentOrchestrator(
@@ -1883,11 +2092,8 @@ class TestS3StorageDownloadPhase:
         await orchestrator.initialize()
 
         await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = S3_SELECTED_DOCUMENTS[:]
         await orchestrator._phase_download_documents()
-
-        # Verify output_dir was /data/raw
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
-        assert download_call[0][1]["output_dir"] == "/data/raw"
 
         # Verify no upload calls
         backend.upload.assert_not_called()
@@ -2070,6 +2276,7 @@ class TestTwoPhaseReviewGeneration:
 
         structure_json = json.dumps({
             "overall_rating": "red",
+            "summary": "The application fails to provide adequate cycling infrastructure and is non-compliant with key transport policies.",
             "aspects": [
                 {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
                  "analysis": "Minimum spaces."},
@@ -2116,7 +2323,7 @@ class TestTwoPhaseReviewGeneration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect(
                 structure_json=structure_json, markdown=report_md,
             )
             MockAnthropic.return_value = mock_client_inst
@@ -2278,7 +2485,7 @@ class TestTwoPhaseReviewGeneration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect(
                 structure_tokens=(500, 1500),
                 report_tokens=(1000, 3000),
             )
@@ -2322,7 +2529,7 @@ class TestTwoPhaseReviewGeneration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
@@ -2352,6 +2559,7 @@ class TestTwoPhaseReviewGeneration:
 
         structure_json = json.dumps({
             "overall_rating": "green",
+            "summary": "Excellent cycling provision throughout with safe routes and policy compliance.",
             "aspects": [
                 {"name": "Cycle Parking", "rating": "green", "key_issue": "Meets standards",
                  "analysis": "Good provision."},
@@ -2387,7 +2595,7 @@ class TestTwoPhaseReviewGeneration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect(
                 structure_json=structure_json, markdown=report_md,
             )
             MockAnthropic.return_value = mock_client_inst
@@ -2470,7 +2678,7 @@ class TestTwoPhaseReviewGeneration:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
@@ -2500,7 +2708,8 @@ class TestIngestErrorExtraction:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_search_response,
     ):
         """
@@ -2510,9 +2719,10 @@ class TestIngestErrorExtraction:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            {"error": "Connection lost"},                     # doc 1: error key only
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            {"error": "Connection lost"},                     # Phase 4: doc 1: error key only
             {"status": "success", "chunks_created": 10},      # doc 2 succeeds
             {"status": "success", "chunks_created": 5},       # doc 3 succeeds
             *_search_side_effects(7, sample_search_response),
@@ -2520,7 +2730,7 @@ class TestIngestErrorExtraction:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -2549,7 +2759,8 @@ class TestIngestErrorExtraction:
         mock_redis,
         monkeypatch,
         sample_application_response,
-        sample_download_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
         sample_search_response,
     ):
         """
@@ -2560,9 +2771,10 @@ class TestIngestErrorExtraction:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,
-            sample_download_response,
-            {},                                               # doc 1: empty dict
+            sample_application_response,        # Phase 1
+            sample_list_documents_response,     # Phase 2: list_application_documents
+            *sample_per_doc_download_responses,  # Phase 3: download_document x3
+            {},                                               # Phase 4: doc 1: empty dict
             {"status": "success", "chunks_created": 10},      # doc 2 succeeds
             {"status": "success", "chunks_created": 5},       # doc 3 succeeds
             *_search_side_effects(7, sample_search_response),
@@ -2570,7 +2782,7 @@ class TestIngestErrorExtraction:
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
             MockAnthropic.return_value = mock_client_inst
 
             orchestrator = AgentOrchestrator(
@@ -2588,5 +2800,135 @@ class TestIngestErrorExtraction:
         errors = orchestrator.progress.state.errors_encountered
         assert len(errors) == 1
         assert "Unknown error" in errors[0]["error"]
+
+        await orchestrator.close()
+
+
+# ---------------------------------------------------------------------------
+# Verification phase tests
+# ---------------------------------------------------------------------------
+
+
+class TestVerificationPhase:
+    """
+    Tests for post-generation verification.
+
+    Implements [review-workflow-redesign:AgentOrchestrator/TS-05]
+    """
+
+    @pytest.mark.asyncio
+    async def test_verification_populates_metadata(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+    ):
+        """
+        Verifies [review-workflow-redesign:AgentOrchestrator/TS-05]
+
+        Given: Review generated successfully with evidence
+        When: Phase 7 runs
+        Then: ReviewResult.metadata contains verification dict
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,
+            sample_ingest_response,
+            sample_ingest_response,
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect()
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        assert "verification" in result.metadata
+        verification = result.metadata["verification"]
+        assert verification["status"] == "verified"
+        assert verification["verified_claims"] == 3
+        assert verification["unverified_claims"] == 0
+        assert verification["total_claims"] == 3
+        assert len(verification["details"]) == 3
+        assert "duration_seconds" in verification
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_verification_failure_does_not_fail_review(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+    ):
+        """
+        Verifies [review-workflow-redesign:AgentOrchestrator/TS-08]
+
+        Given: Verification API call fails
+        When: Phase 7 runs
+        Then: Review still succeeds, verification metadata absent
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,
+            sample_ingest_response,
+            sample_ingest_response,
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        import anthropic as anthropic_module
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            # filter + queries + structure + report succeed, verification fails
+            mock_client_inst.messages.create.side_effect = [
+                _make_filter_response(),
+                _make_query_response(),
+                _make_claude_response(text=SAMPLE_STRUCTURE_JSON),
+                _make_claude_response(text="# Review\n**Overall Rating:** AMBER"),
+                anthropic_module.APIError(message="Service unavailable", request=MagicMock(), body=None),
+            ]
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_test123",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        # Review should still succeed even though verification failed
+        assert result.success is True
+        assert "verification" not in result.metadata
 
         await orchestrator.close()

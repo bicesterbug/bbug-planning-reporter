@@ -43,6 +43,7 @@ class TestStructurePromptSchema:
         )
 
         assert "overall_rating" in system
+        assert "summary" in system
         assert "aspects" in system
         assert "policy_compliance" in system
         assert "recommendations" in system
@@ -54,6 +55,23 @@ class TestStructurePromptSchema:
         assert '"compliant"' in system
         assert '"requirement"' in system
         assert '"policy_source"' in system
+
+    def test_system_prompt_summary_field_description(self):
+        """
+        Verifies [review-workflow-redesign:build_structure_prompt/TS-01] - Summary field in schema
+        Verifies [review-workflow-redesign:build_structure_prompt/TS-02] - Summary description
+
+        Given: Any input
+        When: build_structure_prompt() called
+        Then: System prompt describes summary as 2-4 sentence summary including overall rating
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "summary" in system
+        assert "2-4 sentence" in system
+        assert "overall rating" in system
 
     def test_system_prompt_specifies_json_only(self):
         """

@@ -2,43 +2,14 @@
 """
 Agent module for review orchestration.
 
-Phase 4 (agent-integration) implements the AI-powered review workflow
-that coordinates multiple MCP servers to produce cycling advocacy reviews.
+Implements [review-workflow-redesign:FR-007] - Dead code removal
 """
 
-from src.agent.assessor import (
-    AspectAssessment,
-    AspectName,
-    AspectRating,
-    AssessmentResult,
-    ReviewAssessor,
-    SearchResult,
-)
-from src.agent.claude_client import (
-    ClaudeClient,
-    ClaudeClientError,
-    ClaudeResponse,
-    TokenUsage,
-    ToolCall,
-)
-from src.agent.generator import (
-    ApplicationSummary,
-    ReviewGenerator,
-    ReviewMetadata,
-    ReviewOutput,
-)
 from src.agent.mcp_client import (
     MCPClientManager,
     MCPConnectionError,
     MCPServerType,
     MCPToolError,
-)
-from src.agent.policy_comparer import (
-    ComplianceItem,
-    PolicyComparer,
-    PolicyComparisonResult,
-    PolicyRevision,
-    PolicySearchResult,
 )
 from src.agent.progress import (
     PHASE_WEIGHTS,
@@ -46,7 +17,6 @@ from src.agent.progress import (
     ReviewPhase,
     WorkflowState,
 )
-from src.agent.templates import ReviewTemplates
 
 __all__ = [
     # MCP Client
@@ -59,30 +29,4 @@ __all__ = [
     "ReviewPhase",
     "WorkflowState",
     "PHASE_WEIGHTS",
-    # Claude Client
-    "ClaudeClient",
-    "ClaudeClientError",
-    "ClaudeResponse",
-    "TokenUsage",
-    "ToolCall",
-    # Assessor
-    "ReviewAssessor",
-    "AspectAssessment",
-    "AspectName",
-    "AspectRating",
-    "AssessmentResult",
-    "SearchResult",
-    # Policy Comparer
-    "PolicyComparer",
-    "PolicyComparisonResult",
-    "PolicyRevision",
-    "PolicySearchResult",
-    "ComplianceItem",
-    # Generator
-    "ReviewGenerator",
-    "ReviewOutput",
-    "ReviewMetadata",
-    "ApplicationSummary",
-    # Templates
-    "ReviewTemplates",
 ]

@@ -84,6 +84,8 @@ class ReviewStructure(BaseModel):
     """
 
     overall_rating: str
+    # Implements [review-workflow-redesign:FR-006] - LLM-generated summary
+    summary: str
     aspects: list[ReviewAspectItem]
     policy_compliance: list[ComplianceItem]
     recommendations: list[str]
