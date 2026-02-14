@@ -41,6 +41,7 @@ import redis.asyncio as redis
 import structlog
 from pydantic import ValidationError
 
+from src.agent.llm_document_filter import LLMDocumentFilter, LLMFilterResult
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPToolError
 from src.agent.progress import ProgressTracker, ReviewPhase
 from src.agent.prompts.report_prompt import build_report_prompt
@@ -182,7 +183,9 @@ class AgentOrchestrator:
             logger.info(
                 "Recovered workflow state",
                 review_id=self._review_id,
-                current_phase=self._progress.current_phase.value if self._progress.current_phase else None,
+                current_phase=self._progress.current_phase.value
+                if self._progress.current_phase
+                else None,
             )
 
         # Initialize MCP client if not provided
@@ -381,15 +384,100 @@ class AgentOrchestrator:
             )
 
     async def _phase_download_documents(self) -> None:
-        """Phase 2: Download application documents."""
+        """
+        Phase 2: List, filter, and download application documents.
+
+        Multi-stage pipeline:
+        1. List all documents via the scraper MCP
+        2. Run an LLM relevance filter to select only documents useful
+           for a cycling advocacy review
+        3. Download only the selected documents
+        """
         assert self._mcp_client is not None
 
-        await self._progress.update_sub_progress("Downloading application documents")
+        await self._progress.update_sub_progress("Listing application documents")
 
         try:
-            # download_all_documents handles listing + downloading internally
-            # Timeout increased to 1800s (30 min) to handle large applications
-            # At 1 req/sec, can download up to 1800 documents before timeout
+            # --- Stage 1: List all documents ---
+            list_result = await self._mcp_client.call_tool(
+                "list_application_documents",
+                {"application_ref": self._application_ref},
+                timeout=120.0,
+            )
+
+            all_documents = list_result.get("documents", [])
+            total_listed = len(all_documents)
+
+            logger.info(
+                "Document list retrieved",
+                review_id=self._review_id,
+                total_listed=total_listed,
+            )
+
+            if not all_documents:
+                self._ingestion_result = DocumentIngestionResult()
+                return
+
+            # --- Stage 2: LLM relevance filter ---
+            selected_ids: list[str] | None = None
+            llm_filter_result: LLMFilterResult | None = None
+
+            await self._progress.update_sub_progress(
+                f"Filtering {total_listed} documents for relevance"
+            )
+
+            try:
+                # Build application summary for the LLM
+                app_summary = ""
+                if self._application:
+                    app_summary = (
+                        f"Reference: {self._application.reference}\n"
+                        f"Address: {self._application.address or 'Unknown'}\n"
+                        f"Proposal: {self._application.proposal or 'Unknown'}\n"
+                        f"Applicant: {self._application.applicant or 'Unknown'}\n"
+                        f"Status: {self._application.status or 'Unknown'}"
+                    )
+
+                llm_filter = LLMDocumentFilter()
+                llm_filter_result = await llm_filter.filter_documents(
+                    all_documents,
+                    application_summary=app_summary,
+                )
+
+                if not llm_filter_result.fallback_used:
+                    selected_ids = [doc.document_id for doc in llm_filter_result.selected]
+                    logger.info(
+                        "LLM filter selected documents",
+                        review_id=self._review_id,
+                        total_listed=total_listed,
+                        selected=len(selected_ids),
+                        excluded=len(llm_filter_result.excluded),
+                        model=llm_filter_result.model_used,
+                        filter_tokens=llm_filter_result.input_tokens
+                        + llm_filter_result.output_tokens,
+                    )
+                else:
+                    logger.warning(
+                        "LLM filter fell back to allow-all",
+                        review_id=self._review_id,
+                        total_listed=total_listed,
+                    )
+
+            except Exception as e:
+                # LLM filter failure is non-fatal — fall through to
+                # download_all_documents without pre-selection
+                logger.warning(
+                    "LLM filter failed, downloading without pre-filter",
+                    review_id=self._review_id,
+                    error=str(e),
+                )
+
+            # --- Stage 3: Download selected documents ---
+            selected_count = len(selected_ids) if selected_ids else total_listed
+            await self._progress.update_sub_progress(
+                f"Downloading {selected_count} of {total_listed} documents"
+            )
+
             # Implements [review-scope-control:FR-004] - Pass toggle flags to MCP tool
             # Implements [s3-document-storage:DownloadPhase/TS-01] and [TS-02]
             # Always use /data/raw — the scraper MCP downloads to the shared
@@ -404,6 +492,9 @@ class AgentOrchestrator:
                     download_args["include_consultation_responses"] = True
                 if getattr(self._options, "include_public_comments", False):
                     download_args["include_public_comments"] = True
+
+            if selected_ids is not None:
+                download_args["selected_document_ids"] = selected_ids
 
             result = await self._mcp_client.call_tool(
                 "download_all_documents",
@@ -462,16 +553,22 @@ class AgentOrchestrator:
                 document_metadata=document_metadata,
             )
 
-            total_docs = len(results_list)
+            # Include LLM filter metadata in progress
+            download_detail = f"Downloaded {len(downloaded)} of {total_listed} documents"
+            if selected_ids is not None:
+                download_detail += f" (LLM selected {len(selected_ids)})"
+
             await self._progress.update_sub_progress(
-                f"Downloaded {len(downloaded)} of {total_docs} documents",
+                download_detail,
                 current=len(downloaded),
-                total=total_docs,
+                total=total_listed,
             )
 
             logger.info(
                 "Documents downloaded",
                 review_id=self._review_id,
+                total_listed=total_listed,
+                llm_selected=len(selected_ids) if selected_ids else None,
                 downloaded=len(downloaded),
                 failed=len(failed),
             )
@@ -562,10 +659,9 @@ class AgentOrchestrator:
                     )
                     return False
 
-        await asyncio.gather(*(
-            ingest_one(doc_path)
-            for doc_path in self._ingestion_result.document_paths
-        ))
+        await asyncio.gather(
+            *(ingest_one(doc_path) for doc_path in self._ingestion_result.document_paths)
+        )
 
         self._ingestion_result.documents_ingested = ingested_count
 
@@ -619,12 +715,14 @@ class AgentOrchestrator:
                 )
                 results_list = result.get("results", [])
                 for r in results_list:
-                    self._evidence_chunks.append({
-                        "source": "application",
-                        "query": query,
-                        "text": r.get("text", r.get("document", "")),
-                        "metadata": r.get("metadata", {}),
-                    })
+                    self._evidence_chunks.append(
+                        {
+                            "source": "application",
+                            "query": query,
+                            "text": r.get("text", r.get("document", "")),
+                            "metadata": r.get("metadata", {}),
+                        }
+                    )
             except (MCPToolError, MCPConnectionError) as e:
                 logger.warning("Doc search failed", query=query, error=str(e))
 
@@ -656,12 +754,14 @@ class AgentOrchestrator:
                 )
                 results_list = result.get("results", [])
                 for r in results_list:
-                    self._evidence_chunks.append({
-                        "source": "policy",
-                        "query": query,
-                        "text": r.get("text", r.get("document", "")),
-                        "metadata": r.get("metadata", {}),
-                    })
+                    self._evidence_chunks.append(
+                        {
+                            "source": "policy",
+                            "query": query,
+                            "text": r.get("text", r.get("document", "")),
+                            "metadata": r.get("metadata", {}),
+                        }
+                    )
             except (MCPToolError, MCPConnectionError) as e:
                 logger.warning("Policy search failed", query=query, error=str(e))
 
@@ -702,8 +802,16 @@ class AgentOrchestrator:
                 source_file = meta.get("source_file", "Unknown document")
                 app_evidence.append(f"[{source_file}] {text}")
 
-        app_evidence_text = "\n\n---\n\n".join(app_evidence[:20]) if app_evidence else "No application document content retrieved."
-        policy_evidence_text = "\n\n---\n\n".join(policy_evidence[:15]) if policy_evidence else "No policy content retrieved."
+        app_evidence_text = (
+            "\n\n---\n\n".join(app_evidence[:20])
+            if app_evidence
+            else "No application document content retrieved."
+        )
+        policy_evidence_text = (
+            "\n\n---\n\n".join(policy_evidence[:15])
+            if policy_evidence
+            else "No policy content retrieved."
+        )
 
         # Implements [key-documents:FR-005] - Build ingested document list for LLM
         ingested_docs_text = "No document metadata available."
@@ -822,8 +930,11 @@ class AgentOrchestrator:
 
                 report_start = time.monotonic()
                 report_system, report_user = build_report_prompt(
-                    structure_json_str, app_summary, ingested_docs_text,
-                    app_evidence_text, policy_evidence_text,
+                    structure_json_str,
+                    app_summary,
+                    ingested_docs_text,
+                    app_evidence_text,
+                    policy_evidence_text,
                 )
                 report_msg = client.messages.create(
                     model=model,
@@ -873,14 +984,14 @@ class AgentOrchestrator:
             else:
                 # Fallback: single markdown call (no structured field extraction)
                 # Implements [structured-review-output:FR-007]
-                await self._progress.update_sub_progress(
-                    "Fallback: generating markdown review"
-                )
+                await self._progress.update_sub_progress("Fallback: generating markdown review")
 
                 fallback_system, fallback_user = build_report_prompt(
                     "{}",  # empty JSON — report call will just produce a review
-                    app_summary, ingested_docs_text,
-                    app_evidence_text, policy_evidence_text,
+                    app_summary,
+                    ingested_docs_text,
+                    app_evidence_text,
+                    policy_evidence_text,
                 )
                 # Override the system prompt for fallback — don't reference JSON
                 fallback_system = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
@@ -911,9 +1022,15 @@ Always cite specific policy references. Be constructive and evidence-based."""
                 # Parse overall rating from the markdown (best effort)
                 overall_rating = "amber"
                 rating_lower = review_markdown.lower()
-                if "overall rating:** red" in rating_lower or "overall rating:** 🔴" in rating_lower:
+                if (
+                    "overall rating:** red" in rating_lower
+                    or "overall rating:** 🔴" in rating_lower
+                ):
                     overall_rating = "red"
-                elif "overall rating:** green" in rating_lower or "overall rating:** 🟢" in rating_lower:
+                elif (
+                    "overall rating:** green" in rating_lower
+                    or "overall rating:** 🟢" in rating_lower
+                ):
                     overall_rating = "green"
 
                 # No structured fields available in fallback
@@ -950,9 +1067,7 @@ Always cite specific policy references. Be constructive and evidence-based."""
                     "total_tokens_used": total_input + total_output,
                     "evidence_chunks_used": len(getattr(self, "_evidence_chunks", [])),
                     "documents_analysed": (
-                        self._ingestion_result.documents_ingested
-                        if self._ingestion_result
-                        else 0
+                        self._ingestion_result.documents_ingested if self._ingestion_result else 0
                     ),
                 },
                 success=True,

@@ -6,11 +6,10 @@ Implements [document-processing:FR-002] - OCR via Tesseract for scanned document
 Implements [document-processing:FR-012] - Detection of image-heavy pages
 """
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import re
 
 import fitz  # PyMuPDF
 import structlog
@@ -245,7 +244,9 @@ class DocumentProcessor:
             total_word_count=total_words,
         )
 
-    def _extract_page(self, page: fitz.Page, page_number: int, *, skip_ocr: bool = False) -> PageExtraction:
+    def _extract_page(
+        self, page: fitz.Page, page_number: int, *, skip_ocr: bool = False
+    ) -> PageExtraction:
         """
         Extract text from a single PDF page.
 
@@ -264,7 +265,12 @@ class DocumentProcessor:
         ocr_confidence = None
 
         # If minimal text extracted and OCR is enabled, try OCR
-        if not skip_ocr and char_count < self.MIN_CHARS_PER_PAGE and self.enable_ocr and self._check_ocr_available():
+        if (
+            not skip_ocr
+            and char_count < self.MIN_CHARS_PER_PAGE
+            and self.enable_ocr
+            and self._check_ocr_available()
+        ):
             ocr_text, confidence = self._ocr_page(page)
             if len(ocr_text.strip()) > char_count:
                 text = ocr_text
@@ -370,7 +376,9 @@ class DocumentProcessor:
             raise ExtractionError("OCR is required for image files but is not available")
 
         if not PYTESSERACT_AVAILABLE or pytesseract is None or PILImage is None:
-            raise ExtractionError("OCR is required for image files but pytesseract is not installed")
+            raise ExtractionError(
+                "OCR is required for image files but pytesseract is not installed"
+            )
 
         try:
             img = PILImage.open(path)

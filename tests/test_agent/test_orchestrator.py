@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from src.agent.llm_document_filter import LLMFilterResult
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPServerType, MCPToolError
 from src.agent.orchestrator import (
     AgentOrchestrator,
@@ -33,10 +34,57 @@ from src.shared.storage import StorageUploadError
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _sequential_ingestion(monkeypatch):
     """Force sequential ingestion in tests so side_effect lists are consumed in order."""
     monkeypatch.setenv("INGEST_CONCURRENCY", "1")
+
+
+@pytest.fixture(autouse=True)
+def _mock_llm_filter():
+    """Mock the LLM document filter to return fallback (allow-all) in all tests.
+
+    This prevents real Anthropic API calls during unit tests and preserves
+    backward-compatible behaviour: download_all_documents is called without
+    ``selected_document_ids``, so it lists + downloads everything.
+    """
+    with patch("src.agent.orchestrator.LLMDocumentFilter") as mock_cls:
+        instance = mock_cls.return_value
+        instance.filter_documents = AsyncMock(
+            return_value=LLMFilterResult(fallback_used=True),
+        )
+        yield mock_cls
+
+
+# Reusable list-documents response matching the sample download fixtures.
+# Used to satisfy the new ``list_application_documents`` MCP call that the
+# orchestrator issues before downloading.
+SAMPLE_LIST_RESPONSE = {
+    "status": "success",
+    "application_ref": "25/01178/REM",
+    "document_count": 3,
+    "documents": [
+        {
+            "document_id": "doc1",
+            "description": "Transport Assessment",
+            "document_type": "Transport Assessment",
+        },
+        {"document_id": "doc2", "description": "Site Plan", "document_type": "Plans - Site Plan"},
+        {
+            "document_id": "doc3",
+            "description": "Design and Access Statement",
+            "document_type": "Design and Access Statement",
+        },
+    ],
+}
+
+EMPTY_LIST_RESPONSE = {
+    "status": "success",
+    "application_ref": "25/01178/REM",
+    "document_count": 0,
+    "documents": [],
+}
 
 
 @pytest.fixture
@@ -136,7 +184,10 @@ def sample_search_response():
     """Sample response from search_application_docs or search_policy tools."""
     return {
         "results": [
-            {"text": "The proposed development includes cycle parking.", "metadata": {"source_file": "ta.pdf"}},
+            {
+                "text": "The proposed development includes cycle parking.",
+                "metadata": {"source_file": "ta.pdf"},
+            },
         ],
     }
 
@@ -153,31 +204,61 @@ def _make_claude_response(
 
 
 # Default structure call JSON used across tests
-SAMPLE_STRUCTURE_JSON = json.dumps({
-    "overall_rating": "amber",
-    "aspects": [
-        {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
-         "analysis": "Minimum spaces provided."},
-        {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
-         "analysis": "No off-site routes."},
-        {"name": "Junctions", "rating": "amber", "key_issue": "Limited detail",
-         "analysis": "Junction designs not provided."},
-        {"name": "Permeability", "rating": "amber", "key_issue": "Could improve",
-         "analysis": "Some permeability but gaps."},
-        {"name": "Policy Compliance", "rating": "amber", "key_issue": "Partial compliance",
-         "analysis": "Meets some but not all."},
-    ],
-    "policy_compliance": [
-        {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
-         "compliant": False, "notes": "Car-based design"},
-    ],
-    "recommendations": ["Provide cycle track"],
-    "suggested_conditions": [],
-    "key_documents": [
-        {"title": "Transport Assessment", "category": "Transport & Access",
-         "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
-    ],
-})
+SAMPLE_STRUCTURE_JSON = json.dumps(
+    {
+        "overall_rating": "amber",
+        "aspects": [
+            {
+                "name": "Cycle Parking",
+                "rating": "amber",
+                "key_issue": "Design unverified",
+                "analysis": "Minimum spaces provided.",
+            },
+            {
+                "name": "Cycle Routes",
+                "rating": "red",
+                "key_issue": "No connections",
+                "analysis": "No off-site routes.",
+            },
+            {
+                "name": "Junctions",
+                "rating": "amber",
+                "key_issue": "Limited detail",
+                "analysis": "Junction designs not provided.",
+            },
+            {
+                "name": "Permeability",
+                "rating": "amber",
+                "key_issue": "Could improve",
+                "analysis": "Some permeability but gaps.",
+            },
+            {
+                "name": "Policy Compliance",
+                "rating": "amber",
+                "key_issue": "Partial compliance",
+                "analysis": "Meets some but not all.",
+            },
+        ],
+        "policy_compliance": [
+            {
+                "requirement": "Sustainable transport",
+                "policy_source": "NPPF 115",
+                "compliant": False,
+                "notes": "Car-based design",
+            },
+        ],
+        "recommendations": ["Provide cycle track"],
+        "suggested_conditions": [],
+        "key_documents": [
+            {
+                "title": "Transport Assessment",
+                "category": "Transport & Access",
+                "summary": "Traffic analysis.",
+                "url": "https://example.com/ta.pdf",
+            },
+        ],
+    }
+)
 
 
 def _make_two_phase_side_effect(
@@ -209,6 +290,7 @@ def _search_side_effects(n: int = 7, response: dict | None = None):
 # ---------------------------------------------------------------------------
 # Original agent-integration tests
 # ---------------------------------------------------------------------------
+
 
 class TestSuccessfulMCPConnections:
     """
@@ -269,11 +351,12 @@ class TestCompleteWorkflowExecution:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
         mock_mcp_client.call_tool.side_effect = [
-            sample_application_response,   # Phase 1
-            sample_download_response,      # Phase 2
-            sample_ingest_response,        # Phase 3 doc 1
-            sample_ingest_response,        # Phase 3 doc 2
-            sample_ingest_response,        # Phase 3 doc 3
+            sample_application_response,  # Phase 1
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
+            sample_download_response,  # Phase 2: download
+            sample_ingest_response,  # Phase 3 doc 1
+            sample_ingest_response,  # Phase 3 doc 2
+            sample_ingest_response,  # Phase 3 doc 3
             *_search_side_effects(7, sample_search_response),  # Phase 4
         ]
 
@@ -308,7 +391,11 @@ class TestCompleteWorkflowExecution:
 
     @pytest.mark.asyncio
     async def test_workflow_with_no_documents(
-        self, mock_mcp_client, mock_redis, monkeypatch, sample_search_response,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_search_response,
     ):
         """Test workflow when application has no documents."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
@@ -322,7 +409,7 @@ class TestCompleteWorkflowExecution:
                     "documents": [],
                 },
             },
-            {"status": "success", "downloads": []},  # Phase 2: no downloads
+            EMPTY_LIST_RESPONSE,  # Phase 2: list returns empty → no download call
             *_search_side_effects(7, sample_search_response),  # Phase 4
         ]
 
@@ -380,10 +467,7 @@ class TestScraperFailureHandling:
         assert "Scraper error" in result.error
 
         # Verify review.failed was published
-        failed_calls = [
-            c for c in mock_redis.publish.call_args_list
-            if "review.failed" in str(c)
-        ]
+        failed_calls = [c for c in mock_redis.publish.call_args_list if "review.failed" in str(c)]
         assert len(failed_calls) >= 1
 
         await orchestrator.close()
@@ -440,6 +524,7 @@ class TestPartialDocumentIngestion:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
             sample_ingest_response,  # doc 1 succeeds
             MCPToolError("ingest_document", "OCR failed - corrupt file"),  # doc 2 fails
@@ -480,6 +565,7 @@ class TestPartialDocumentIngestion:
         """Test that workflow fails if all documents fail to ingest."""
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
             MCPToolError("ingest_document", "Failed"),
             MCPToolError("ingest_document", "Failed"),
@@ -702,8 +788,9 @@ class TestReconnectionOnTransientFailure:
 
         mock_mcp_client.call_tool.side_effect = [
             MCPConnectionError(MCPServerType.CHERWELL_SCRAPER, "Connection lost"),  # Phase 1 fails
-            sample_download_response,  # Phase 2
-            sample_ingest_response,    # Phase 3 (1 downloaded doc)
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
+            sample_download_response,  # Phase 2: download
+            sample_ingest_response,  # Phase 3 (1 downloaded doc)
             sample_ingest_response,
             sample_ingest_response,
             *_search_side_effects(7, sample_search_response),
@@ -855,6 +942,7 @@ class TestGracefulDegradation:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             download_response,
             sample_ingest_response,  # Only 1 doc to ingest
             *_search_side_effects(7, sample_search_response),
@@ -894,10 +982,11 @@ class TestGracefulDegradation:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
             {"status": "error", "message": "Corrupt PDF"},  # doc 1 fails
-            {"status": "success", "chunks_created": 10},    # doc 2 succeeds
-            {"status": "success", "chunks_created": 5},     # doc 3 succeeds
+            {"status": "success", "chunks_created": 10},  # doc 2 succeeds
+            {"status": "success", "chunks_created": 5},  # doc 3 succeeds
             *_search_side_effects(7, sample_search_response),
         ]
 
@@ -939,6 +1028,7 @@ class TestGracefulDegradation:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
             {"status": "already_ingested", "document_id": "doc_123"},
             {"status": "already_ingested", "document_id": "doc_456"},
@@ -1051,6 +1141,7 @@ class TestDownloadPhaseMetadata:
         """
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
         ]
 
@@ -1119,6 +1210,7 @@ class TestDownloadPhaseMetadata:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             download_response,
         ]
 
@@ -1168,33 +1260,67 @@ class TestGenerateReviewKeyDocuments:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
-            "overall_rating": "amber",
-            "aspects": [
-                {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
-                 "analysis": "Minimum spaces provided."},
-                {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
-                 "analysis": "No off-site routes."},
-                {"name": "Junctions", "rating": "amber", "key_issue": "Limited detail",
-                 "analysis": "Junction designs not provided."},
-                {"name": "Permeability", "rating": "amber", "key_issue": "Could improve",
-                 "analysis": "Some permeability but gaps."},
-                {"name": "Policy Compliance", "rating": "amber", "key_issue": "Partial compliance",
-                 "analysis": "Meets some but not all."},
-            ],
-            "policy_compliance": [
-                {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
-                 "compliant": False, "notes": "Car-based design"},
-            ],
-            "recommendations": ["Provide cycle track"],
-            "suggested_conditions": [],
-            "key_documents": [
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Analyses traffic impacts.", "url": "https://example.com/ta.pdf"},
-                {"title": "Design and Access Statement", "category": "Design & Layout",
-                 "summary": "Describes site layout.", "url": "https://example.com/das.pdf"},
-            ],
-        })
+        structure_json = json.dumps(
+            {
+                "overall_rating": "amber",
+                "aspects": [
+                    {
+                        "name": "Cycle Parking",
+                        "rating": "amber",
+                        "key_issue": "Design unverified",
+                        "analysis": "Minimum spaces provided.",
+                    },
+                    {
+                        "name": "Cycle Routes",
+                        "rating": "red",
+                        "key_issue": "No connections",
+                        "analysis": "No off-site routes.",
+                    },
+                    {
+                        "name": "Junctions",
+                        "rating": "amber",
+                        "key_issue": "Limited detail",
+                        "analysis": "Junction designs not provided.",
+                    },
+                    {
+                        "name": "Permeability",
+                        "rating": "amber",
+                        "key_issue": "Could improve",
+                        "analysis": "Some permeability but gaps.",
+                    },
+                    {
+                        "name": "Policy Compliance",
+                        "rating": "amber",
+                        "key_issue": "Partial compliance",
+                        "analysis": "Meets some but not all.",
+                    },
+                ],
+                "policy_compliance": [
+                    {
+                        "requirement": "Sustainable transport",
+                        "policy_source": "NPPF 115",
+                        "compliant": False,
+                        "notes": "Car-based design",
+                    },
+                ],
+                "recommendations": ["Provide cycle track"],
+                "suggested_conditions": [],
+                "key_documents": [
+                    {
+                        "title": "Transport Assessment",
+                        "category": "Transport & Access",
+                        "summary": "Analyses traffic impacts.",
+                        "url": "https://example.com/ta.pdf",
+                    },
+                    {
+                        "title": "Design and Access Statement",
+                        "category": "Design & Layout",
+                        "summary": "Describes site layout.",
+                        "url": "https://example.com/das.pdf",
+                    },
+                ],
+            }
+        )
 
         # Pre-populate orchestrator state for Phase 5
         orchestrator = AgentOrchestrator(
@@ -1215,8 +1341,16 @@ class TestGenerateReviewKeyDocuments:
             documents_ingested=2,
             document_paths=["/data/ta.pdf", "/data/das.pdf"],
             document_metadata={
-                "/data/ta.pdf": {"description": "Transport Assessment", "document_type": "Transport Assessment", "url": "https://example.com/ta.pdf"},
-                "/data/das.pdf": {"description": "Design and Access Statement", "document_type": "Design and Access Statement", "url": "https://example.com/das.pdf"},
+                "/data/ta.pdf": {
+                    "description": "Transport Assessment",
+                    "document_type": "Transport Assessment",
+                    "url": "https://example.com/ta.pdf",
+                },
+                "/data/das.pdf": {
+                    "description": "Design and Access Statement",
+                    "document_type": "Design and Access Statement",
+                    "url": "https://example.com/das.pdf",
+                },
             },
         )
 
@@ -1319,7 +1453,9 @@ class TestGenerateReviewKeyDocuments:
             # First call (structure) returns invalid JSON, second call (fallback) returns markdown
             mock_client_inst.messages.create.side_effect = [
                 _make_claude_response(text="This is not valid JSON"),
-                _make_claude_response(text="# Review\n**Overall Rating:** RED\nNo key documents found."),
+                _make_claude_response(
+                    text="# Review\n**Overall Rating:** RED\nNo key documents found."
+                ),
             ]
             MockAnthropic.return_value = mock_client_inst
 
@@ -1415,41 +1551,77 @@ class TestKeyDocumentsIntegration:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
-            "overall_rating": "amber",
-            "aspects": [
-                {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
-                 "analysis": "Minimum spaces."},
-                {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
-                 "analysis": "No routes."},
-                {"name": "Junctions", "rating": "amber", "key_issue": "Limited detail",
-                 "analysis": "Not provided."},
-                {"name": "Permeability", "rating": "amber", "key_issue": "Could improve",
-                 "analysis": "Gaps."},
-                {"name": "Policy Compliance", "rating": "amber", "key_issue": "Partial",
-                 "analysis": "Partial."},
-            ],
-            "policy_compliance": [
-                {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
-                 "compliant": False, "notes": "Car-based design"},
-            ],
-            "recommendations": ["Provide cycle track"],
-            "suggested_conditions": [],
-            "key_documents": [
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Analyses traffic impacts of the proposed development.",
-                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1"},
-                {"title": "Design and Access Statement", "category": "Design & Layout",
-                 "summary": "Describes site layout including cycle parking locations.",
-                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3"},
-                {"title": "Site Plan", "category": "Design & Layout",
-                 "summary": "Shows proposed layout with access roads.",
-                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2"},
-            ],
-        })
+        structure_json = json.dumps(
+            {
+                "overall_rating": "amber",
+                "aspects": [
+                    {
+                        "name": "Cycle Parking",
+                        "rating": "amber",
+                        "key_issue": "Design unverified",
+                        "analysis": "Minimum spaces.",
+                    },
+                    {
+                        "name": "Cycle Routes",
+                        "rating": "red",
+                        "key_issue": "No connections",
+                        "analysis": "No routes.",
+                    },
+                    {
+                        "name": "Junctions",
+                        "rating": "amber",
+                        "key_issue": "Limited detail",
+                        "analysis": "Not provided.",
+                    },
+                    {
+                        "name": "Permeability",
+                        "rating": "amber",
+                        "key_issue": "Could improve",
+                        "analysis": "Gaps.",
+                    },
+                    {
+                        "name": "Policy Compliance",
+                        "rating": "amber",
+                        "key_issue": "Partial",
+                        "analysis": "Partial.",
+                    },
+                ],
+                "policy_compliance": [
+                    {
+                        "requirement": "Sustainable transport",
+                        "policy_source": "NPPF 115",
+                        "compliant": False,
+                        "notes": "Car-based design",
+                    },
+                ],
+                "recommendations": ["Provide cycle track"],
+                "suggested_conditions": [],
+                "key_documents": [
+                    {
+                        "title": "Transport Assessment",
+                        "category": "Transport & Access",
+                        "summary": "Analyses traffic impacts of the proposed development.",
+                        "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1",
+                    },
+                    {
+                        "title": "Design and Access Statement",
+                        "category": "Design & Layout",
+                        "summary": "Describes site layout including cycle parking locations.",
+                        "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3",
+                    },
+                    {
+                        "title": "Site Plan",
+                        "category": "Design & Layout",
+                        "summary": "Shows proposed layout with access roads.",
+                        "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2",
+                    },
+                ],
+            }
+        )
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
             sample_ingest_response,
             sample_ingest_response,
@@ -1509,6 +1681,7 @@ class TestKeyDocumentsIntegration:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
             sample_ingest_response,
             sample_ingest_response,
@@ -1558,8 +1731,13 @@ class TestOrchestratorPassesToggleFlags:
 
     @pytest.mark.asyncio
     async def test_passes_toggle_flags_when_options_set(
-        self, mock_mcp_client, mock_redis, sample_application_response,
-        sample_download_response, sample_ingest_response, sample_search_response,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        sample_download_response,
+        sample_ingest_response,
+        sample_search_response,
         monkeypatch,
     ):
         """
@@ -1573,18 +1751,23 @@ class TestOrchestratorPassesToggleFlags:
 
         # Create options-like object with toggle flags
         from types import SimpleNamespace as _NS
+
         options = _NS(
             include_consultation_responses=True,
             include_public_comments=False,
         )
 
-        mock_mcp_client.call_tool = AsyncMock(side_effect=[
-            sample_application_response,  # Phase 1: get_application_details
-            sample_download_response,     # Phase 2: download_all_documents
-            sample_ingest_response,       # Phase 3: ingest doc1
-            sample_ingest_response,       # Phase 3: ingest doc2
-            sample_ingest_response,       # Phase 3: ingest doc3
-        ] + _search_side_effects(7, sample_search_response))  # Phase 4
+        mock_mcp_client.call_tool = AsyncMock(
+            side_effect=[
+                sample_application_response,  # Phase 1: get_application_details
+                SAMPLE_LIST_RESPONSE,  # Phase 2: list_application_documents
+                sample_download_response,  # Phase 2: download_all_documents
+                sample_ingest_response,  # Phase 3: ingest doc1
+                sample_ingest_response,  # Phase 3: ingest doc2
+                sample_ingest_response,  # Phase 3: ingest doc3
+            ]
+            + _search_side_effects(7, sample_search_response)
+        )  # Phase 4
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
             mock_client_instance = MagicMock()
@@ -1603,8 +1786,9 @@ class TestOrchestratorPassesToggleFlags:
 
         assert result.success is True
 
-        # Verify the download_all_documents call (second call_tool invocation)
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        # Verify the download_all_documents call (third call_tool invocation,
+        # after get_application_details and list_application_documents)
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][0] == "download_all_documents"
         download_args = download_call[0][1]
         assert download_args["include_consultation_responses"] is True
@@ -1614,8 +1798,13 @@ class TestOrchestratorPassesToggleFlags:
 
     @pytest.mark.asyncio
     async def test_default_options_omit_toggle_flags(
-        self, mock_mcp_client, mock_redis, sample_application_response,
-        sample_download_response, sample_ingest_response, sample_search_response,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        sample_download_response,
+        sample_ingest_response,
+        sample_search_response,
         monkeypatch,
     ):
         """
@@ -1627,13 +1816,17 @@ class TestOrchestratorPassesToggleFlags:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        mock_mcp_client.call_tool = AsyncMock(side_effect=[
-            sample_application_response,
-            sample_download_response,
-            sample_ingest_response,
-            sample_ingest_response,
-            sample_ingest_response,
-        ] + _search_side_effects(7, sample_search_response))
+        mock_mcp_client.call_tool = AsyncMock(
+            side_effect=[
+                sample_application_response,
+                SAMPLE_LIST_RESPONSE,  # Phase 2: list_application_documents
+                sample_download_response,
+                sample_ingest_response,
+                sample_ingest_response,
+                sample_ingest_response,
+            ]
+            + _search_side_effects(7, sample_search_response)
+        )
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as mock_anthropic_cls:
             mock_client_instance = MagicMock()
@@ -1653,7 +1846,7 @@ class TestOrchestratorPassesToggleFlags:
         assert result.success is True
 
         # Verify the download_all_documents call has no toggle flags
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][0] == "download_all_documents"
         download_args = download_call[0][1]
         assert "include_consultation_responses" not in download_args
@@ -1672,8 +1865,8 @@ def _make_s3_backend_mock():
     backend = MagicMock()
     type(backend).is_remote = PropertyMock(return_value=True)
     backend.upload.return_value = None
-    backend.public_url.side_effect = (
-        lambda key: f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
+    backend.public_url.side_effect = lambda key: (
+        f"https://test-bucket.nyc3.digitaloceanspaces.com/{key}"
     )
     backend.delete_local.return_value = None
     return backend
@@ -1753,6 +1946,7 @@ class TestS3StorageDownloadPhase:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_s3_download_response,
         ]
 
@@ -1768,8 +1962,8 @@ class TestS3StorageDownloadPhase:
         await orchestrator._phase_fetch_metadata()
         await orchestrator._phase_download_documents()
 
-        # Verify output_dir was /tmp/raw
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        # Verify output_dir was /data/raw (download_all_documents is 3rd call)
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][1]["output_dir"] == "/data/raw"
 
         # Verify upload was called for each file
@@ -1822,6 +2016,7 @@ class TestS3StorageDownloadPhase:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_s3_download_response,
         ]
 
@@ -1870,6 +2065,7 @@ class TestS3StorageDownloadPhase:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
         ]
 
@@ -1885,8 +2081,8 @@ class TestS3StorageDownloadPhase:
         await orchestrator._phase_fetch_metadata()
         await orchestrator._phase_download_documents()
 
-        # Verify output_dir was /data/raw
-        download_call = mock_mcp_client.call_tool.call_args_list[1]
+        # Verify output_dir was /data/raw (download_all_documents is 3rd call)
+        download_call = mock_mcp_client.call_tool.call_args_list[2]
         assert download_call[0][1]["output_dir"] == "/data/raw"
 
         # Verify no upload calls
@@ -2057,7 +2253,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_two_phase_success(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:AgentOrchestrator/TS-01] - Two-phase success.
@@ -2068,35 +2267,71 @@ class TestTwoPhaseReviewGeneration:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
-            "overall_rating": "red",
-            "aspects": [
-                {"name": "Cycle Parking", "rating": "amber", "key_issue": "Design unverified",
-                 "analysis": "Minimum spaces."},
-                {"name": "Cycle Routes", "rating": "red", "key_issue": "No connections",
-                 "analysis": "No routes."},
-                {"name": "Junctions", "rating": "red", "key_issue": "No priority",
-                 "analysis": "Cars only."},
-                {"name": "Permeability", "rating": "red", "key_issue": "Car-only",
-                 "analysis": "No permeability."},
-                {"name": "Policy Compliance", "rating": "red", "key_issue": "Fails NPPF",
-                 "analysis": "Non-compliant."},
-            ],
-            "policy_compliance": [
-                {"requirement": "Sustainable transport", "policy_source": "NPPF 115",
-                 "compliant": False, "notes": "Car-based"},
-                {"requirement": "Safe access", "policy_source": "NPPF 115(b)",
-                 "compliant": False, "notes": None},
-            ],
-            "recommendations": ["Provide cycle track", "Add Sheffield stands"],
-            "suggested_conditions": ["Submit cycle parking details"],
-            "key_documents": [
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
-            ],
-        })
+        structure_json = json.dumps(
+            {
+                "overall_rating": "red",
+                "aspects": [
+                    {
+                        "name": "Cycle Parking",
+                        "rating": "amber",
+                        "key_issue": "Design unverified",
+                        "analysis": "Minimum spaces.",
+                    },
+                    {
+                        "name": "Cycle Routes",
+                        "rating": "red",
+                        "key_issue": "No connections",
+                        "analysis": "No routes.",
+                    },
+                    {
+                        "name": "Junctions",
+                        "rating": "red",
+                        "key_issue": "No priority",
+                        "analysis": "Cars only.",
+                    },
+                    {
+                        "name": "Permeability",
+                        "rating": "red",
+                        "key_issue": "Car-only",
+                        "analysis": "No permeability.",
+                    },
+                    {
+                        "name": "Policy Compliance",
+                        "rating": "red",
+                        "key_issue": "Fails NPPF",
+                        "analysis": "Non-compliant.",
+                    },
+                ],
+                "policy_compliance": [
+                    {
+                        "requirement": "Sustainable transport",
+                        "policy_source": "NPPF 115",
+                        "compliant": False,
+                        "notes": "Car-based",
+                    },
+                    {
+                        "requirement": "Safe access",
+                        "policy_source": "NPPF 115(b)",
+                        "compliant": False,
+                        "notes": None,
+                    },
+                ],
+                "recommendations": ["Provide cycle track", "Add Sheffield stands"],
+                "suggested_conditions": ["Submit cycle parking details"],
+                "key_documents": [
+                    {
+                        "title": "Transport Assessment",
+                        "category": "Transport & Access",
+                        "summary": "Traffic analysis.",
+                        "url": "https://example.com/ta.pdf",
+                    },
+                ],
+            }
+        )
 
-        report_md = "# Cycle Advocacy Review: 25/01178/REM\n## Assessment Summary\n**Overall Rating:** RED"
+        report_md = (
+            "# Cycle Advocacy Review: 25/01178/REM\n## Assessment Summary\n**Overall Rating:** RED"
+        )
 
         orchestrator = AgentOrchestrator(
             review_id="rev_2phase_test",
@@ -2106,18 +2341,24 @@ class TestTwoPhaseReviewGeneration:
         )
         await orchestrator.initialize()
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM", address="Test", proposal="Test",
+            reference="25/01178/REM",
+            address="Test",
+            proposal="Test",
         )
         orchestrator._ingestion_result = DocumentIngestionResult(
-            documents_fetched=1, documents_ingested=1,
+            documents_fetched=1,
+            documents_ingested=1,
             document_paths=["/data/ta.pdf"],
-            document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
+            document_metadata={
+                "/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}
+            },
         )
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
             mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
-                structure_json=structure_json, markdown=report_md,
+                structure_json=structure_json,
+                markdown=report_md,
             )
             MockAnthropic.return_value = mock_client_inst
 
@@ -2149,7 +2390,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_structure_call_invalid_json_fallback(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:AgentOrchestrator/TS-02] - Structure call invalid JSON.
@@ -2170,7 +2414,9 @@ class TestTwoPhaseReviewGeneration:
         )
         await orchestrator.initialize()
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM", address="Test", proposal="Test",
+            reference="25/01178/REM",
+            address="Test",
+            proposal="Test",
         )
         orchestrator._ingestion_result = DocumentIngestionResult()
 
@@ -2201,7 +2447,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_structure_call_api_error_fallback(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:AgentOrchestrator/TS-03] - Structure call API error.
@@ -2224,7 +2473,9 @@ class TestTwoPhaseReviewGeneration:
         )
         await orchestrator.initialize()
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM", address="Test", proposal="Test",
+            reference="25/01178/REM",
+            address="Test",
+            proposal="Test",
         )
         orchestrator._ingestion_result = DocumentIngestionResult()
 
@@ -2253,7 +2504,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_token_usage_tracked(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:AgentOrchestrator/TS-04] - Token usage tracked.
@@ -2272,7 +2526,9 @@ class TestTwoPhaseReviewGeneration:
         )
         await orchestrator.initialize()
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM", address="Test", proposal="Test",
+            reference="25/01178/REM",
+            address="Test",
+            proposal="Test",
         )
         orchestrator._ingestion_result = DocumentIngestionResult()
 
@@ -2297,7 +2553,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_review_dict_shape_preserved(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:AgentOrchestrator/TS-05] - Review dict shape preserved.
@@ -2316,7 +2575,9 @@ class TestTwoPhaseReviewGeneration:
         )
         await orchestrator.initialize()
         orchestrator._application = ApplicationMetadata(
-            reference="25/01178/REM", address="Test", proposal="Test",
+            reference="25/01178/REM",
+            address="Test",
+            proposal="Test",
         )
         orchestrator._ingestion_result = DocumentIngestionResult()
 
@@ -2329,9 +2590,17 @@ class TestTwoPhaseReviewGeneration:
 
         review = orchestrator._review_result.review
         expected_keys = {
-            "overall_rating", "key_documents", "aspects", "policy_compliance",
-            "recommendations", "suggested_conditions", "full_markdown",
-            "summary", "model", "input_tokens", "output_tokens",
+            "overall_rating",
+            "key_documents",
+            "aspects",
+            "policy_compliance",
+            "recommendations",
+            "suggested_conditions",
+            "full_markdown",
+            "summary",
+            "model",
+            "input_tokens",
+            "output_tokens",
         }
         assert set(review.keys()) == expected_keys
 
@@ -2339,7 +2608,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_structure_to_report_consistency(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:ITS-01] - Structure-to-report consistency.
@@ -2350,28 +2622,54 @@ class TestTwoPhaseReviewGeneration:
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        structure_json = json.dumps({
-            "overall_rating": "green",
-            "aspects": [
-                {"name": "Cycle Parking", "rating": "green", "key_issue": "Meets standards",
-                 "analysis": "Good provision."},
-                {"name": "Cycle Routes", "rating": "green", "key_issue": "Connected",
-                 "analysis": "Well connected."},
-                {"name": "Junctions", "rating": "green", "key_issue": "Safe design",
-                 "analysis": "Good junctions."},
-                {"name": "Permeability", "rating": "green", "key_issue": "Excellent",
-                 "analysis": "Fully permeable."},
-                {"name": "Policy Compliance", "rating": "green", "key_issue": "Compliant",
-                 "analysis": "Meets all policies."},
-            ],
-            "policy_compliance": [
-                {"requirement": "Cycle parking", "policy_source": "LTN 1/20",
-                 "compliant": True, "notes": "Sheffield stands provided"},
-            ],
-            "recommendations": ["Consider covered cycle parking"],
-            "suggested_conditions": [],
-            "key_documents": [],
-        })
+        structure_json = json.dumps(
+            {
+                "overall_rating": "green",
+                "aspects": [
+                    {
+                        "name": "Cycle Parking",
+                        "rating": "green",
+                        "key_issue": "Meets standards",
+                        "analysis": "Good provision.",
+                    },
+                    {
+                        "name": "Cycle Routes",
+                        "rating": "green",
+                        "key_issue": "Connected",
+                        "analysis": "Well connected.",
+                    },
+                    {
+                        "name": "Junctions",
+                        "rating": "green",
+                        "key_issue": "Safe design",
+                        "analysis": "Good junctions.",
+                    },
+                    {
+                        "name": "Permeability",
+                        "rating": "green",
+                        "key_issue": "Excellent",
+                        "analysis": "Fully permeable.",
+                    },
+                    {
+                        "name": "Policy Compliance",
+                        "rating": "green",
+                        "key_issue": "Compliant",
+                        "analysis": "Meets all policies.",
+                    },
+                ],
+                "policy_compliance": [
+                    {
+                        "requirement": "Cycle parking",
+                        "policy_source": "LTN 1/20",
+                        "compliant": True,
+                        "notes": "Sheffield stands provided",
+                    },
+                ],
+                "recommendations": ["Consider covered cycle parking"],
+                "suggested_conditions": [],
+                "key_documents": [],
+            }
+        )
 
         report_md = "# Cycle Advocacy Review\n**Overall Rating:** GREEN\n## Assessment Summary\n..."
 
@@ -2388,7 +2686,8 @@ class TestTwoPhaseReviewGeneration:
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
             mock_client_inst.messages.create.side_effect = _make_two_phase_side_effect(
-                structure_json=structure_json, markdown=report_md,
+                structure_json=structure_json,
+                markdown=report_md,
             )
             MockAnthropic.return_value = mock_client_inst
 
@@ -2404,7 +2703,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_fallback_produces_valid_review(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:ITS-02] - Fallback produces valid review.
@@ -2445,7 +2747,10 @@ class TestTwoPhaseReviewGeneration:
 
     @pytest.mark.asyncio
     async def test_review_dict_matches_api_schema(
-        self, mock_mcp_client, mock_redis, monkeypatch,
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
     ):
         """
         Verifies [structured-review-output:ITS-03] - Review dict matches API schema.
@@ -2511,10 +2816,11 @@ class TestIngestErrorExtraction:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
-            {"error": "Connection lost"},                     # doc 1: error key only
-            {"status": "success", "chunks_created": 10},      # doc 2 succeeds
-            {"status": "success", "chunks_created": 5},       # doc 3 succeeds
+            {"error": "Connection lost"},  # doc 1: error key only
+            {"status": "success", "chunks_created": 10},  # doc 2 succeeds
+            {"status": "success", "chunks_created": 5},  # doc 3 succeeds
             *_search_side_effects(7, sample_search_response),
         ]
 
@@ -2561,10 +2867,11 @@ class TestIngestErrorExtraction:
 
         mock_mcp_client.call_tool.side_effect = [
             sample_application_response,
+            SAMPLE_LIST_RESPONSE,  # Phase 2: list docs
             sample_download_response,
-            {},                                               # doc 1: empty dict
-            {"status": "success", "chunks_created": 10},      # doc 2 succeeds
-            {"status": "success", "chunks_created": 5},       # doc 3 succeeds
+            {},  # doc 1: empty dict
+            {"status": "success", "chunks_created": 10},  # doc 2 succeeds
+            {"status": "success", "chunks_created": 5},  # doc 3 succeeds
             *_search_side_effects(7, sample_search_response),
         ]
 
