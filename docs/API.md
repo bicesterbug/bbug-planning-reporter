@@ -15,8 +15,10 @@
 - [Endpoints](#endpoints)
   - [Health](#health)
   - [Reviews](#reviews)
+  - [Site Boundary](#site-boundary)
   - [Letters](#letters)
   - [Downloads](#downloads)
+  - [Destinations](#destinations)
   - [Policies](#policies)
   - [Policy Revisions](#policy-revisions)
 - [Webhooks](#webhooks)
@@ -33,7 +35,7 @@ All endpoints except health and docs require a **Bearer token** in the `Authoriz
 Authorization: Bearer <api-key>
 ```
 
-API keys are loaded from the `API_KEYS` environment variable (comma-separated) or a JSON file at the path in `API_KEYS_FILE`. The file may be `["key1","key2"]` or `{"keys":["key1","key2"]}`.
+API keys are loaded from the `API_KEYS` environment variable (comma-separated) or a JSON file at the path in `API_KEYS_FILE`. The file may be `["key1","key2"]` or `{"keys":["key1","key2"]}`. Environment variable takes precedence over file.
 
 **Exempt paths** (no auth required): `/api/v1/health`, `/health`, `/docs`, `/redoc`, `/openapi.json`
 
@@ -86,7 +88,8 @@ Authenticated responses additionally include:
 - **Algorithm:** Redis sliding window (sorted set)
 - **Default:** 60 requests per 60-second window per API key
 - **Configuration:** `API_RATE_LIMIT` environment variable
-- API key is hashed (SHA-256) for privacy in Redis keys
+- API key is hashed (SHA-256, truncated to 16 chars) for privacy in Redis keys
+- **Graceful degradation:** If Redis is unavailable, rate limiting is skipped and a warning is logged
 
 ### 429 Too Many Requests
 
@@ -126,7 +129,7 @@ All errors follow a consistent envelope:
 }
 ```
 
-`details` is optional and may be `null`.
+`details` is optional and may be `null`. In production (`ENVIRONMENT=production`), `details` is omitted from 500 errors and no stack traces are exposed.
 
 ### Error Codes by Status
 
@@ -134,7 +137,6 @@ All errors follow a consistent envelope:
 |--------|------|-------------|
 | 400 | `bad_request` | Malformed or invalid request |
 | 401 | `unauthorized` | Missing or invalid API key |
-| 403 | `forbidden` | Insufficient permissions |
 | 404 | `not_found` | Resource not found |
 | 409 | `conflict` | Duplicate or conflicting operation |
 | 422 | `validation_error` | Pydantic field validation failed |
@@ -169,7 +171,7 @@ All errors follow a consistent envelope:
 
 #### `GET /api/v1/health`
 
-Returns service health. No authentication required.
+Returns service health. No authentication required. Exempt from rate limiting.
 
 **Response `200 OK`:**
 
@@ -189,11 +191,13 @@ Returns service health. No authentication required.
 | `services.redis` | string | `connected` or `disconnected` |
 | `version` | string | Application version |
 
+When Redis is unreachable, returns `200` with `"status": "degraded"` and `"redis": "disconnected"`.
+
 ---
 
 ### Reviews
 
-#### `POST /api/v1/reviews` — Submit Review
+#### `POST /api/v1/reviews` -- Submit Review
 
 Queue an AI review of a Cherwell planning application.
 
@@ -206,42 +210,39 @@ Queue an AI review of a Cherwell planning application.
     "focus_areas": ["cycle_parking", "cycle_routes"],
     "output_format": "markdown",
     "include_policy_matrix": true,
-    "include_suggested_conditions": true
-  },
-  "webhook": {
-    "url": "https://example.com/hooks/review",
-    "secret": "whsec_abc123",
-    "events": ["review.started", "review.completed", "review.failed"]
+    "include_suggested_conditions": true,
+    "include_consultation_responses": false,
+    "include_public_comments": false,
+    "destination_ids": ["dest_bicester_north", "dest_bicester_village"]
   }
 }
 ```
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `application_ref` | string | Yes | — | Cherwell reference, format `YY/NNNNN/XXX` |
+| `application_ref` | string | Yes | -- | Cherwell reference, format `YY/NNNNN/XXX` |
 | `options` | object | No | `null` | Review configuration |
-| `options.focus_areas` | string[] | No | `null` | Areas to focus on (e.g. `cycle_parking`, `cycle_routes`, `junctions`, `permeability`) |
-| `options.output_format` | string | No | `"markdown"` | Output format (`markdown` or `json`) |
+| `options.focus_areas` | string[] \| null | No | `null` | Areas to focus on (e.g. `cycle_parking`, `cycle_routes`, `junctions`, `permeability`) |
+| `options.output_format` | string | No | `"markdown"` | Output format: `markdown` or `json` |
 | `options.include_policy_matrix` | boolean | No | `true` | Include policy compliance matrix |
 | `options.include_suggested_conditions` | boolean | No | `true` | Include suggested planning conditions |
-| `webhook` | object | No | `null` | Webhook callback configuration (see [Webhooks](#webhooks)) |
-| `webhook.url` | string | Yes* | — | Callback URL (`https://` required in production) |
-| `webhook.secret` | string | Yes* | — | HMAC-SHA256 signing secret |
-| `webhook.events` | string[] | No | All events | Events to subscribe to |
+| `options.include_consultation_responses` | boolean | No | `false` | Include statutory consultee responses as LLM evidence |
+| `options.include_public_comments` | boolean | No | `false` | Include public comments/objection letters as LLM evidence |
+| `options.destination_ids` | string[] \| null | No | `null` | Destination IDs for route assessment. `null` = all destinations, `[]` = skip route assessment |
 
 **Response `202 Accepted`:**
 
 ```json
 {
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "application_ref": "25/01178/REM",
   "status": "queued",
-  "created_at": "2025-02-07T12:34:56.789000Z",
+  "created_at": "2026-02-14T10:30:00Z",
   "estimated_duration_seconds": 180,
   "links": {
-    "self": "/api/v1/reviews/rev_01JKXYZ1234567890ABCDEF",
-    "status": "/api/v1/reviews/rev_01JKXYZ1234567890ABCDEF/status",
-    "cancel": "/api/v1/reviews/rev_01JKXYZ1234567890ABCDEF/cancel"
+    "self": "/api/v1/reviews/rev_01JMABCDEF1234567890AB",
+    "status": "/api/v1/reviews/rev_01JMABCDEF1234567890AB/status",
+    "cancel": "/api/v1/reviews/rev_01JMABCDEF1234567890AB/cancel"
   }
 }
 ```
@@ -260,6 +261,8 @@ Queue an AI review of a Cherwell planning application.
 }
 ```
 
+**Error `422 Validation Error`:** Invalid application reference or request body.
+
 **curl example:**
 
 ```bash
@@ -270,37 +273,58 @@ curl -X POST http://localhost:8080/api/v1/reviews \
     "application_ref": "25/01178/REM",
     "options": {
       "focus_areas": ["cycle_parking"],
-      "include_policy_matrix": true
+      "include_policy_matrix": true,
+      "destination_ids": null
     }
   }'
 ```
 
 ---
 
-#### `GET /api/v1/reviews/{review_id}` — Get Review
+#### `GET /api/v1/reviews/{review_id}` -- Get Review
 
 Returns the full review, including results when completed.
+
+**Response `200 OK` (queued):**
+
+```json
+{
+  "review_id": "rev_01JMABCDEF1234567890AB",
+  "application_ref": "25/01178/REM",
+  "status": "queued",
+  "created_at": "2026-02-14T10:30:00Z",
+  "started_at": null,
+  "completed_at": null,
+  "progress": null,
+  "application": null,
+  "review": null,
+  "metadata": null,
+  "site_boundary": null,
+  "error": null
+}
+```
 
 **Response `200 OK` (processing):**
 
 ```json
 {
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "application_ref": "25/01178/REM",
   "status": "processing",
-  "created_at": "2025-02-07T12:34:56.789000Z",
-  "started_at": "2025-02-07T12:34:57.123000Z",
+  "created_at": "2026-02-14T10:30:00Z",
+  "started_at": "2026-02-14T10:30:05Z",
   "completed_at": null,
   "progress": {
     "phase": "downloading_documents",
-    "phase_number": 2,
-    "total_phases": 5,
-    "percent_complete": 40,
-    "detail": "Downloading 5 documents"
+    "phase_number": 3,
+    "total_phases": 8,
+    "percent_complete": 35,
+    "detail": "Downloaded 15 of 42 documents"
   },
   "application": null,
   "review": null,
   "metadata": null,
+  "site_boundary": null,
   "error": null
 }
 ```
@@ -309,48 +333,56 @@ Returns the full review, including results when completed.
 
 ```json
 {
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "application_ref": "25/01178/REM",
   "status": "completed",
-  "created_at": "2025-02-07T12:34:56.789000Z",
-  "started_at": "2025-02-07T12:34:57.123000Z",
-  "completed_at": "2025-02-07T12:39:56.456000Z",
+  "created_at": "2026-02-14T10:30:00Z",
+  "started_at": "2026-02-14T10:30:05Z",
+  "completed_at": "2026-02-14T10:33:45Z",
   "progress": null,
   "application": {
     "reference": "25/01178/REM",
-    "address": "Land North of Gavray Drive, Bicester",
-    "proposal": "Reserved matters for 200 dwellings pursuant to outline approval 14/01384/OUT",
-    "applicant": "Countryside Properties",
-    "status": "Under consideration",
-    "consultation_end": "2025-03-01",
-    "documents_fetched": 12,
-    "documents_ingested": 12
+    "address": "Land at NW Bicester",
+    "proposal": "Reserved matters for 120 dwellings",
+    "applicant": "Example Homes Ltd",
+    "status": "Pending Consideration",
+    "consultation_end": "2026-03-01",
+    "documents_fetched": 45,
+    "documents_ingested": 38
   },
   "review": {
-    "overall_rating": "amber",
-    "summary": "The application provides cycle parking at LTN 1/20 standards but cycle route connectivity to the town centre is weak.",
+    "overall_rating": "non_compliant",
+    "summary": "The application fails to provide adequate cycle parking and has no segregated cycle route to the town centre.",
+    "key_documents": [
+      {
+        "title": "Transport Assessment",
+        "category": "Transport & Access",
+        "summary": "Details cycle route connections but omits LTN 1/20 standards.",
+        "url": "https://planningregister.cherwell.gov.uk/..."
+      }
+    ],
     "aspects": [
       {
         "name": "Cycle Parking",
-        "rating": "green",
-        "key_issue": "Provision meets LTN 1/20 standards",
-        "detail": "Each dwelling has covered, secure cycle parking for 2 bikes. Visitor parking at 1 stand per 10 dwellings.",
-        "policy_refs": ["LTN 1/20:11.1", "NPPF:para.110"]
+        "rating": "non_compliant",
+        "key_issue": "Sheffield stands only, no covered secure parking",
+        "detail": "The proposed cycle parking does not meet LTN 1/20 standards for residential development.",
+        "policy_refs": ["LTN_1_20:s11.2", "CHERWELL_LP:Policy BSC1"]
       },
       {
         "name": "Cycle Routes",
-        "rating": "red",
+        "rating": "non_compliant",
         "key_issue": "No dedicated cycle link to town centre",
         "detail": "The site connects to Gavray Drive but no segregated cycle route is provided to the town centre 2km away.",
-        "policy_refs": ["LTN 1/20:4.2", "NPPF:para.112", "LCWIP:Route B3"]
+        "policy_refs": ["LTN_1_20:4.2", "NPPF:para.112", "LCWIP:Route B3"]
       }
     ],
     "policy_compliance": [
       {
         "requirement": "Secure, covered cycle parking at LTN 1/20 rates",
         "policy_source": "LTN_1_20",
-        "compliant": true,
-        "notes": "2 spaces per dwelling, Sheffield stands in communal areas"
+        "compliant": false,
+        "notes": "Only Sheffield stands proposed; no covered or secure provision"
       },
       {
         "requirement": "Safe, direct and coherent cycle routes",
@@ -360,22 +392,53 @@ Returns the full review, including results when completed.
       }
     ],
     "recommendations": [
-      "Provide a segregated 3m-wide cycle track along Gavray Drive to connect to Bicester town centre",
-      "Install directional signage for cycle routes on site"
+      "Provide secure, covered cycle parking at 1 space per bedroom",
+      "Widen shared-use path along Buckingham Road to 3m"
     ],
     "suggested_conditions": [
-      "Prior to occupation, a 3m-wide segregated cycle track shall be constructed along Gavray Drive from the site entrance to the junction with Buckingham Road.",
-      "A Travel Plan including cycle promotion measures shall be submitted and approved within 3 months of first occupation."
+      "Prior to occupation, a revised Cycle Parking Strategy shall be submitted and approved.",
+      "A 3m-wide segregated cycle track shall be constructed along Gavray Drive from the site entrance to the junction with Buckingham Road."
     ],
-    "full_markdown": "# Cycle Advocacy Review: 25/01178/REM\n\n## Overall Rating: AMBER\n..."
+    "route_assessments": [
+      {
+        "destination": "Bicester North Station",
+        "destination_id": "dest_bicester_north",
+        "distance_m": 2400,
+        "duration_minutes": 9.5,
+        "provision_breakdown": {
+          "protected_lane": 0.3,
+          "shared_use": 0.5,
+          "on_road": 0.2
+        },
+        "score": {
+          "overall": 62,
+          "safety": 55,
+          "directness": 78
+        },
+        "issues": [
+          {
+            "location": "A4095 junction",
+            "severity": "high",
+            "description": "No cycle phase at signals"
+          }
+        ],
+        "s106_suggestions": [
+          {
+            "item": "Toucan crossing at A4095",
+            "estimated_cost": 150000
+          }
+        ]
+      }
+    ],
+    "full_markdown": "# Cycle Advocacy Review: 25/01178/REM\n\n## Overall Rating: NON-COMPLIANT\n..."
   },
   "metadata": {
-    "model": "claude-sonnet-4-5-20250929",
-    "total_tokens_used": 28473,
-    "processing_time_seconds": 295,
-    "documents_analysed": 12,
+    "model": "claude-sonnet-4-20250514",
+    "total_tokens_used": 45000,
+    "processing_time_seconds": 220,
+    "documents_analysed": 38,
     "policy_sources_referenced": 4,
-    "policy_effective_date": "2025-02-07",
+    "policy_effective_date": "2026-02-14",
     "policy_revisions_used": [
       {
         "source": "LTN_1_20",
@@ -389,6 +452,27 @@ Returns the full review, including results when completed.
       }
     ]
   },
+  "site_boundary": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[[-1.153, 51.893], [-1.151, 51.893], [-1.151, 51.891], [-1.153, 51.891], [-1.153, 51.893]]]
+        },
+        "properties": {}
+      },
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "Point",
+          "coordinates": [-1.152, 51.892]
+        },
+        "properties": {}
+      }
+    ]
+  },
   "error": null
 }
 ```
@@ -397,16 +481,17 @@ Returns the full review, including results when completed.
 
 ```json
 {
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "application_ref": "25/99999/F",
   "status": "failed",
-  "created_at": "2025-02-07T12:34:56.789000Z",
-  "started_at": "2025-02-07T12:34:57.123000Z",
+  "created_at": "2026-02-14T10:30:00Z",
+  "started_at": "2026-02-14T10:30:05Z",
   "completed_at": null,
   "progress": null,
   "application": null,
   "review": null,
   "metadata": null,
+  "site_boundary": null,
   "error": {
     "code": "scraper_error",
     "message": "Application not found on Cherwell planning portal"
@@ -430,28 +515,41 @@ Returns the full review, including results when completed.
 
 ---
 
-#### `GET /api/v1/reviews/{review_id}/status` — Lightweight Status
+#### `GET /api/v1/reviews/{review_id}/status` -- Lightweight Status
 
-Fast status check without full result payload.
+Fast status check without full result payload. Optimised for polling during review processing.
 
-**Response `200 OK`:**
+**Response `200 OK` (processing):**
 
 ```json
 {
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "status": "processing",
   "progress": {
     "phase": "analysing_application",
-    "percent_complete": 75
+    "phase_number": 5,
+    "total_phases": 8,
+    "percent_complete": 60,
+    "detail": "Analysing transport assessment"
   }
 }
 ```
 
-When completed or not processing:
+**Response `200 OK` (queued):**
 
 ```json
 {
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01JMABCDEF1234567890AB",
+  "status": "queued",
+  "progress": null
+}
+```
+
+**Response `200 OK` (completed):**
+
+```json
+{
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "status": "completed",
   "progress": null
 }
@@ -461,15 +559,15 @@ When completed or not processing:
 
 ---
 
-#### `GET /api/v1/reviews` — List Reviews
+#### `GET /api/v1/reviews` -- List Reviews
 
 **Query Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `status` | string | No | — | Filter: `queued`, `processing`, `completed`, `failed`, `cancelled` |
-| `application_ref` | string | No | — | Filter by application reference |
-| `limit` | integer | No | `20` | Results per page (1–100) |
+| `status` | string | No | -- | Filter: `queued`, `processing`, `completed`, `failed`, `cancelled` |
+| `application_ref` | string | No | -- | Filter by application reference |
+| `limit` | integer | No | `20` | Results per page (1--100) |
 | `offset` | integer | No | `0` | Pagination offset |
 
 **Response `200 OK`:**
@@ -478,19 +576,19 @@ When completed or not processing:
 {
   "reviews": [
     {
-      "review_id": "rev_01JKXYZ1234567890ABCDEF",
+      "review_id": "rev_01JMABCDEF1234567890AB",
       "application_ref": "25/01178/REM",
       "status": "completed",
-      "overall_rating": "amber",
-      "created_at": "2025-02-07T12:34:56.789000Z",
-      "completed_at": "2025-02-07T12:39:56.456000Z"
+      "overall_rating": "non_compliant",
+      "created_at": "2026-02-14T10:30:00Z",
+      "completed_at": "2026-02-14T10:33:45Z"
     },
     {
       "review_id": "rev_01JKWVU9876543210FEDCBA",
       "application_ref": "24/03456/F",
       "status": "queued",
       "overall_rating": null,
-      "created_at": "2025-02-07T13:00:00.000000Z",
+      "created_at": "2026-02-14T13:00:00Z",
       "completed_at": null
     }
   ],
@@ -523,7 +621,7 @@ curl "http://localhost:8080/api/v1/reviews?status=completed&limit=5" \
 
 ---
 
-#### `POST /api/v1/reviews/{review_id}/cancel` — Cancel Review
+#### `POST /api/v1/reviews/{review_id}/cancel` -- Cancel Review
 
 Cancels a queued or processing review. No request body.
 
@@ -531,13 +629,15 @@ Cancels a queued or processing review. No request body.
 
 ```json
 {
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "status": "cancelled",
   "progress": null
 }
 ```
 
-**Error `409 Conflict`:** Review already completed/failed/cancelled.
+**Error `404`:** Review not found.
+
+**Error `409 Conflict`:** Review already in a terminal state.
 
 ```json
 {
@@ -545,7 +645,7 @@ Cancels a queued or processing review. No request body.
     "code": "cannot_cancel",
     "message": "Cannot cancel review with status 'completed'",
     "details": {
-      "review_id": "rev_01JKXYZ1234567890ABCDEF",
+      "review_id": "rev_01JMABCDEF1234567890AB",
       "current_status": "completed"
     }
   }
@@ -554,9 +654,60 @@ Cancels a queued or processing review. No request body.
 
 ---
 
+### Site Boundary
+
+#### `GET /api/v1/reviews/{review_id}/site-boundary` -- Get Site Boundary
+
+Returns the site boundary as a GeoJSON FeatureCollection. The collection contains up to two features: the site polygon and a centroid point.
+
+**Response `200 OK`:**
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/geo+json
+```
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-1.153, 51.893], [-1.151, 51.893], [-1.151, 51.891], [-1.153, 51.891], [-1.153, 51.893]]]
+      },
+      "properties": {}
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-1.152, 51.892]
+      },
+      "properties": {}
+    }
+  ]
+}
+```
+
+**Error `404 Not Found`:** Two possible error codes:
+
+- `review_not_found` -- Review does not exist
+- `site_boundary_not_found` -- Review exists but has no site boundary data (e.g., review not yet completed, or scraper could not extract boundary)
+
+**curl example:**
+
+```bash
+curl http://localhost:8080/api/v1/reviews/rev_01JMABCDEF1234567890AB/site-boundary \
+  -H "Authorization: Bearer sk-cycle-dev-key-1"
+```
+
+---
+
 ### Letters
 
-#### `POST /api/v1/reviews/{review_id}/letter` — Generate Letter
+#### `POST /api/v1/reviews/{review_id}/letter` -- Generate Letter
 
 Generate a consultee response letter from a completed review. The letter is produced asynchronously by an LLM, rewriting the review findings into formal letter prose addressed to the planning authority.
 
@@ -579,21 +730,21 @@ Generate a consultee response letter from a completed review. The letter is prod
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `stance` | string | Yes | — | Group's position: `object`, `support`, `conditional`, or `neutral` |
+| `stance` | string | Yes | -- | Group's position: `object`, `support`, `conditional`, or `neutral` |
 | `tone` | string | No | `"formal"` | Letter tone: `formal` or `accessible` |
-| `case_officer` | string | No | `null` | Override case officer name (falls back to review data, then generic) |
-| `letter_date` | date | No | Today | Letter date in `YYYY-MM-DD` format |
+| `case_officer` | string \| null | No | `null` | Override case officer name (falls back to review data, then generic) |
+| `letter_date` | date \| null | No | Today | Letter date in `YYYY-MM-DD` format |
 
 **Response `202 Accepted`:**
 
 ```json
 {
-  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
-  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "letter_id": "ltr_01JMXYZ1234567890ABCDE",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "status": "generating",
-  "created_at": "2026-02-07T12:34:56.789000Z",
+  "created_at": "2026-02-14T11:00:00Z",
   "links": {
-    "self": "/api/v1/letters/ltr_01JKXYZ1234567890ABCDEF"
+    "self": "/api/v1/letters/ltr_01JMXYZ1234567890ABCDE"
   }
 }
 ```
@@ -615,22 +766,12 @@ Generate a consultee response letter from a completed review. The letter is prod
 
 **Error `404 Not Found`:** Review does not exist.
 
-```json
-{
-  "error": {
-    "code": "review_not_found",
-    "message": "No review found with ID rev_nonexistent",
-    "details": {
-      "review_id": "rev_nonexistent"
-    }
-  }
-}
-```
+**Error `422 Validation Error`:** Invalid stance, tone, or date format.
 
 **curl example:**
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/reviews/rev_01HQXK7V3WNPB8MTJF2R5ADGX9/letter \
+curl -X POST http://localhost:8080/api/v1/reviews/rev_01JMABCDEF1234567890AB/letter \
   -H "Authorization: Bearer sk-cycle-dev-key-1" \
   -H "Content-Type: application/json" \
   -d '{
@@ -642,22 +783,16 @@ curl -X POST http://localhost:8080/api/v1/reviews/rev_01HQXK7V3WNPB8MTJF2R5ADGX9
 
 ---
 
-#### `GET /api/v1/letters/{letter_id}` — Retrieve Letter
+#### `GET /api/v1/letters/{letter_id}` -- Retrieve Letter
 
 Returns the letter content when generation is complete, or current status if still generating.
-
-**Path Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `letter_id` | string | The letter identifier returned by the generate endpoint |
 
 **Response `200 OK` (generating):**
 
 ```json
 {
-  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
-  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "letter_id": "ltr_01JMXYZ1234567890ABCDE",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "application_ref": "25/01178/REM",
   "status": "generating",
   "stance": "object",
@@ -667,7 +802,7 @@ Returns the letter content when generation is complete, or current status if sti
   "content": null,
   "metadata": null,
   "error": null,
-  "created_at": "2026-02-07T12:34:56.789000Z",
+  "created_at": "2026-02-14T11:00:00Z",
   "completed_at": null
 }
 ```
@@ -676,24 +811,24 @@ Returns the letter content when generation is complete, or current status if sti
 
 ```json
 {
-  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
-  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "letter_id": "ltr_01JMXYZ1234567890ABCDE",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "application_ref": "25/01178/REM",
   "status": "completed",
   "stance": "object",
   "tone": "formal",
   "case_officer": "Ms J. Smith",
-  "letter_date": "2026-02-10",
-  "content": "# Bicester BUG\n\n10 February 2026\n\nDear Ms J. Smith...",
+  "letter_date": "2026-02-14",
+  "content": "Dear Ms Smith,\n\nI am writing on behalf of Bicester Bike Users' Group...",
   "metadata": {
-    "model": "claude-sonnet-4-5-20250929",
-    "input_tokens": 4200,
-    "output_tokens": 1800,
-    "processing_time_seconds": 12.5
+    "model": "claude-sonnet-4-20250514",
+    "input_tokens": 12000,
+    "output_tokens": 1500,
+    "processing_time_seconds": 8.5
   },
   "error": null,
-  "created_at": "2026-02-07T12:34:56.789000Z",
-  "completed_at": "2026-02-07T12:35:09.289000Z"
+  "created_at": "2026-02-14T11:00:00Z",
+  "completed_at": "2026-02-14T11:00:09Z"
 }
 ```
 
@@ -701,8 +836,8 @@ Returns the letter content when generation is complete, or current status if sti
 
 ```json
 {
-  "letter_id": "ltr_01JKXYZ1234567890ABCDEF",
-  "review_id": "rev_01HQXK7V3WNPB8MTJF2R5ADGX9",
+  "letter_id": "ltr_01JMXYZ1234567890ABCDE",
+  "review_id": "rev_01JMABCDEF1234567890AB",
   "application_ref": "25/01178/REM",
   "status": "failed",
   "stance": "object",
@@ -713,8 +848,8 @@ Returns the letter content when generation is complete, or current status if sti
     "code": "letter_generation_failed",
     "message": "Claude API error: rate limit exceeded"
   },
-  "created_at": "2026-02-07T12:34:56.789000Z",
-  "completed_at": "2026-02-07T12:35:01.000000Z"
+  "created_at": "2026-02-14T11:00:00Z",
+  "completed_at": "2026-02-14T11:00:01Z"
 }
 ```
 
@@ -735,7 +870,7 @@ Returns the letter content when generation is complete, or current status if sti
 **curl example:**
 
 ```bash
-curl http://localhost:8080/api/v1/letters/ltr_01JKXYZ1234567890ABCDEF \
+curl http://localhost:8080/api/v1/letters/ltr_01JMXYZ1234567890ABCDE \
   -H "Authorization: Bearer sk-cycle-dev-key-1"
 ```
 
@@ -743,7 +878,7 @@ curl http://localhost:8080/api/v1/letters/ltr_01JKXYZ1234567890ABCDEF \
 
 ### Downloads
 
-#### `GET /api/v1/reviews/{review_id}/download` — Download Review
+#### `GET /api/v1/reviews/{review_id}/download` -- Download Review
 
 Download a completed review in the specified format.
 
@@ -758,38 +893,14 @@ Download a completed review in the specified format.
 ```http
 HTTP/1.1 200 OK
 Content-Type: text/markdown
-Content-Disposition: attachment; filename="review-rev_01JKXYZ1234567890ABCDEF.md"
-```
-
-```markdown
-# Cycle Advocacy Review: 25/01178/REM
-
-## Overall Rating: AMBER
-
-## Summary
-The application provides cycle parking at LTN 1/20 standards but cycle route
-connectivity to the town centre is weak.
-
-## Aspect Assessments
-
-### Cycle Parking: GREEN
-**Key Issue:** Provision meets LTN 1/20 standards
-Each dwelling has covered, secure cycle parking for 2 bikes.
-
-### Cycle Routes: RED
-**Key Issue:** No dedicated cycle link to town centre
-The site connects to Gavray Drive but no segregated cycle route is provided.
-
-## Recommendations
-- Provide a segregated 3m-wide cycle track along Gavray Drive
-- Install directional signage for cycle routes on site
+Content-Disposition: attachment; filename="review-rev_01JMABCDEF1234567890AB.md"
 ```
 
 **Response `200 OK` (json):**
 
 ```http
 Content-Type: application/json
-Content-Disposition: attachment; filename="review-rev_01JKXYZ1234567890ABCDEF.json"
+Content-Disposition: attachment; filename="review-rev_01JMABCDEF1234567890AB.json"
 ```
 
 Returns the full result object (same shape as the `review` + `application` + `metadata` fields from `GET /reviews/{id}`).
@@ -798,7 +909,7 @@ Returns the full result object (same shape as the `review` + `application` + `me
 
 ```http
 Content-Type: application/pdf
-Content-Disposition: attachment; filename="review-rev_01JKXYZ1234567890ABCDEF.pdf"
+Content-Disposition: attachment; filename="review-rev_01JMABCDEF1234567890AB.pdf"
 ```
 
 Binary PDF with styled content, rating badges, and page headers/footers.
@@ -811,8 +922,150 @@ Binary PDF with styled content, rating badges, and page headers/footers.
     "code": "review_incomplete",
     "message": "Cannot download review with status 'processing'. Wait for completion.",
     "details": {
-      "review_id": "rev_01JKXYZ1234567890ABCDEF",
+      "review_id": "rev_01JMABCDEF1234567890AB",
       "status": "processing"
+    }
+  }
+}
+```
+
+**Error `404`:** Review not found.
+
+**curl example:**
+
+```bash
+curl -o review.pdf \
+  "http://localhost:8080/api/v1/reviews/rev_01JMABCDEF1234567890AB/download?format=pdf" \
+  -H "Authorization: Bearer sk-cycle-dev-key-1"
+```
+
+---
+
+### Destinations
+
+Destinations define the key points (stations, bus stops, town centres) used for cycle route quality assessment during reviews.
+
+#### `GET /api/v1/destinations` -- List Destinations
+
+**Response `200 OK`:**
+
+```json
+{
+  "destinations": [
+    {
+      "id": "dest_bicester_north",
+      "name": "Bicester North Station",
+      "lat": 51.9025,
+      "lon": -1.1508,
+      "category": "rail"
+    },
+    {
+      "id": "dest_bicester_village",
+      "name": "Bicester Village Station",
+      "lat": 51.8889,
+      "lon": -1.1461,
+      "category": "rail"
+    },
+    {
+      "id": "dest_town_centre",
+      "name": "Bicester Town Centre",
+      "lat": 51.8984,
+      "lon": -1.1536,
+      "category": "other"
+    }
+  ],
+  "total": 3
+}
+```
+
+Returns an empty list when no destinations are configured:
+
+```json
+{
+  "destinations": [],
+  "total": 0
+}
+```
+
+**curl example:**
+
+```bash
+curl http://localhost:8080/api/v1/destinations \
+  -H "Authorization: Bearer sk-cycle-dev-key-1"
+```
+
+---
+
+#### `POST /api/v1/destinations` -- Create Destination
+
+**Request Body (`application/json`):**
+
+```json
+{
+  "name": "Bicester Town Centre",
+  "lat": 51.8984,
+  "lon": -1.1536,
+  "category": "other"
+}
+```
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| `name` | string | Yes | -- | 1--200 characters | Destination name |
+| `lat` | float | Yes | -- | -90 to 90 | Latitude (WGS84) |
+| `lon` | float | Yes | -- | -180 to 180 | Longitude (WGS84) |
+| `category` | string | No | `"other"` | `rail`, `bus`, or `other` | Destination category |
+
+**Response `201 Created`:**
+
+```json
+{
+  "id": "dest_abc123",
+  "name": "Bicester Town Centre",
+  "lat": 51.8984,
+  "lon": -1.1536,
+  "category": "other"
+}
+```
+
+**Error `422 Validation Error`:** Invalid coordinates, empty name, or invalid category.
+
+**curl example:**
+
+```bash
+curl -X POST http://localhost:8080/api/v1/destinations \
+  -H "Authorization: Bearer sk-cycle-dev-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Bicester North Station",
+    "lat": 51.9025,
+    "lon": -1.1508,
+    "category": "rail"
+  }'
+```
+
+---
+
+#### `DELETE /api/v1/destinations/{destination_id}` -- Delete Destination
+
+**Response `200 OK`:**
+
+```json
+{
+  "deleted": true,
+  "destination_id": "dest_abc123"
+}
+```
+
+**Error `404 Not Found`:**
+
+```json
+{
+  "error": {
+    "code": "destination_not_found",
+    "message": "No destination found with ID dest_nonexistent",
+    "details": {
+      "destination_id": "dest_nonexistent"
     }
   }
 }
@@ -821,8 +1074,7 @@ Binary PDF with styled content, rating badges, and page headers/footers.
 **curl example:**
 
 ```bash
-curl -o review.pdf \
-  "http://localhost:8080/api/v1/reviews/rev_01JKXYZ1234567890ABCDEF/download?format=pdf" \
+curl -X DELETE http://localhost:8080/api/v1/destinations/dest_abc123 \
   -H "Authorization: Bearer sk-cycle-dev-key-1"
 ```
 
@@ -830,7 +1082,7 @@ curl -o review.pdf \
 
 ### Policies
 
-#### `POST /api/v1/policies` — Create Policy
+#### `POST /api/v1/policies` -- Create Policy
 
 Register a new policy document.
 
@@ -849,7 +1101,7 @@ Register a new policy document.
 |-------|------|----------|-------------|
 | `source` | string | Yes | Unique slug in `UPPER_SNAKE_CASE` (e.g. `LTN_1_20`, `NPPF`) |
 | `title` | string | Yes | Human-readable title |
-| `description` | string | No | Description of the policy |
+| `description` | string \| null | No | Description of the policy |
 | `category` | string | Yes | One of the [PolicyCategory](#policycategory) values |
 
 **Response `201 Created`:**
@@ -863,7 +1115,7 @@ Register a new policy document.
   "revisions": [],
   "current_revision": null,
   "revision_count": 0,
-  "created_at": "2025-02-07T12:34:56.789000Z",
+  "created_at": "2026-02-14T09:00:00Z",
   "updated_at": null
 }
 ```
@@ -882,9 +1134,11 @@ Register a new policy document.
 }
 ```
 
+**Error `422`:** Invalid source format or missing required fields.
+
 ---
 
-#### `GET /api/v1/policies` — List Policies
+#### `GET /api/v1/policies` -- List Policies
 
 **Query Parameters:**
 
@@ -905,11 +1159,11 @@ Register a new policy document.
       "current_revision": {
         "revision_id": "rev_NPPF_2024_12",
         "version_label": "December 2024",
-        "effective_from": "2024-12-15",
+        "effective_from": "2024-12-12",
         "effective_to": null,
         "status": "active",
         "chunk_count": 73,
-        "ingested_at": "2025-02-07T12:35:00.000000Z"
+        "ingested_at": "2026-02-10T14:05:00Z"
       },
       "revision_count": 2
     },
@@ -924,7 +1178,7 @@ Register a new policy document.
         "effective_to": null,
         "status": "active",
         "chunk_count": 160,
-        "ingested_at": "2025-02-07T12:35:00.000000Z"
+        "ingested_at": "2026-02-10T14:00:00Z"
       },
       "revision_count": 1
     }
@@ -933,11 +1187,18 @@ Register a new policy document.
 }
 ```
 
+**curl example:**
+
+```bash
+curl "http://localhost:8080/api/v1/policies?category=national_guidance" \
+  -H "Authorization: Bearer sk-cycle-dev-key-1"
+```
+
 ---
 
-#### `GET /api/v1/policies/{source}` — Get Policy Detail
+#### `GET /api/v1/policies/{source}` -- Get Policy Detail
 
-Returns the policy with all its revisions.
+Returns the policy with all its revisions (ordered by `effective_from` descending).
 
 **Response `200 OK`:**
 
@@ -945,40 +1206,40 @@ Returns the policy with all its revisions.
 {
   "source": "NPPF",
   "title": "National Planning Policy Framework",
-  "description": "Central government planning policy for England",
+  "description": "The government's planning policies for England",
   "category": "national_policy",
   "revisions": [
     {
       "revision_id": "rev_NPPF_2024_12",
       "version_label": "December 2024",
-      "effective_from": "2024-12-15",
+      "effective_from": "2024-12-12",
       "effective_to": null,
       "status": "active",
       "chunk_count": 73,
-      "ingested_at": "2025-02-07T12:35:00.000000Z"
+      "ingested_at": "2026-02-10T14:05:00Z"
     },
     {
       "revision_id": "rev_NPPF_2023_09",
       "version_label": "September 2023",
-      "effective_from": "2023-09-01",
-      "effective_to": "2024-12-14",
+      "effective_from": "2023-09-05",
+      "effective_to": "2024-12-11",
       "status": "superseded",
       "chunk_count": 73,
-      "ingested_at": "2025-02-07T12:35:00.000000Z"
+      "ingested_at": "2026-02-10T14:10:00Z"
     }
   ],
   "current_revision": {
     "revision_id": "rev_NPPF_2024_12",
     "version_label": "December 2024",
-    "effective_from": "2024-12-15",
+    "effective_from": "2024-12-12",
     "effective_to": null,
     "status": "active",
     "chunk_count": 73,
-    "ingested_at": "2025-02-07T12:35:00.000000Z"
+    "ingested_at": "2026-02-10T14:05:00Z"
   },
   "revision_count": 2,
-  "created_at": "2025-02-07T12:34:56.789000Z",
-  "updated_at": "2025-02-07T12:35:00.000000Z"
+  "created_at": "2026-02-10T14:00:00Z",
+  "updated_at": "2026-02-10T14:10:00Z"
 }
 ```
 
@@ -998,7 +1259,7 @@ Returns the policy with all its revisions.
 
 ---
 
-#### `PATCH /api/v1/policies/{source}` — Update Policy
+#### `PATCH /api/v1/policies/{source}` -- Update Policy
 
 Update policy metadata. All fields are optional; only provided fields are updated.
 
@@ -1024,7 +1285,7 @@ Update policy metadata. All fields are optional; only provided fields are update
 
 ---
 
-#### `GET /api/v1/policies/effective` — Effective Policies at Date
+#### `GET /api/v1/policies/effective` -- Effective Policies at Date
 
 Returns which revision of each policy was in force on the given date.
 
@@ -1047,11 +1308,11 @@ Returns which revision of each policy was in force on the given date.
       "effective_revision": {
         "revision_id": "rev_NPPF_2023_09",
         "version_label": "September 2023",
-        "effective_from": "2023-09-01",
-        "effective_to": "2024-12-14",
+        "effective_from": "2023-09-05",
+        "effective_to": "2024-12-11",
         "status": "superseded",
         "chunk_count": 73,
-        "ingested_at": "2025-02-07T12:35:00.000000Z"
+        "ingested_at": "2026-02-10T14:10:00Z"
       }
     },
     {
@@ -1065,13 +1326,17 @@ Returns which revision of each policy was in force on the given date.
         "effective_to": null,
         "status": "active",
         "chunk_count": 160,
-        "ingested_at": "2025-02-07T12:35:00.000000Z"
+        "ingested_at": "2026-02-10T14:00:00Z"
       }
     }
   ],
   "policies_not_yet_effective": []
 }
 ```
+
+**Error `400`:** Invalid date format.
+
+**Error `422`:** Missing required `date` parameter.
 
 **curl example:**
 
@@ -1084,7 +1349,7 @@ curl "http://localhost:8080/api/v1/policies/effective?date=2024-01-15" \
 
 ### Policy Revisions
 
-#### `POST /api/v1/policies/{source}/revisions` — Upload Revision
+#### `POST /api/v1/policies/{source}/revisions` -- Upload Revision
 
 Upload a PDF and create a new revision. Uses `multipart/form-data`.
 
@@ -1095,8 +1360,8 @@ Upload a PDF and create a new revision. Uses `multipart/form-data`.
 | `file` | file | Yes | PDF file |
 | `version_label` | string | Yes | Human-readable version (e.g. `"December 2024"`) |
 | `effective_from` | date | Yes | `YYYY-MM-DD` when revision takes effect |
-| `effective_to` | date | No | `YYYY-MM-DD` when revision is superseded (`null` = currently in force) |
-| `notes` | string | No | Notes about this revision |
+| `effective_to` | date \| null | No | `YYYY-MM-DD` when revision is superseded (`null` = currently in force) |
+| `notes` | string \| null | No | Notes about this revision |
 
 **Response `202 Accepted`:**
 
@@ -1105,7 +1370,7 @@ Upload a PDF and create a new revision. Uses `multipart/form-data`.
   "source": "NPPF",
   "revision_id": "rev_NPPF_2024_12",
   "version_label": "December 2024",
-  "effective_from": "2024-12-15",
+  "effective_from": "2024-12-12",
   "effective_to": null,
   "status": "processing",
   "ingestion_job_id": "job_a1b2c3d4e5f6",
@@ -1116,12 +1381,14 @@ Upload a PDF and create a new revision. Uses `multipart/form-data`.
   },
   "side_effects": {
     "superseded_revision": "rev_NPPF_2023_09",
-    "superseded_effective_to": "2024-12-14"
+    "superseded_effective_to": "2024-12-11"
   }
 }
 ```
 
 `side_effects` is `null` when no existing revision was superseded.
+
+**Error `404`:** Parent policy does not exist.
 
 **Error `409 Conflict`:** Date range overlaps with existing revision.
 
@@ -1132,7 +1399,7 @@ Upload a PDF and create a new revision. Uses `multipart/form-data`.
     "message": "Revision dates overlap with existing revision rev_NPPF_2023_09",
     "details": {
       "source": "NPPF",
-      "effective_from": "2024-12-15"
+      "effective_from": "2024-12-12"
     }
   }
 }
@@ -1160,12 +1427,12 @@ curl -X POST http://localhost:8080/api/v1/policies/NPPF/revisions \
   -H "Authorization: Bearer sk-cycle-dev-key-1" \
   -F "file=@nppf-dec-2024.pdf" \
   -F "version_label=December 2024" \
-  -F "effective_from=2024-12-15"
+  -F "effective_from=2024-12-12"
 ```
 
 ---
 
-#### `GET /api/v1/policies/{source}/revisions/{revision_id}` — Get Revision
+#### `GET /api/v1/policies/{source}/revisions/{revision_id}` -- Get Revision
 
 **Response `200 OK`:**
 
@@ -1174,7 +1441,7 @@ curl -X POST http://localhost:8080/api/v1/policies/NPPF/revisions \
   "revision_id": "rev_NPPF_2024_12",
   "source": "NPPF",
   "version_label": "December 2024",
-  "effective_from": "2024-12-15",
+  "effective_from": "2024-12-12",
   "effective_to": null,
   "status": "active",
   "file_path": "/data/policy/NPPF/rev_NPPF_2024_12/nppf-dec-2024.pdf",
@@ -1182,17 +1449,17 @@ curl -X POST http://localhost:8080/api/v1/policies/NPPF/revisions \
   "page_count": 84,
   "chunk_count": 73,
   "notes": null,
-  "created_at": "2025-02-07T12:34:56.789000Z",
-  "ingested_at": "2025-02-07T12:35:42.000000Z",
+  "created_at": "2026-02-10T14:05:00Z",
+  "ingested_at": "2026-02-10T14:15:00Z",
   "error": null
 }
 ```
 
-**Error `404`:** Policy or revision not found (error code indicates which).
+**Error `404`:** Policy or revision not found (error code indicates which: `policy_not_found` or `revision_not_found`).
 
 ---
 
-#### `GET /api/v1/policies/{source}/revisions/{revision_id}/status` — Revision Status
+#### `GET /api/v1/policies/{source}/revisions/{revision_id}/status` -- Revision Status
 
 **Response `200 OK` (processing):**
 
@@ -1222,9 +1489,11 @@ curl -X POST http://localhost:8080/api/v1/policies/NPPF/revisions \
 }
 ```
 
+**Error `404`:** Policy or revision not found.
+
 ---
 
-#### `PATCH /api/v1/policies/{source}/revisions/{revision_id}` — Update Revision
+#### `PATCH /api/v1/policies/{source}/revisions/{revision_id}` -- Update Revision
 
 Update revision metadata. All fields optional.
 
@@ -1247,11 +1516,13 @@ Update revision metadata. All fields optional.
 
 **Response `200 OK`:** Full `PolicyRevisionDetail`.
 
+**Error `404`:** Policy or revision not found.
+
 **Error `409`:** Updated date range causes overlap.
 
 ---
 
-#### `DELETE /api/v1/policies/{source}/revisions/{revision_id}` — Delete Revision
+#### `DELETE /api/v1/policies/{source}/revisions/{revision_id}` -- Delete Revision
 
 Removes the revision, its vector chunks, and the PDF from disk.
 
@@ -1265,6 +1536,8 @@ Removes the revision, its vector chunks, and the PDF from disk.
   "chunks_removed": 73
 }
 ```
+
+**Error `404`:** Policy or revision not found.
 
 **Error `409 Conflict`:** Cannot delete the sole active revision for a policy.
 
@@ -1283,7 +1556,7 @@ Removes the revision, its vector chunks, and the PDF from disk.
 
 ---
 
-#### `POST /api/v1/policies/{source}/revisions/{revision_id}/reindex` — Reindex Revision
+#### `POST /api/v1/policies/{source}/revisions/{revision_id}/reindex` -- Reindex Revision
 
 Re-run the ingestion pipeline for an existing revision. No request body.
 
@@ -1300,6 +1573,8 @@ Re-run the ingestion pipeline for an existing revision. No request body.
   }
 }
 ```
+
+**Error `404`:** Policy or revision not found.
 
 **Error `409`:** Already processing.
 
@@ -1321,94 +1596,107 @@ Re-run the ingestion pipeline for an existing revision. No request body.
 
 ## Webhooks
 
-Webhooks provide push notifications for review lifecycle events. Configure them in the `webhook` field of `POST /api/v1/reviews`.
+Webhooks provide push notifications for review and letter lifecycle events. They are configured globally via the `WEBHOOK_URL` environment variable -- there is no per-request webhook configuration.
 
 ### Configuration
 
-```json
-{
-  "webhook": {
-    "url": "https://example.com/hooks/review",
-    "secret": "whsec_your_signing_secret",
-    "events": ["review.started", "review.completed", "review.failed"]
-  }
-}
-```
+Webhooks are controlled entirely by environment variables:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `url` | string | Yes | HTTPS callback URL (HTTP allowed in development only) |
-| `secret` | string | Yes | Shared secret for HMAC-SHA256 signature verification |
-| `events` | string[] | No | Events to receive; defaults to all |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_URL` | (none) | Target URL for webhook delivery; unset = disabled |
+| `WEBHOOK_MAX_RETRIES` | `5` | Maximum delivery attempts |
+| `WEBHOOK_TIMEOUT` | `10` | Timeout per delivery attempt (seconds) |
 
-### URL Validation
-
-- Must have `http://` or `https://` scheme
-- Must include a host
-- **Production** (`ENVIRONMENT=production`): HTTPS required
-- **Development**: HTTP allowed for local testing
+When `WEBHOOK_URL` is not set, no webhooks are sent.
 
 ### Events
 
-| Event | Triggered When |
-|-------|----------------|
-| `review.started` | Job moves from `queued` to `processing` |
-| `review.progress` | Processing phase changes (metadata, documents, analysis, etc.) |
-| `review.completed` | Review finishes successfully |
-| `review.failed` | Review encounters an unrecoverable error |
+| Event | Triggered When | Data Payload |
+|-------|----------------|--------------|
+| `review.completed` | Review finishes successfully | `application_ref`, `overall_rating`, full `review` object, `metadata` |
+| `review.completed.markdown` | Sent immediately after `review.completed` | `application_ref`, `full_markdown` |
+| `review.failed` | Review processing fails | `application_ref`, `error` object with code and message |
+| `letter.completed` | Letter generation finishes | `letter_id`, `review_id`, `application_ref`, `content`, `metadata` |
 
-### Delivery
+### Delivery Headers
 
-Webhook payloads are signed using **HMAC-SHA256** with the secret provided at registration time. The delivery includes:
+Each webhook delivery includes the following HTTP headers:
 
 | Header | Description |
 |--------|-------------|
-| `X-Webhook-Signature` | HMAC-SHA256 hex digest of the request body |
 | `Content-Type` | `application/json` |
+| `X-Webhook-Event` | Event name (e.g. `review.completed`) |
+| `X-Webhook-Delivery-Id` | Unique UUID for this delivery |
+| `X-Webhook-Timestamp` | Unix timestamp (integer) of delivery attempt |
 
-### Payload Format
+There is no HMAC signing or authentication header on webhook deliveries.
 
-**`review.started`:**
+### Payload Envelope
 
-```json
-{
-  "event": "review.started",
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
-  "application_ref": "25/01178/REM",
-  "timestamp": "2025-02-07T12:34:57.123000Z"
-}
-```
-
-**`review.progress`:**
+All webhook payloads share a common envelope structure:
 
 ```json
 {
-  "event": "review.progress",
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
-  "application_ref": "25/01178/REM",
-  "timestamp": "2025-02-07T12:35:15.456000Z",
-  "progress": {
-    "phase": "downloading_documents",
-    "phase_number": 2,
-    "total_phases": 5,
-    "percent_complete": 40,
-    "detail": "Downloading 12 documents"
-  }
+  "delivery_id": "550e8400-e29b-41d4-a716-446655440000",
+  "event": "review.completed",
+  "review_id": "rev_01JMABCDEF1234567890AB",
+  "timestamp": 1707912345.678,
+  "data": { }
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `delivery_id` | string | Unique UUID for this delivery (matches `X-Webhook-Delivery-Id` header) |
+| `event` | string | Event type |
+| `review_id` | string | Associated review ID |
+| `timestamp` | float | Unix timestamp when the event was created |
+| `data` | object | Event-specific payload (see below) |
+
+### Event Payloads
 
 **`review.completed`:**
 
 ```json
 {
+  "delivery_id": "550e8400-e29b-41d4-a716-446655440000",
   "event": "review.completed",
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
-  "application_ref": "25/01178/REM",
-  "timestamp": "2025-02-07T12:39:56.456000Z",
-  "overall_rating": "amber",
-  "links": {
-    "review": "/api/v1/reviews/rev_01JKXYZ1234567890ABCDEF",
-    "download": "/api/v1/reviews/rev_01JKXYZ1234567890ABCDEF/download"
+  "review_id": "rev_01JMABCDEF1234567890AB",
+  "timestamp": 1707912345.678,
+  "data": {
+    "application_ref": "25/01178/REM",
+    "overall_rating": "non_compliant",
+    "review": {
+      "overall_rating": "non_compliant",
+      "summary": "...",
+      "aspects": [],
+      "policy_compliance": [],
+      "recommendations": [],
+      "suggested_conditions": [],
+      "route_assessments": [],
+      "key_documents": []
+    },
+    "metadata": {
+      "model": "claude-sonnet-4-20250514",
+      "total_tokens_used": 45000,
+      "processing_time_seconds": 220
+    }
+  }
+}
+```
+
+**`review.completed.markdown`:**
+
+```json
+{
+  "delivery_id": "660f9500-f39c-52e5-b827-557766551111",
+  "event": "review.completed.markdown",
+  "review_id": "rev_01JMABCDEF1234567890AB",
+  "timestamp": 1707912346.123,
+  "data": {
+    "application_ref": "25/01178/REM",
+    "full_markdown": "# Cycle Advocacy Review: 25/01178/REM\n\n## Overall Rating: NON-COMPLIANT\n..."
   }
 }
 ```
@@ -1417,46 +1705,50 @@ Webhook payloads are signed using **HMAC-SHA256** with the secret provided at re
 
 ```json
 {
+  "delivery_id": "770a0611-a40d-63f6-c938-668877662222",
   "event": "review.failed",
-  "review_id": "rev_01JKXYZ1234567890ABCDEF",
-  "application_ref": "25/01178/REM",
-  "timestamp": "2025-02-07T12:36:00.000000Z",
-  "error": {
-    "code": "scraper_error",
-    "message": "Application not found on Cherwell planning portal"
+  "review_id": "rev_01JMABCDEF1234567890AB",
+  "timestamp": 1707912400.000,
+  "data": {
+    "application_ref": "25/01178/REM",
+    "error": {
+      "code": "scraper_error",
+      "message": "Application not found on Cherwell planning portal"
+    }
   }
 }
 ```
 
-### Signature Verification
+**`letter.completed`:**
 
-Verify webhook authenticity by computing HMAC-SHA256 of the raw request body using your shared secret:
-
-```python
-import hashlib
-import hmac
-
-def verify_signature(body: bytes, secret: str, signature: str) -> bool:
-    expected = hmac.new(
-        secret.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
-```
-
-```javascript
-const crypto = require("crypto");
-
-function verifySignature(body, secret, signature) {
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(body)
-    .digest("hex");
-  return crypto.timingSafeEqual(
-    Buffer.from(expected),
-    Buffer.from(signature)
-  );
+```json
+{
+  "delivery_id": "880b1722-b51e-74g7-d049-779988773333",
+  "event": "letter.completed",
+  "review_id": "rev_01JMABCDEF1234567890AB",
+  "timestamp": 1707912500.000,
+  "data": {
+    "letter_id": "ltr_01JMXYZ1234567890ABCDE",
+    "review_id": "rev_01JMABCDEF1234567890AB",
+    "application_ref": "25/01178/REM",
+    "content": "Dear Ms Smith,\n\nI am writing on behalf of Bicester Bike Users' Group...",
+    "metadata": {
+      "model": "claude-sonnet-4-20250514",
+      "input_tokens": 12000,
+      "output_tokens": 1500,
+      "processing_time_seconds": 8.5
+    }
+  }
 }
 ```
+
+### Retry Strategy
+
+- Up to 5 attempts (configurable via `WEBHOOK_MAX_RETRIES`)
+- Exponential backoff delays: 1s, 2s, 4s, 8s, 16s (formula: `2^(attempt-1)` seconds)
+- Non-2xx responses and connection/timeout errors trigger retries
+- All failures are logged; delivery never raises exceptions or blocks the worker
+- Payload size is logged on successful delivery for monitoring
 
 ---
 
@@ -1477,10 +1769,20 @@ function verifySignature(body, secret, signature) {
 | Value | Phase # | Description |
 |-------|---------|-------------|
 | `fetching_metadata` | 1 | Getting application details from Cherwell portal |
-| `downloading_documents` | 2 | Fetching planning documents |
-| `ingesting_documents` | 3 | Extracting and embedding document content |
-| `analysing_application` | 4 | AI analysis using Claude |
-| `generating_review` | 5 | Formatting and storing results |
+| `filtering_documents` | 2 | Filtering document list by type and relevance |
+| `downloading_documents` | 3 | Fetching planning documents |
+| `ingesting_documents` | 4 | Extracting and embedding document content |
+| `analysing_application` | 5 | AI analysis using Claude |
+| `assessing_routes` | 6 | Evaluating cycle routes to configured destinations |
+| `generating_review` | 7 | Formatting and storing results |
+| `verifying_review` | 8 | Validating output and running quality checks |
+
+### OverallRating
+
+| Value | Description |
+|-------|-------------|
+| `compliant` | Application meets cycling infrastructure requirements |
+| `non_compliant` | Application fails to meet requirements |
 
 ### LetterStance
 
@@ -1505,6 +1807,14 @@ function verifySignature(body, secret, signature) {
 | `generating` | LLM is producing the letter |
 | `completed` | Letter is ready for retrieval |
 | `failed` | Letter generation encountered an error |
+
+### DestinationCategory
+
+| Value | Description |
+|-------|-------------|
+| `rail` | Railway station |
+| `bus` | Bus stop or bus station |
+| `other` | Town centre, school, workplace, or other destination |
 
 ### PolicyCategory
 
@@ -1532,15 +1842,21 @@ Pattern: `^\d{2}/\d{4,5}/[A-Z]{1,4}$`
 
 Examples: `25/01178/REM`, `23/01421/TCA`, `08/00707/F`
 
-- `YY` — 2-digit year
-- `NNNNN` — 4 or 5 digit sequence number
-- `XXX` — 1–4 letter application type code
+- `YY` -- 2-digit year
+- `NNNNN` -- 4 or 5 digit sequence number
+- `XXX` -- 1--4 letter application type code
 
 ### Policy Source Format
 
 Pattern: `^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$`
 
 Examples: `NPPF`, `LTN_1_20`, `CHERWELL_LOCAL_PLAN`, `OCC_LTCP`
+
+### Webhook Event Names
+
+Pattern: `^[a-z]+\.[a-z]+(\.[a-z]+)?$`
+
+Values: `review.completed`, `review.completed.markdown`, `review.failed`, `letter.completed`
 
 ---
 
@@ -1549,9 +1865,9 @@ Examples: `NPPF`, `LTN_1_20`, `CHERWELL_LOCAL_PLAN`, `OCC_LTCP`
 | Code | Meaning | Used By |
 |------|---------|---------|
 | `200` | OK | GET, PATCH, DELETE, cancel |
-| `201` | Created | POST policies |
+| `201` | Created | POST policies, POST destinations |
 | `202` | Accepted | POST reviews, POST letter, POST revisions, POST reindex |
-| `400` | Bad Request | Invalid parameters |
+| `400` | Bad Request | Invalid parameters, review incomplete |
 | `401` | Unauthorized | Missing/invalid API key |
 | `404` | Not Found | Resource doesn't exist |
 | `409` | Conflict | Duplicates, overlaps, cannot cancel/delete |
@@ -1562,6 +1878,23 @@ Examples: `NPPF`, `LTN_1_20`, `CHERWELL_LOCAL_PLAN`, `OCC_LTCP`
 ---
 
 ## Environment Variables
+
+### API Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_KEYS` | (none) | Comma-separated API keys for Bearer auth |
+| `API_KEYS_FILE` | (none) | Path to JSON file with API keys |
+| `API_RATE_LIMIT` | `60` | Max requests per 60-second window per key |
+| `ENVIRONMENT` | `development` | `production` suppresses stack traces in errors |
+
+### Webhooks
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_URL` | (none) | Global webhook delivery URL; unset = disabled |
+| `WEBHOOK_MAX_RETRIES` | `5` | Maximum delivery attempts per event |
+| `WEBHOOK_TIMEOUT` | `10` | Timeout per delivery attempt (seconds) |
 
 ### Advocacy Group Configuration
 
