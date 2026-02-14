@@ -633,31 +633,31 @@ No missing features or infrastructure. All external APIs are publicly available.
 ### Phase 2: Cycle route MCP server
 
 - Task 4: Create ESRI→GeoJSON converter and site boundary tool
-  - Status: Backlog
+  - Status: Done
   - Create `src/mcp_servers/cycle_route/__init__.py`, `geojson.py` with ESRI→GeoJSON converter + centroid calculation, and `server.py` skeleton with `get_site_boundary` tool. Create test fixtures from live ArcGIS response. Add unit and tool tests.
   - Requirements: [cycle-route-assessment:FR-001], [cycle-route-assessment:FR-007], [cycle-route-assessment:FR-010]
   - Test Scenarios: [cycle-route-assessment:GeoJSONConverter/TS-01], [cycle-route-assessment:GeoJSONConverter/TS-02], [cycle-route-assessment:GeoJSONConverter/TS-03], [cycle-route-assessment:GeoJSONConverter/TS-04], [cycle-route-assessment:CycleRouteMCP/TS-01], [cycle-route-assessment:CycleRouteMCP/TS-02], [cycle-route-assessment:CycleRouteMCP/TS-05]
 
 - Task 5: Create route infrastructure analyser
-  - Status: Backlog
+  - Status: Done
   - Create `infrastructure.py` with Overpass query builder and way tag parser. Map OSM tags to provision types, speed limits, surfaces. Create Overpass response fixture. Add unit tests.
   - Requirements: [cycle-route-assessment:FR-002], [cycle-route-assessment:NFR-003]
   - Test Scenarios: [cycle-route-assessment:InfrastructureAnalyser/TS-01], [cycle-route-assessment:InfrastructureAnalyser/TS-02], [cycle-route-assessment:InfrastructureAnalyser/TS-03], [cycle-route-assessment:InfrastructureAnalyser/TS-04], [cycle-route-assessment:InfrastructureAnalyser/TS-05], [cycle-route-assessment:InfrastructureAnalyser/TS-06]
 
 - Task 6: Create LTN 1/20 scorer and issues identifier
-  - Status: Backlog
+  - Status: Done
   - Create `scoring.py` with weighted scoring algorithm and `issues.py` with issue detection + S106 suggestion generation. Add unit tests with known-score route scenarios.
   - Requirements: [cycle-route-assessment:FR-003], [cycle-route-assessment:FR-004], [cycle-route-assessment:FR-009], [cycle-route-assessment:NFR-004]
   - Test Scenarios: [cycle-route-assessment:RouteScorer/TS-01], [cycle-route-assessment:RouteScorer/TS-02], [cycle-route-assessment:RouteScorer/TS-03], [cycle-route-assessment:RouteScorer/TS-04], [cycle-route-assessment:RouteScorer/TS-05], [cycle-route-assessment:IssuesIdentifier/TS-01], [cycle-route-assessment:IssuesIdentifier/TS-02], [cycle-route-assessment:IssuesIdentifier/TS-03], [cycle-route-assessment:IssuesIdentifier/TS-04]
 
 - Task 7: Complete assess_cycle_route tool with OSRM integration
-  - Status: Backlog
+  - Status: Done
   - Wire OSRM route fetching, infrastructure analysis, scoring, and issue identification into the `assess_cycle_route` tool in `server.py`. Create OSRM fixture. Add tool-level tests.
   - Requirements: [cycle-route-assessment:FR-001], [cycle-route-assessment:FR-002], [cycle-route-assessment:NFR-001], [cycle-route-assessment:NFR-002]
   - Test Scenarios: [cycle-route-assessment:CycleRouteMCP/TS-03], [cycle-route-assessment:CycleRouteMCP/TS-04]
 
 - Task 8: Add Dockerfile and CI build for cycle-route MCP
-  - Status: Backlog
+  - Status: Done
   - Create `docker/Dockerfile.cycle-route`, add to GitHub Actions build matrix, add to dev `docker-compose.yml`.
   - Requirements: [cycle-route-assessment:FR-001]
   - Test Scenarios: N/A (infrastructure)

@@ -81,6 +81,8 @@ jobs:
             dockerfile: docker/Dockerfile.policy-kb
           - service: policy-init
             dockerfile: docker/Dockerfile.policy-init
+          - service: cycle-route-mcp
+            dockerfile: docker/Dockerfile.cycle-route
 
     steps:
       - name: Checkout
