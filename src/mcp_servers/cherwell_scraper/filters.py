@@ -93,18 +93,25 @@ class DocumentFilter:
     """
 
     # Implements [review-output-fixes:FR-002] - Portal category allowlist
+    # Implements [reliable-category-filtering:FR-002] - Match all portal categories
     # These are Cherwell portal section headers that group documents.
     # Documents under these categories are always allowed regardless of title.
     CATEGORY_ALLOWLIST = [
         "application forms",
         "supporting documents",
         "site plans",
+        "proposed plans",
+        "officer/committee consideration",
+        "decision and legal agreements",
+        "planning application documents",
     ]
 
     # Implements [review-output-fixes:FR-002] - Portal category denylist (consultation)
+    # Implements [reliable-category-filtering:FR-002] - "Consultee Responses" variant
     # Documents under these categories are denied unless toggled on.
     CATEGORY_DENYLIST_CONSULTATION = [
         "consultation responses",
+        "consultee responses",
     ]
 
     # Implements [review-output-fixes:FR-002] - Portal category denylist (public comments)

@@ -482,6 +482,163 @@ class TestSectionHeaderExtraction:
         assert masterplan.document_type == "Site Plans"
 
 
+class TestThSectionHeaderExtraction:
+    """Tests for <th>-based section header extraction from real Cherwell portal format.
+
+    Verifies [reliable-category-filtering:CherwellParser/TS-01] through TS-05.
+    """
+
+    @pytest.fixture
+    def parser(self) -> CherwellParser:
+        return CherwellParser()
+
+    @pytest.fixture
+    def html_with_th_headers(self) -> str:
+        fixture_path = (
+            Path(__file__).parent.parent.parent
+            / "fixtures"
+            / "cherwell"
+            / "document_table_th_headers.html"
+        )
+        return fixture_path.read_text()
+
+    def test_single_th_section_header_extracted(self, parser: CherwellParser):
+        """
+        Verifies [reliable-category-filtering:CherwellParser/TS-01]
+
+        Given: HTML row <tr class="header active"><th>Supporting Documents</th></tr>
+        When: _extract_section_header(row) called
+        Then: Returns "Supporting Documents"
+        """
+        from bs4 import BeautifulSoup
+
+        html = '<table><tr class="header active"><th>Supporting Documents</th></tr></table>'
+        soup = BeautifulSoup(html, "html.parser")
+        row = soup.find("tr")
+
+        result = parser._extract_section_header(row)
+        assert result == "Supporting Documents"
+
+    def test_multi_th_column_header_skipped(self, parser: CherwellParser):
+        """
+        Verifies [reliable-category-filtering:CherwellParser/TS-02]
+
+        Given: HTML row with 6 <th> cells (column headers)
+        When: _extract_section_header(row) called
+        Then: Returns None
+        """
+        from bs4 import BeautifulSoup
+
+        html = """<table><tr>
+            <th>All</th>
+            <th>Document Type</th>
+            <th>Date</th>
+            <th>Description</th>
+            <th>File Size</th>
+            <th>Drawing/Rev Number</th>
+        </tr></table>"""
+        soup = BeautifulSoup(html, "html.parser")
+        row = soup.find("tr")
+
+        result = parser._extract_section_header(row)
+        assert result is None
+
+    def test_all_portal_categories_extracted(
+        self, parser: CherwellParser, html_with_th_headers: str
+    ):
+        """
+        Verifies [reliable-category-filtering:CherwellParser/TS-03]
+
+        Given: HTML table with <th> section headers for 5 categories
+        When: parse_document_list() called
+        Then: Each document has the correct document_type matching its section header
+        """
+        documents = parser.parse_document_list(
+            html_with_th_headers,
+            "21/03267/OUT",
+            "https://planningregister.cherwell.gov.uk",
+        )
+
+        assert len(documents) == 9
+
+        # Application Forms (2 docs)
+        assert documents[0].document_type == "Application Forms"
+        assert documents[0].description == "App Form"
+        assert documents[1].document_type == "Application Forms"
+        assert documents[1].description == "Cover Letter"
+
+        # Supporting Documents (2 docs)
+        assert documents[2].document_type == "Supporting Documents"
+        assert documents[2].description == "Transport Assessment"
+        assert documents[3].document_type == "Supporting Documents"
+        assert documents[3].description == "Planning Statement"
+
+        # Site Plans (1 doc)
+        assert documents[4].document_type == "Site Plans"
+        assert documents[4].description == "Masterplan"
+
+        # Consultee Responses (2 docs)
+        assert documents[5].document_type == "Consultee Responses"
+        assert documents[5].description == "Oxfordshire County Council"
+        assert documents[6].document_type == "Consultee Responses"
+        assert documents[6].description == "Thames Water Comments"
+
+        # Public Comments (2 docs)
+        assert documents[7].document_type == "Public Comments"
+        assert documents[7].description == "Swift House, Street From Baynards Green"
+        assert documents[8].document_type == "Public Comments"
+        assert documents[8].description == "Garden Cottage, Swifts House Farm"
+
+    def test_existing_colspan_headers_still_work(
+        self, parser: CherwellParser
+    ):
+        """
+        Verifies [reliable-category-filtering:CherwellParser/TS-04]
+
+        Given: HTML table from existing fixture with <td colspan>/<strong> headers
+        When: parse_document_list() called
+        Then: Section headers extracted correctly (backward compat)
+        """
+        fixture_path = (
+            Path(__file__).parent.parent.parent
+            / "fixtures"
+            / "cherwell"
+            / "document_table_with_categories.html"
+        )
+        html = fixture_path.read_text()
+
+        documents = parser.parse_document_list(
+            html, "25/00284/F", "https://planningregister.cherwell.gov.uk"
+        )
+
+        assert len(documents) == 9
+        assert documents[0].document_type == "Application Forms"
+        assert documents[2].document_type == "Supporting Documents"
+        consultation_docs = [d for d in documents if d.document_type == "Consultation Responses"]
+        assert len(consultation_docs) == 3
+
+    def test_no_none_document_types(
+        self, parser: CherwellParser, html_with_th_headers: str
+    ):
+        """
+        Verifies [reliable-category-filtering:CherwellParser/TS-05]
+
+        Given: HTML table with <th> section headers and document rows
+        When: parse_document_list() called
+        Then: Every document's document_type is non-None
+        """
+        documents = parser.parse_document_list(
+            html_with_th_headers,
+            "21/03267/OUT",
+            "https://planningregister.cherwell.gov.uk",
+        )
+
+        for doc in documents:
+            assert doc.document_type is not None, (
+                f"Document '{doc.description}' has document_type=None"
+            )
+
+
 class TestPagination:
     """Tests for pagination handling."""
 

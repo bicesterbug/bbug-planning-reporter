@@ -376,15 +376,28 @@ class CherwellParser:
         """Extract section header text from a non-document table row.
 
         Implements [review-output-fixes:FR-001] - Extract document category from portal
+        Implements [reliable-category-filtering:FR-001] - Extract <th> section headers
 
         Section headers are identified by:
         - Rows with no singledownloadlink
+        - Rows with a single <th> element containing a category name
         - Rows with colspan cells (spanning the full table width)
         - Rows with bold/strong text content
-        - Non-empty text that doesn't look like a table header (th)
+
+        The column header row (multiple <th> cells with "Document Type", "Date",
+        etc.) is skipped — only rows with a single <th> are section headers.
         """
-        # Skip rows that are the table header (th elements)
-        if row.find("th"):
+        # Implements [reliable-category-filtering:CherwellParser/TS-01] and TS-02
+        # Check for <th>-based section headers (real Cherwell portal format).
+        # The column header row has multiple <th> cells; section header rows
+        # have a single <th> with the category name.
+        th_cells = row.find_all("th")
+        if th_cells:
+            if len(th_cells) == 1:
+                text = self._clean_text(th_cells[0].get_text())
+                if text:
+                    return text
+            # Multiple <th> cells = column header row, skip
             return None
 
         cells = row.find_all("td")

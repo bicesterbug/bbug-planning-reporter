@@ -1113,6 +1113,201 @@ class TestCategoryBasedFiltering:
         assert "Portal category" in reason
 
 
+class TestReliableCategoryFiltering:
+    """
+    Tests for reliable category filtering with real portal category names.
+
+    Verifies [reliable-category-filtering:DocumentFilter/TS-01] through TS-07.
+    """
+
+    @pytest.fixture
+    def filter(self):
+        return DocumentFilter()
+
+    def test_consultee_responses_category_denied(self, filter):
+        """
+        Verifies [reliable-category-filtering:DocumentFilter/TS-01]
+
+        Given: Document with document_type="Consultee Responses"
+        When: _should_download() called with defaults
+        Then: Returns (False, ...) — denied
+        """
+        should_download, reason = filter._should_download(
+            document_type="Consultee Responses",
+            description="Oxfordshire County Council",
+        )
+
+        assert should_download is False
+        assert "consultation" in reason.lower()
+
+    def test_consultation_responses_still_denied(self, filter):
+        """
+        Verifies [reliable-category-filtering:DocumentFilter/TS-02]
+
+        Given: Document with document_type="Consultation Responses" (old name)
+        When: _should_download() called with defaults
+        Then: Returns (False, ...) — backward compat
+        """
+        should_download, reason = filter._should_download(
+            document_type="Consultation Responses",
+            description="Transport Response to Consultees",
+        )
+
+        assert should_download is False
+
+    def test_consultee_responses_allowed_with_toggle(self, filter):
+        """
+        Verifies [reliable-category-filtering:DocumentFilter/TS-03]
+
+        Given: Document with document_type="Consultee Responses"
+        When: _should_download() called with include_consultation_responses=True
+        Then: Returns (True, ...)
+        """
+        should_download, reason = filter._should_download(
+            document_type="Consultee Responses",
+            description="Oxfordshire County Council",
+            include_consultation_responses=True,
+        )
+
+        assert should_download is True
+
+    def test_proposed_plans_category_allowed(self, filter):
+        """
+        Verifies [reliable-category-filtering:DocumentFilter/TS-04]
+
+        Given: Document with document_type="Proposed Plans"
+        When: _should_download() called
+        Then: Returns (True, ...)
+        """
+        should_download, reason = filter._should_download(
+            document_type="Proposed Plans",
+            description="Site Layout Rev B",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+    def test_officer_committee_consideration_allowed(self, filter):
+        """
+        Verifies [reliable-category-filtering:DocumentFilter/TS-05]
+
+        Given: Document with document_type="Officer/Committee Consideration"
+        When: _should_download() called
+        Then: Returns (True, ...)
+        """
+        should_download, reason = filter._should_download(
+            document_type="Officer/Committee Consideration",
+            description="Committee Report",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+    def test_decision_and_legal_agreements_allowed(self, filter):
+        """
+        Verifies [reliable-category-filtering:DocumentFilter/TS-06]
+
+        Given: Document with document_type="Decision and Legal Agreements"
+        When: _should_download() called
+        Then: Returns (True, ...)
+        """
+        should_download, reason = filter._should_download(
+            document_type="Decision and Legal Agreements",
+            description="Decision Notice",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+    def test_planning_application_documents_allowed(self, filter):
+        """
+        Verifies [reliable-category-filtering:DocumentFilter/TS-07]
+
+        Given: Document with document_type="Planning Application Documents"
+        When: _should_download() called
+        Then: Returns (True, ...)
+        """
+        should_download, reason = filter._should_download(
+            document_type="Planning Application Documents",
+            description="Some miscellaneous doc",
+        )
+
+        assert should_download is True
+        assert "Portal category" in reason
+
+
+class TestThHeaderParserFilterIntegration:
+    """
+    Integration test for parser + filter pipeline with <th> section headers.
+
+    Verifies [reliable-category-filtering:ITS-01]
+    """
+
+    def test_parser_filter_pipeline_th_headers(self):
+        """
+        Verifies [reliable-category-filtering:ITS-01]
+
+        Given: HTML fixture with <th> section headers containing Application Forms (2),
+               Supporting Documents (2), Site Plans (1), Consultee Responses (2),
+               Public Comments (2)
+        When: parse_document_list() then filter_documents()
+        Then: Application Forms, Supporting Documents, Site Plans allowed (5 docs);
+              Consultee Responses and Public Comments denied (4 docs)
+        """
+        fixture_path = (
+            Path(__file__).parent.parent.parent
+            / "fixtures"
+            / "cherwell"
+            / "document_table_th_headers.html"
+        )
+        html = fixture_path.read_text()
+
+        # Parse documents from HTML
+        parser = CherwellParser()
+        documents = parser.parse_document_list(
+            html=html,
+            reference="21/03267/OUT",
+            base_url="https://planningregister.cherwell.gov.uk",
+        )
+
+        assert len(documents) == 9
+
+        # Every document must have a non-None document_type
+        for doc in documents:
+            assert doc.document_type is not None, (
+                f"Document '{doc.description}' has document_type=None"
+            )
+
+        # Filter documents
+        doc_filter = DocumentFilter()
+        allowed, filtered = doc_filter.filter_documents(
+            documents, application_ref="21/03267/OUT"
+        )
+
+        # Consultee Responses (2 docs) + Public Comments (2 docs) = 4 filtered
+        assert len(filtered) == 4, (
+            f"Expected 4 filtered, got {len(filtered)}: "
+            f"{[f.description for f in filtered]}"
+        )
+        filtered_descriptions = {f.description for f in filtered}
+        assert "Oxfordshire County Council" in filtered_descriptions
+        assert "Thames Water Comments" in filtered_descriptions
+        assert "Swift House, Street From Baynards Green" in filtered_descriptions
+        assert "Garden Cottage, Swifts House Farm" in filtered_descriptions
+
+        # Application Forms (2) + Supporting Documents (2) + Site Plans (1) = 5 allowed
+        assert len(allowed) == 5, (
+            f"Expected 5 allowed, got {len(allowed)}: "
+            f"{[d.description for d in allowed]}"
+        )
+        allowed_descriptions = {d.description for d in allowed}
+        assert "App Form" in allowed_descriptions
+        assert "Cover Letter" in allowed_descriptions
+        assert "Transport Assessment" in allowed_descriptions
+        assert "Planning Statement" in allowed_descriptions
+        assert "Masterplan" in allowed_descriptions
+
+
 class TestParserFilterIntegration:
     """
     Integration test for parser + filter pipeline.
