@@ -29,6 +29,7 @@ from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent, Tool
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from src.mcp_servers.cherwell_scraper.client import (
@@ -544,7 +545,12 @@ def create_app(
                 streams[0], streams[1], mcp_server.server.create_initialization_options()
             )
 
+    # Implements [scraper-health-check:FR-001] - Health endpoint for Docker HEALTHCHECK
+    async def handle_health(request):
+        return JSONResponse({"status": "ok"})
+
     routes = [
+        Route("/health", endpoint=handle_health),
         Route("/sse", endpoint=handle_sse),
         Mount("/messages", app=sse.handle_post_message),
     ]
