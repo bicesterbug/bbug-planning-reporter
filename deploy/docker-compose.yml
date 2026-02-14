@@ -65,6 +65,7 @@ services:
       - DOCUMENT_STORE_URL=http://document-store-mcp:3002
       - POLICY_KB_URL=http://policy-kb-mcp:3003
       - CYCLE_ROUTE_URL=http://cycle-route-mcp:3004
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ADVOCACY_GROUP_NAME=${ADVOCACY_GROUP_NAME:-Bicester Bike Users' Group}
       - ADVOCACY_GROUP_STYLISED=${ADVOCACY_GROUP_STYLISED:-Bicester BUG}
