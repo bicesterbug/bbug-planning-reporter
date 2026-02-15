@@ -42,6 +42,7 @@ import structlog
 from pydantic import ValidationError
 
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPServerType, MCPToolError
+from src.mcp_servers.cherwell_scraper.filters import DocumentFilter
 from src.agent.progress import ProgressTracker, ReviewPhase
 from src.agent.prompts.document_filter_prompt import build_document_filter_prompt
 from src.agent.prompts.report_prompt import build_report_prompt
@@ -396,6 +397,86 @@ class AgentOrchestrator:
                 recoverable=True,  # Can retry connection
             )
 
+    def _post_filter_consultation_documents(
+        self, documents: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """
+        Remove consultation responses and public comments from LLM-selected documents.
+
+        Implements [consultation-filter-enforcement:FR-001] - Post-filter after LLM selection
+        Implements [consultation-filter-enforcement:FR-002] - Uses DocumentFilter patterns
+        Implements [consultation-filter-enforcement:FR-003] - Logs removals
+
+        The LLM filter cannot be relied upon to exclude consultation responses when
+        they appear transport-relevant. This programmatic post-filter enforces the
+        exclusion unless the corresponding API toggle is enabled.
+        """
+        include_consultation = (
+            self._options
+            and hasattr(self._options, "include_consultation_responses")
+            and self._options.include_consultation_responses
+        )
+        include_public = (
+            self._options
+            and hasattr(self._options, "include_public_comments")
+            and self._options.include_public_comments
+        )
+
+        kept: list[dict[str, Any]] = []
+        for doc in documents:
+            doc_type = (doc.get("document_type") or "").lower().strip()
+            description = (doc.get("description") or "").lower().strip()
+
+            # Tier 1: Check portal category denylist
+            if not include_consultation and doc_type in DocumentFilter.CATEGORY_DENYLIST_CONSULTATION:
+                logger.warning(
+                    "Document removed by post-filter",
+                    review_id=self._review_id,
+                    document=doc.get("description", ""),
+                    document_type=doc.get("document_type", ""),
+                    reason="category_denylist_consultation",
+                )
+                continue
+
+            if not include_public and doc_type in DocumentFilter.CATEGORY_DENYLIST_PUBLIC:
+                logger.warning(
+                    "Document removed by post-filter",
+                    review_id=self._review_id,
+                    document=doc.get("description", ""),
+                    document_type=doc.get("document_type", ""),
+                    reason="category_denylist_public",
+                )
+                continue
+
+            # Tier 2: Check title-based pattern denylist (fallback when category unknown)
+            if not include_consultation and any(
+                p in description for p in DocumentFilter.DENYLIST_CONSULTATION_RESPONSE_PATTERNS
+            ):
+                logger.warning(
+                    "Document removed by post-filter",
+                    review_id=self._review_id,
+                    document=doc.get("description", ""),
+                    document_type=doc.get("document_type", ""),
+                    reason="title_pattern_consultation",
+                )
+                continue
+
+            if not include_public and any(
+                p in description for p in DocumentFilter.DENYLIST_PUBLIC_COMMENT_PATTERNS
+            ):
+                logger.warning(
+                    "Document removed by post-filter",
+                    review_id=self._review_id,
+                    document=doc.get("description", ""),
+                    document_type=doc.get("document_type", ""),
+                    reason="title_pattern_public",
+                )
+                continue
+
+            kept.append(doc)
+
+        return kept
+
     async def _phase_filter_documents(self) -> None:
         """
         Phase 2: Filter application documents using LLM.
@@ -503,10 +584,24 @@ class AgentOrchestrator:
 
             # Match selected IDs to document metadata
             selected_id_set = {str(sid) for sid in selected_ids}
-            self._selected_documents = [
+            llm_selected = [
                 doc for doc in all_documents
                 if str(doc.get("document_id", "")) in selected_id_set
             ]
+
+            # Implements [consultation-filter-enforcement:FR-001]
+            # Programmatic post-filter to remove consultation responses and
+            # public comments that the LLM selected despite prompt instructions.
+            pre_post_filter_count = len(llm_selected)
+            self._selected_documents = self._post_filter_consultation_documents(llm_selected)
+            post_filter_removed = pre_post_filter_count - len(self._selected_documents)
+            if post_filter_removed > 0:
+                logger.info(
+                    "Post-filter removed consultation/public comment documents",
+                    review_id=self._review_id,
+                    removed=post_filter_removed,
+                    remaining=len(self._selected_documents),
+                )
 
             selected_count = len(self._selected_documents)
             reduction_pct = round((1 - selected_count / total_listed) * 100, 1) if total_listed > 0 else 0

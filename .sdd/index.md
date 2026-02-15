@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-15 | [consultation-filter-enforcement](consultation-filter-enforcement/) | [spec](consultation-filter-enforcement/specification.md) | [design](consultation-filter-enforcement/design.md) | Draft | Bugfix |
 | 2026-02-14 | [reliable-structure-extraction](reliable-structure-extraction/) | [spec](reliable-structure-extraction/specification.md) | [design](reliable-structure-extraction/design.md) | Draft | Enhancement |
 | 2026-02-14 | [rest-api-contract](rest-api-contract/) | [spec](rest-api-contract/specification.md) | — | As-Built | API Contract |
 | 2026-02-14 | [cherwell-scraper-api](cherwell-scraper-api/) | [spec](cherwell-scraper-api/specification.md) | — | As-Built | API Contract |
