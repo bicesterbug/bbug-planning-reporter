@@ -172,7 +172,16 @@ async def letter_job(
             processing_time_seconds=round(duration, 2),
         )
 
-        # Update letter record with content
+        # Upload letter output files (both local and S3)
+        letter_url = _upload_letter_output(
+            letter_id=letter_id,
+            application_ref=review_result.get("application_ref", "unknown"),
+            letter_content=letter_content,
+            metadata=metadata,
+            storage=storage,
+        )
+
+        # Update letter record with content and output URL
         if redis_client:
             await redis_client.update_letter_status(
                 letter_id,
@@ -180,17 +189,11 @@ async def letter_job(
                 content=letter_content,
                 metadata=metadata,
                 completed_at=datetime.now(UTC),
+                output_url=letter_url,
             )
-
-        # Implements [s3-document-storage:FR-005] - Upload letter output to S3
-        if storage.is_remote:
-            _upload_letter_output(
-                letter_id=letter_id,
-                application_ref=review_result.get("application_ref", "unknown"),
-                letter_content=letter_content,
-                metadata=metadata,
-                storage=storage,
-            )
+            # Set reverse lookup for review → letter URL
+            if letter_url:
+                await redis_client.set_review_letter_url(review_id, letter_url)
 
         # Implements [global-webhooks:FR-005] - letter.completed webhook
         fire_webhook("letter.completed", review_id, {
@@ -253,18 +256,18 @@ def _upload_letter_output(
     letter_content: str,
     metadata: dict[str, Any],
     storage: StorageBackend,
-) -> None:
-    """Upload letter JSON and markdown to S3. Non-fatal on failure.
+) -> str | None:
+    """Upload letter JSON and markdown. Non-fatal on failure.
 
-    Implements [s3-document-storage:FR-005] - Upload letter output to S3
-    Implements [s3-document-storage:LetterJobs/TS-01]
+    Returns the public URL for the letter markdown, or None on failure.
     """
     safe_ref = application_ref.replace("/", "_")
     prefix = f"{safe_ref}/output"
+    letter_url: str | None = None
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Upload letter JSON
+            # Letter JSON
             letter_data = {
                 "letter_id": letter_id,
                 "application_ref": application_ref,
@@ -275,19 +278,23 @@ def _upload_letter_output(
             json_path.write_text(json.dumps(letter_data, indent=2, default=str))
             storage.upload(json_path, f"{prefix}/{letter_id}_letter.json")
 
-            # Upload letter markdown
+            # Letter markdown
+            md_key = f"{prefix}/{letter_id}_letter.md"
             md_path = Path(tmpdir) / f"{letter_id}_letter.md"
             md_path.write_text(letter_content)
-            storage.upload(md_path, f"{prefix}/{letter_id}_letter.md")
+            storage.upload(md_path, md_key)
+            letter_url = storage.public_url(md_key)
 
         logger.info(
-            "Letter output uploaded to S3",
+            "Letter output uploaded",
             letter_id=letter_id,
             application_ref=application_ref,
         )
     except Exception as e:
         logger.warning(
-            "Failed to upload letter output to S3",
+            "Failed to upload letter output",
             letter_id=letter_id,
             error=str(e),
         )
+
+    return letter_url

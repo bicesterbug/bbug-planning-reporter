@@ -21,6 +21,7 @@ from ulid import ULID
 from src.api.dependencies import ArqPoolDep, RedisClientDep
 from src.api.schemas import (
     ErrorResponse,
+    OutputUrls,
     ReviewLinks,
     ReviewListResponse,
     ReviewProgressResponse,
@@ -171,16 +172,16 @@ async def submit_review(
 async def get_review(
     review_id: str,
     redis: RedisClientDep,
+    urls_only: bool = Query(
+        default=False,
+        description="When true, omit inline review/metadata and return output URLs only",
+    ),
 ) -> ReviewResponse:
     """
     Get a review by ID.
 
     Returns full result if completed, or current status if processing.
-
-    Implements [foundation-api:FR-004] - Get review result
-    Implements [foundation-api:ReviewRouter/TS-04] - Get processing review
-    Implements [foundation-api:ReviewRouter/TS-05] - Get completed review
-    Implements [foundation-api:ReviewRouter/TS-06] - Get non-existent review
+    When `urls_only=true`, omits inline review data and returns artefact URLs instead.
     """
     job = await redis.get_job(review_id)
     if job is None:
@@ -209,16 +210,28 @@ async def get_review(
     application_info = None
     metadata = None
     site_boundary = None
+    urls = None
 
     if job.status == ReviewStatus.COMPLETED or job.status == "completed":
         result = await redis.get_result(review_id)
         if result:
-            review_content = result.get("review")
             application_info = result.get("application")
-            metadata = result.get("metadata")
-            # Implements [cycle-route-assessment:FR-010] - Site boundary from metadata
-            if metadata:
-                site_boundary = metadata.get("site_boundary")
+
+            # Build output URLs
+            raw_urls = result.get("output_urls") or {}
+            letter_url = await redis.get_review_letter_url(review_id)
+            urls = OutputUrls(
+                review_json=raw_urls.get("review_json"),
+                review_md=raw_urls.get("review_md"),
+                routes_json=raw_urls.get("routes_json"),
+                letter_md=letter_url,
+            )
+
+            if not urls_only:
+                review_content = result.get("review")
+                metadata = result.get("metadata")
+                if metadata:
+                    site_boundary = metadata.get("site_boundary")
 
     return ReviewResponse(
         review_id=job.review_id,
@@ -232,6 +245,7 @@ async def get_review(
         review=review_content,
         metadata=metadata,
         site_boundary=site_boundary,
+        urls=urls,
         error=job.error,
     )
 

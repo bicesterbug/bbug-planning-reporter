@@ -16,6 +16,7 @@ Implements [s3-document-storage:NFR-005] - Fail-fast startup validation
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -120,35 +121,35 @@ class StorageBackend(Protocol):
 
 
 class LocalStorageBackend:
-    """No-op storage backend for local filesystem.
+    """Local filesystem storage backend.
 
-    When S3 is not configured, this backend preserves the existing behaviour:
-    - upload() does nothing (files already on persistent volume)
-    - public_url() returns None (caller uses original Cherwell URL)
-    - delete_local() does nothing (files stay on persistent volume)
+    Persists output files to a local directory and generates API-relative
+    URLs for serving them via the files endpoint.
 
     Implements [s3-document-storage:FR-001] - Default backend when S3 not configured
-    Implements [s3-document-storage:NFR-004] - Identical behaviour to current system
     """
+
+    def __init__(self, output_dir: str = "/data/output") -> None:
+        self._output_dir = Path(output_dir)
 
     @property
     def is_remote(self) -> bool:
-        # Implements [s3-document-storage:LocalStorageBackend/TS-04]
         return False
 
     def upload(self, local_path: Path, key: str) -> None:
-        # Implements [s3-document-storage:LocalStorageBackend/TS-01]
-        pass
+        dest = self._output_dir / key
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local_path, dest)
 
-    def public_url(self, _key: str) -> str | None:
-        # Implements [s3-document-storage:LocalStorageBackend/TS-02]
-        return None
+    def public_url(self, key: str) -> str | None:
+        return f"/api/v1/files/{key}"
 
     def download_to(self, key: str, local_path: Path) -> None:
-        pass
+        src = self._output_dir / key
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, local_path)
 
     def delete_local(self, local_path: Path) -> None:
-        # Implements [s3-document-storage:LocalStorageBackend/TS-03]
         pass
 
 

@@ -239,6 +239,15 @@ class ReviewMetadata(BaseModel):
     policy_revisions_used: list[PolicyRevisionUsed] | None = None
 
 
+class OutputUrls(BaseModel):
+    """URLs to review output artefact files."""
+
+    review_json: str | None = None
+    review_md: str | None = None
+    routes_json: str | None = None
+    letter_md: str | None = None
+
+
 class ReviewResponse(BaseModel):
     """
     Full response for GET /api/v1/reviews/{id} when completed.
@@ -256,8 +265,8 @@ class ReviewResponse(BaseModel):
     application: ApplicationInfo | None = None
     review: ReviewContent | None = None
     metadata: ReviewMetadata | None = None
-    # Implements [cycle-route-assessment:FR-010] - Site boundary in review response
     site_boundary: dict[str, Any] | None = None
+    urls: OutputUrls | None = None
     error: dict[str, Any] | None = None
 
 

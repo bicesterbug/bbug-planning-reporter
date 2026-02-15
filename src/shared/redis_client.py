@@ -447,11 +447,10 @@ class RedisClient:
         metadata: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
         completed_at: datetime | None = None,
+        output_url: str | None = None,
     ) -> bool:
         """
         Update a letter record's status and optionally set content/metadata.
-
-        Implements [response-letter:LetterRedis/TS-03]
 
         Args:
             letter_id: The letter ID.
@@ -460,6 +459,7 @@ class RedisClient:
             metadata: Generation metadata (model, tokens, duration).
             error: Error details (on failure).
             completed_at: Completion timestamp.
+            output_url: Public URL for the letter markdown file.
 
         Returns:
             True if letter was found and updated, False otherwise.
@@ -479,6 +479,8 @@ class RedisClient:
             letter["error"] = error
         if completed_at is not None:
             letter["completed_at"] = completed_at.isoformat()
+        if output_url is not None:
+            letter["output_url"] = output_url
 
         # Preserve remaining TTL
         ttl = await client.ttl(self._letter_key(letter_id))
@@ -492,6 +494,27 @@ class RedisClient:
 
         logger.debug("Letter status updated", letter_id=letter_id, status=status)
         return True
+
+    # =========================================================================
+    # Review Letter URL Lookup
+    # =========================================================================
+
+    _LETTER_URL_TTL = 30 * 24 * 60 * 60  # 30 days
+
+    async def set_review_letter_url(self, review_id: str, url: str) -> None:
+        """Store the latest letter URL for a review (reverse lookup)."""
+        client = await self._ensure_connected()
+        await client.setex(
+            f"review_letter_url:{review_id}", self._LETTER_URL_TTL, url,
+        )
+
+    async def get_review_letter_url(self, review_id: str) -> str | None:
+        """Get the latest letter URL for a review, or None if no letter exists."""
+        client = await self._ensure_connected()
+        val = await client.get(f"review_letter_url:{review_id}")
+        if val is None:
+            return None
+        return val.decode() if isinstance(val, bytes) else val
 
     # =========================================================================
     # Health Check

@@ -10,6 +10,6 @@ Implements:
 - [cycle-route-assessment:FR-005] - Destination endpoints
 """
 
-from src.api.routes import destinations, downloads, health, policies, reviews
+from src.api.routes import destinations, downloads, files, health, policies, reviews
 
-__all__ = ["destinations", "downloads", "health", "policies", "reviews"]
+__all__ = ["destinations", "downloads", "files", "health", "policies", "reviews"]

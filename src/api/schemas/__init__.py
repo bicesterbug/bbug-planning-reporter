@@ -69,6 +69,7 @@ PolicyCompliance = _module.PolicyCompliance
 KeyDocument = _module.KeyDocument
 ReviewContent = _module.ReviewContent
 PolicyRevisionUsed = _module.PolicyRevisionUsed
+OutputUrls = _module.OutputUrls
 ReviewMetadata = _module.ReviewMetadata
 
 __all__ = [
@@ -84,6 +85,7 @@ __all__ = [
     "APPLICATION_REF_PATTERN",
     "ErrorDetail",
     "ErrorResponse",
+    "OutputUrls",
     "ReviewLinks",
     "ReviewListResponse",
     "ReviewProgressResponse",

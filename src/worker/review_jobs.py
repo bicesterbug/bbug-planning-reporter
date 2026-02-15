@@ -157,13 +157,17 @@ async def _handle_success(
         "metadata": result.metadata,
     }
 
-    # Store result in Redis
+    # Upload output files and record URLs (both local and S3)
+    output_urls: dict[str, str | None] = {
+        "review_json": None, "review_md": None, "routes_json": None,
+    }
+    if storage:
+        output_urls = _upload_review_output(result, review_data, storage)
+    review_data["output_urls"] = output_urls
+
+    # Store result in Redis (includes output_urls)
     if redis_wrapper:
         await redis_wrapper.store_result(result.review_id, review_data)
-
-    # Implements [s3-document-storage:FR-005] - Upload review output to S3
-    if storage and storage.is_remote:
-        _upload_review_output(result, review_data, storage)
 
     # Implements [global-webhooks:FR-003] - review.completed with full review data
     overall_rating = (result.review or {}).get("overall_rating")
@@ -190,40 +194,60 @@ def _upload_review_output(
     result: ReviewResult,
     review_data: dict[str, Any],
     storage: StorageBackend,
-) -> None:
-    """Upload review JSON and markdown to S3. Non-fatal on failure.
+) -> dict[str, str | None]:
+    """Upload review JSON, markdown, and routes JSON. Non-fatal on failure.
 
-    Implements [s3-document-storage:FR-005] - Upload review output to S3
-    Implements [s3-document-storage:ReviewJobs/TS-01]
+    Returns a dict of public URLs for each output artefact.
     """
     safe_ref = result.application_ref.replace("/", "_")
     prefix = f"{safe_ref}/output"
+    urls: dict[str, str | None] = {
+        "review_json": None, "review_md": None, "routes_json": None,
+    }
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Upload review JSON
+            # Review JSON
+            key = f"{prefix}/{result.review_id}_review.json"
             json_path = Path(tmpdir) / f"{result.review_id}_review.json"
             json_path.write_text(json.dumps(review_data, indent=2, default=str))
-            storage.upload(json_path, f"{prefix}/{result.review_id}_review.json")
+            storage.upload(json_path, key)
+            urls["review_json"] = storage.public_url(key)
 
-            # Upload review markdown (if available)
+            # Review markdown
             full_markdown = (review_data.get("review") or {}).get("full_markdown")
             if full_markdown:
+                key = f"{prefix}/{result.review_id}_review.md"
                 md_path = Path(tmpdir) / f"{result.review_id}_review.md"
                 md_path.write_text(full_markdown)
-                storage.upload(md_path, f"{prefix}/{result.review_id}_review.md")
+                storage.upload(md_path, key)
+                urls["review_md"] = storage.public_url(key)
+
+            # Routes JSON
+            route_assessments = (review_data.get("review") or {}).get(
+                "route_assessments", []
+            )
+            key = f"{prefix}/{result.review_id}_routes.json"
+            routes_path = Path(tmpdir) / f"{result.review_id}_routes.json"
+            routes_path.write_text(
+                json.dumps(route_assessments or [], indent=2, default=str)
+            )
+            storage.upload(routes_path, key)
+            urls["routes_json"] = storage.public_url(key)
 
         logger.info(
-            "Review output uploaded to S3",
+            "Review output uploaded",
             review_id=result.review_id,
             application_ref=result.application_ref,
         )
     except Exception as e:
         logger.warning(
-            "Failed to upload review output to S3",
+            "Failed to upload review output",
             review_id=result.review_id,
             error=str(e),
         )
+
+    return urls
 
 
 async def _handle_failure(

@@ -198,3 +198,84 @@ class TestLetterTTL:
         # Should be close to original (within a few seconds), not reset to 30 days
         assert new_ttl <= original_ttl, f"TTL should not increase: was {original_ttl}, now {new_ttl}"
         assert new_ttl > 0, "TTL should still be positive"
+
+
+class TestLetterOutputUrl:
+    """Tests for output_url field on letter records."""
+
+    @pytest.mark.asyncio
+    async def test_output_url_stored_in_letter_record(
+        self, redis_client: RedisClient, sample_letter: dict,
+    ) -> None:
+        """
+        Given: A letter record exists
+        When: update_letter_status called with output_url
+        Then: get_letter returns the output_url
+        """
+        letter_id = sample_letter["letter_id"]
+        await redis_client.store_letter(letter_id, sample_letter)
+
+        await redis_client.update_letter_status(
+            letter_id,
+            status="completed",
+            output_url="/api/v1/files/25_01178_REM/output/ltr_01_letter.md",
+        )
+
+        letter = await redis_client.get_letter(letter_id)
+        assert letter["output_url"] == "/api/v1/files/25_01178_REM/output/ltr_01_letter.md"
+
+    @pytest.mark.asyncio
+    async def test_output_url_omitted_preserves_record(
+        self, redis_client: RedisClient, sample_letter: dict,
+    ) -> None:
+        """
+        Given: A letter record exists
+        When: update_letter_status called without output_url
+        Then: No output_url key added to letter record
+        """
+        letter_id = sample_letter["letter_id"]
+        await redis_client.store_letter(letter_id, sample_letter)
+
+        await redis_client.update_letter_status(letter_id, status="completed")
+
+        letter = await redis_client.get_letter(letter_id)
+        assert "output_url" not in letter
+
+
+class TestReviewLetterUrlLookup:
+    """Tests for review → letter URL reverse lookup."""
+
+    @pytest.mark.asyncio
+    async def test_set_and_get_letter_url(self, redis_client: RedisClient) -> None:
+        """
+        Given: A review_id
+        When: set_review_letter_url then get_review_letter_url
+        Then: Returns the stored URL
+        """
+        await redis_client.set_review_letter_url(
+            "rev_123", "/api/v1/files/25_01178_REM/output/ltr_456_letter.md",
+        )
+        url = await redis_client.get_review_letter_url("rev_123")
+        assert url == "/api/v1/files/25_01178_REM/output/ltr_456_letter.md"
+
+    @pytest.mark.asyncio
+    async def test_get_returns_none_when_no_letter(self, redis_client: RedisClient) -> None:
+        """
+        Given: No letter URL stored for this review
+        When: get_review_letter_url called
+        Then: Returns None
+        """
+        url = await redis_client.get_review_letter_url("rev_nonexistent")
+        assert url is None
+
+    @pytest.mark.asyncio
+    async def test_subsequent_letter_overwrites_url(self, redis_client: RedisClient) -> None:
+        """
+        Given: A letter URL already stored for a review
+        When: set_review_letter_url called again with a new URL
+        Then: get_review_letter_url returns the new URL
+        """
+        await redis_client.set_review_letter_url("rev_123", "/api/v1/files/old.md")
+        await redis_client.set_review_letter_url("rev_123", "/api/v1/files/new.md")
+        url = await redis_client.get_review_letter_url("rev_123")
+        assert url == "/api/v1/files/new.md"

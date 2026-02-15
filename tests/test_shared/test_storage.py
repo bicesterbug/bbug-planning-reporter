@@ -60,38 +60,59 @@ class TestStorageBackendProtocol:
 
 
 class TestLocalStorageBackend:
-    """Verifies [s3-document-storage:LocalStorageBackend/TS-01] through [TS-04]."""
+    """Tests for LocalStorageBackend file persistence and URL generation."""
 
-    def test_upload_is_noop(self, tmp_path: Path):
-        """Verifies [s3-document-storage:LocalStorageBackend/TS-01] - Upload is no-op."""
+    def test_upload_writes_file_to_output_directory(self, tmp_path: Path):
+        """Upload copies the source file to the output directory under the given key."""
+        backend = LocalStorageBackend(output_dir=str(tmp_path))
+        src = tmp_path / "src.json"
+        src.write_text('{"test": true}')
+
+        backend.upload(src, "25_01178_REM/output/rev_xxx_review.json")
+
+        dest = tmp_path / "25_01178_REM" / "output" / "rev_xxx_review.json"
+        assert dest.exists()
+        assert dest.read_text() == '{"test": true}'
+
+    def test_upload_creates_parent_directories(self, tmp_path: Path):
+        """Upload creates intermediate directories automatically."""
+        backend = LocalStorageBackend(output_dir=str(tmp_path))
+        src = tmp_path / "src.md"
+        src.write_text("# Review")
+
+        backend.upload(src, "deep/nested/path/file.md")
+
+        assert (tmp_path / "deep" / "nested" / "path" / "file.md").exists()
+
+    def test_public_url_returns_api_relative_path(self):
+        """public_url returns an API-relative path for the file serving endpoint."""
         backend = LocalStorageBackend()
-        test_file = tmp_path / "test.pdf"
-        test_file.write_bytes(b"test content")
+        url = backend.public_url("25_01178_REM/output/rev_xxx_review.json")
+        assert url == "/api/v1/files/25_01178_REM/output/rev_xxx_review.json"
 
-        # Should not raise
-        backend.upload(test_file, "some/key.pdf")
-        # File should still exist (not moved or deleted)
-        assert test_file.exists()
-
-    def test_public_url_returns_none(self):
-        """Verifies [s3-document-storage:LocalStorageBackend/TS-02] - Returns None."""
+    def test_is_remote_false(self):
+        """is_remote returns False for local storage."""
         backend = LocalStorageBackend()
-        assert backend.public_url("any/key.pdf") is None
+        assert backend.is_remote is False
 
-    def test_delete_is_noop(self, tmp_path: Path):
-        """Verifies [s3-document-storage:LocalStorageBackend/TS-03] - Delete is no-op."""
-        backend = LocalStorageBackend()
+    def test_delete_local_is_noop(self, tmp_path: Path):
+        """delete_local does not remove files (they stay on persistent volume)."""
+        backend = LocalStorageBackend(output_dir=str(tmp_path))
         test_file = tmp_path / "test.pdf"
         test_file.write_bytes(b"test content")
 
         backend.delete_local(test_file)
-        # File should still exist
         assert test_file.exists()
 
-    def test_is_remote_false(self):
-        """Verifies [s3-document-storage:LocalStorageBackend/TS-04] - is_remote is False."""
-        backend = LocalStorageBackend()
-        assert backend.is_remote is False
+    def test_source_file_preserved_after_upload(self, tmp_path: Path):
+        """Upload copies (not moves) the source file."""
+        backend = LocalStorageBackend(output_dir=str(tmp_path / "output"))
+        src = tmp_path / "src.json"
+        src.write_text("content")
+
+        backend.upload(src, "key.json")
+
+        assert src.exists(), "Source file should not be removed"
 
 
 # ---------------------------------------------------------------------------

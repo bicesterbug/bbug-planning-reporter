@@ -36,6 +36,7 @@ def mock_redis():
     mock.list_jobs = AsyncMock(return_value=([], 0))
     mock.update_job_status = AsyncMock(return_value=True)
     mock.get_result = AsyncMock(return_value=None)
+    mock.get_review_letter_url = AsyncMock(return_value=None)
     return mock
 
 
@@ -831,3 +832,185 @@ class TestSiteBoundaryIntegration:
         assert response.status_code == 200
         data = response.json()
         assert data["site_boundary"] is None
+
+
+class TestUrlsOnlyParameter:
+    """Tests for the urls_only query parameter on GET /reviews/{id}."""
+
+    def test_urls_only_omits_review_and_metadata(self, client, mock_redis):
+        """
+        Given: A completed review with output_urls in result
+        When: GET /reviews/{id}?urls_only=true
+        Then: Response has urls object, review/metadata/site_boundary are null
+        """
+        job = ReviewJob(
+            review_id="rev_urls_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "amber", "full_markdown": "# Review"},
+            "application": {"reference": "25/01178/REM"},
+            "metadata": {"model": "claude-3-sonnet", "site_boundary": {"type": "Feature"}},
+            "output_urls": {
+                "review_json": "https://s3.example.com/review.json",
+                "review_md": "https://s3.example.com/review.md",
+                "routes_json": "https://s3.example.com/routes.json",
+            },
+        })
+        mock_redis.get_review_letter_url = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_urls_test?urls_only=true")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["review"] is None
+        assert data["metadata"] is None
+        assert data["site_boundary"] is None
+        assert data["urls"] is not None
+        assert data["urls"]["review_json"] == "https://s3.example.com/review.json"
+        assert data["urls"]["review_md"] == "https://s3.example.com/review.md"
+        assert data["urls"]["routes_json"] == "https://s3.example.com/routes.json"
+        assert data["urls"]["letter_md"] is None
+        # Application info should still be present
+        assert data["application"]["reference"] == "25/01178/REM"
+
+    def test_default_includes_both_data_and_urls(self, client, mock_redis):
+        """
+        Given: A completed review with output_urls
+        When: GET /reviews/{id} (no urls_only)
+        Then: Response has review, metadata AND urls
+        """
+        job = ReviewJob(
+            review_id="rev_both_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "amber"},
+            "application": {"reference": "25/01178/REM"},
+            "metadata": {"model": "claude-3-sonnet"},
+            "output_urls": {
+                "review_json": "/api/v1/files/review.json",
+                "review_md": "/api/v1/files/review.md",
+                "routes_json": "/api/v1/files/routes.json",
+            },
+        })
+        mock_redis.get_review_letter_url = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_both_test")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["review"] is not None
+        assert data["metadata"] is not None
+        assert data["urls"] is not None
+
+    def test_urls_only_no_effect_on_processing_review(self, client, mock_redis):
+        """
+        Given: A review with status processing
+        When: GET /reviews/{id}?urls_only=true
+        Then: Response has status processing, urls is null
+        """
+        job = ReviewJob(
+            review_id="rev_proc_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.PROCESSING,
+            created_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_proc_test?urls_only=true")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "processing"
+        assert data["urls"] is None
+
+    def test_older_review_without_output_urls(self, client, mock_redis):
+        """
+        Given: A completed review stored WITHOUT output_urls (pre-migration)
+        When: GET /reviews/{id}?urls_only=true
+        Then: urls object has all null values
+        """
+        job = ReviewJob(
+            review_id="rev_old_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "green"},
+            "application": {"reference": "25/01178/REM"},
+            "metadata": {},
+        })
+        mock_redis.get_review_letter_url = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_old_test?urls_only=true")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["urls"]["review_json"] is None
+        assert data["urls"]["review_md"] is None
+        assert data["urls"]["routes_json"] is None
+        assert data["urls"]["letter_md"] is None
+
+    def test_letter_url_included_when_letter_exists(self, client, mock_redis):
+        """
+        Given: A completed review AND a letter URL stored
+        When: GET /reviews/{id}?urls_only=true
+        Then: urls.letter_md is non-null
+        """
+        job = ReviewJob(
+            review_id="rev_letter_url_test",
+            application_ref="25/01178/REM",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime.now(UTC),
+        )
+        mock_redis.get_job = AsyncMock(return_value=job)
+        mock_redis.get_result = AsyncMock(return_value={
+            "review": {"overall_rating": "amber"},
+            "application": {"reference": "25/01178/REM"},
+            "metadata": {},
+            "output_urls": {
+                "review_json": "/api/v1/files/review.json",
+                "review_md": "/api/v1/files/review.md",
+                "routes_json": "/api/v1/files/routes.json",
+            },
+        })
+        mock_redis.get_review_letter_url = AsyncMock(
+            return_value="/api/v1/files/25_01178_REM/output/ltr_01_letter.md"
+        )
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        response = client.get("/api/v1/reviews/rev_letter_url_test?urls_only=true")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["urls"]["letter_md"] == "/api/v1/files/25_01178_REM/output/ltr_01_letter.md"

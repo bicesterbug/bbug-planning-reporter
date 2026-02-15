@@ -466,28 +466,22 @@ def _make_s3_backend_mock():
     return backend
 
 
-class TestS3ReviewOutputUpload:
-    """
-    Tests for S3 review output upload.
-
-    Implements [s3-document-storage:ReviewJobs/TS-01], [TS-02], [TS-03]
-    """
+class TestReviewOutputUpload:
+    """Tests for review output file upload and URL generation."""
 
     @pytest.mark.asyncio
-    async def test_s3_output_upload_on_completion(
+    async def test_output_upload_on_completion(
         self,
         mock_redis_wrapper,
         sample_success_result,
     ):
         """
-        Verifies [s3-document-storage:ReviewJobs/TS-01] - S3 output upload on completion
-
-        Given: S3 configured, review succeeds
+        Given: Storage configured, review succeeds with full_markdown and route_assessments
         When: _handle_success runs
-        Then: review.json and review.md uploaded to S3
+        Then: review.json, review.md, and routes.json uploaded; output_urls in result
         """
-        # Add full_markdown to trigger .md upload
         sample_success_result.review["full_markdown"] = "# Review\n\nTest review content."
+        sample_success_result.review["route_assessments"] = [{"route": "A"}]
 
         backend = _make_s3_backend_mock()
 
@@ -495,16 +489,19 @@ class TestS3ReviewOutputUpload:
 
         assert result["status"] == "completed"
 
-        # Verify upload was called (JSON + MD = 2 calls)
-        assert backend.upload.call_count == 2
+        # 3 files: JSON + MD + routes
+        assert backend.upload.call_count == 3
 
         upload_keys = [call[0][1] for call in backend.upload.call_args_list]
         assert any("rev_test123_review.json" in k for k in upload_keys)
         assert any("rev_test123_review.md" in k for k in upload_keys)
+        assert any("rev_test123_routes.json" in k for k in upload_keys)
 
-        # Verify the S3 key path structure: {safe_ref}/output/{review_id}_review.{ext}
-        json_key = upload_keys[0]
-        assert json_key == "25_01178_REM/output/rev_test123_review.json"
+        # Verify output_urls in stored result
+        assert "output_urls" in result
+        assert result["output_urls"]["review_json"] is not None
+        assert result["output_urls"]["review_md"] is not None
+        assert result["output_urls"]["routes_json"] is not None
 
     @pytest.mark.asyncio
     async def test_output_upload_failure_non_fatal(
@@ -513,51 +510,45 @@ class TestS3ReviewOutputUpload:
         sample_success_result,
     ):
         """
-        Verifies [s3-document-storage:ReviewJobs/TS-02] - Output upload failure non-fatal
-
-        Given: S3 configured, review succeeds, S3 upload fails
+        Given: Storage configured, upload fails
         When: _handle_success runs
-        Then: Review still stored in Redis, no exception raised
+        Then: Review still stored in Redis with null URLs, no exception raised
         """
         backend = _make_s3_backend_mock()
         backend.upload.side_effect = StorageUploadError(
             key="test", attempts=3, last_error=Exception("Network error")
         )
 
-        # Should not raise
         result = await _handle_success(sample_success_result, mock_redis_wrapper, backend)
 
         assert result["status"] == "completed"
-        # Redis store should still have been called
         mock_redis_wrapper.store_result.assert_called_once()
+        # URLs should be null due to failure
+        assert result["output_urls"]["review_json"] is None
 
     @pytest.mark.asyncio
-    async def test_no_s3_upload_when_local(
+    async def test_output_urls_null_without_storage(
         self,
         mock_redis_wrapper,
         sample_success_result,
     ):
         """
-        Verifies [s3-document-storage:ReviewJobs/TS-03] - No S3 output upload when local
-
-        Given: No S3 configured
-        When: Review completes
-        Then: No S3 upload attempted
+        Given: No storage backend (storage=None)
+        When: _handle_success runs
+        Then: output_urls in result has all null values
         """
-        # Test with storage=None
         result = await _handle_success(sample_success_result, mock_redis_wrapper, None)
         assert result["status"] == "completed"
+        assert result["output_urls"] == {
+            "review_json": None, "review_md": None, "routes_json": None,
+        }
 
-        # Test with local backend
-        local_backend = MagicMock()
-        type(local_backend).is_remote = PropertyMock(return_value=False)
-
-        result = await _handle_success(sample_success_result, mock_redis_wrapper, local_backend)
-        assert result["status"] == "completed"
-        local_backend.upload.assert_not_called()
-
-    def test_upload_review_output_writes_correct_content(self):
-        """Verify _upload_review_output writes JSON and MD with correct content."""
+    def test_upload_returns_url_dict(self):
+        """
+        Given: A ReviewResult with full_markdown and route_assessments
+        When: _upload_review_output is called
+        Then: Returns a dict with three non-null URLs
+        """
         from src.agent.orchestrator import ReviewResult
 
         result = ReviewResult(
@@ -567,6 +558,7 @@ class TestS3ReviewOutputUpload:
             review={
                 "overall_rating": "amber",
                 "full_markdown": "# Test Review\n\nContent here.",
+                "route_assessments": [{"route": "A"}],
             },
         )
         review_data = {
@@ -578,19 +570,93 @@ class TestS3ReviewOutputUpload:
 
         backend = _make_s3_backend_mock()
 
+        urls = _upload_review_output(result, review_data, backend)
+
+        assert urls["review_json"] is not None
+        assert "rev_upload_test_review.json" in urls["review_json"]
+        assert urls["review_md"] is not None
+        assert "rev_upload_test_review.md" in urls["review_md"]
+        assert urls["routes_json"] is not None
+        assert "rev_upload_test_routes.json" in urls["routes_json"]
+
+    def test_routes_json_contains_route_assessments(self):
+        """
+        Given: A review_data with route_assessments = [{"route": "A"}]
+        When: _upload_review_output is called
+        Then: The routes.json file contains the route_assessments array
+        """
+        from src.agent.orchestrator import ReviewResult
+
+        result = ReviewResult(
+            review_id="rev_routes_test",
+            application_ref="25/00284/F",
+            success=True,
+            review={
+                "overall_rating": "green",
+                "route_assessments": [{"route": "A", "score": 85}],
+            },
+        )
+        review_data = {"review": result.review}
+
+        from src.shared.storage import InMemoryStorageBackend
+        backend = InMemoryStorageBackend()
+
         _upload_review_output(result, review_data, backend)
 
-        assert backend.upload.call_count == 2
+        routes_key = "25_00284_F/output/rev_routes_test_routes.json"
+        assert routes_key in backend.uploads
+        import json
+        routes_data = json.loads(backend.uploads[routes_key])
+        assert routes_data == [{"route": "A", "score": 85}]
 
-        # Verify the file paths passed to upload are valid temp paths
-        json_call_path = backend.upload.call_args_list[0][0][0]
-        md_call_path = backend.upload.call_args_list[1][0][0]
-        assert isinstance(json_call_path, Path)
-        assert isinstance(md_call_path, Path)
+    def test_routes_json_empty_array_when_no_assessments(self):
+        """
+        Given: A review_data with no route_assessments key
+        When: _upload_review_output is called
+        Then: The routes.json file contains []
+        """
+        from src.agent.orchestrator import ReviewResult
 
-        # Verify S3 keys
-        assert backend.upload.call_args_list[0][0][1] == "25_00284_F/output/rev_upload_test_review.json"
-        assert backend.upload.call_args_list[1][0][1] == "25_00284_F/output/rev_upload_test_review.md"
+        result = ReviewResult(
+            review_id="rev_no_routes",
+            application_ref="25/00284/F",
+            success=True,
+            review={"overall_rating": "green"},
+        )
+        review_data = {"review": result.review}
+
+        from src.shared.storage import InMemoryStorageBackend
+        backend = InMemoryStorageBackend()
+
+        urls = _upload_review_output(result, review_data, backend)
+
+        routes_key = "25_00284_F/output/rev_no_routes_routes.json"
+        assert routes_key in backend.uploads
+        import json
+        assert json.loads(backend.uploads[routes_key]) == []
+        assert urls["routes_json"] is not None
+
+    def test_upload_failure_returns_null_urls(self):
+        """
+        Given: A storage backend whose upload raises an exception
+        When: _upload_review_output is called
+        Then: Returns dict with null URLs, no exception raised
+        """
+        from src.agent.orchestrator import ReviewResult
+
+        result = ReviewResult(
+            review_id="rev_fail",
+            application_ref="25/00284/F",
+            success=True,
+            review={"overall_rating": "green"},
+        )
+
+        backend = _make_s3_backend_mock()
+        backend.upload.side_effect = Exception("Disk full")
+
+        urls = _upload_review_output(result, {"review": result.review}, backend)
+
+        assert urls == {"review_json": None, "review_md": None, "routes_json": None}
 
 
 class TestProcessReviewPassesStorageBackend:

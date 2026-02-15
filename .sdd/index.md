@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-15 | [review-output-urls](review-output-urls/) | [spec](review-output-urls/specification.md) | [design](review-output-urls/design.md) | Draft | Enhancement |
 | 2026-02-15 | [concise-output](concise-output/) | [spec](concise-output/specification.md) | [design](concise-output/design.md) | Draft | Enhancement |
 | 2026-02-15 | [consultation-filter-enforcement](consultation-filter-enforcement/) | [spec](consultation-filter-enforcement/specification.md) | [design](consultation-filter-enforcement/design.md) | Draft | Bugfix |
 | 2026-02-14 | [reliable-structure-extraction](reliable-structure-extraction/) | [spec](reliable-structure-extraction/specification.md) | [design](reliable-structure-extraction/design.md) | Draft | Enhancement |

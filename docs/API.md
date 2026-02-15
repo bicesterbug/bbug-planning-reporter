@@ -18,6 +18,7 @@
   - [Site Boundary](#site-boundary)
   - [Letters](#letters)
   - [Downloads](#downloads)
+  - [Files](#files)
   - [Destinations](#destinations)
   - [Policies](#policies)
   - [Policy Revisions](#policy-revisions)
@@ -285,6 +286,12 @@ curl -X POST http://localhost:8080/api/v1/reviews \
 
 Returns the full review, including results when completed.
 
+**Query Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `urls_only` | boolean | No | `false` | When `true`, omit inline `review`, `metadata`, and `site_boundary` fields; return only `urls` with links to output artefacts |
+
 **Response `200 OK` (queued):**
 
 ```json
@@ -300,6 +307,7 @@ Returns the full review, including results when completed.
   "review": null,
   "metadata": null,
   "site_boundary": null,
+  "urls": null,
   "error": null
 }
 ```
@@ -325,6 +333,7 @@ Returns the full review, including results when completed.
   "review": null,
   "metadata": null,
   "site_boundary": null,
+  "urls": null,
   "error": null
 }
 ```
@@ -473,9 +482,24 @@ Returns the full review, including results when completed.
       }
     ]
   },
+  "urls": {
+    "review_json": "/api/v1/files/25_01178_REM/output/rev_01JMABCDEF1234567890AB_review.json",
+    "review_md": "/api/v1/files/25_01178_REM/output/rev_01JMABCDEF1234567890AB_review.md",
+    "routes_json": "/api/v1/files/25_01178_REM/output/rev_01JMABCDEF1234567890AB_routes.json",
+    "letter_md": "/api/v1/files/25_01178_REM/output/ltr_01JMXYZ1234567890ABCDE_letter.md"
+  },
   "error": null
 }
 ```
+
+When `urls_only=true`, `review`, `metadata`, and `site_boundary` are omitted (set to `null`), while `application` and `urls` are still returned. The `urls` object contains public URLs for each output artefact. For S3 deployments, these are public S3 URLs (e.g. `https://s3.example.com/bucket/prefix/25_01178_REM/output/rev_xxx_review.json`). For local deployments, they are API-relative paths served by the `/api/v1/files/` endpoint.
+
+| `urls` Field | Type | Description |
+|--------------|------|-------------|
+| `review_json` | string \| null | Structured review JSON |
+| `review_md` | string \| null | Review in Markdown format |
+| `routes_json` | string \| null | Route assessments JSON (null if no routes assessed) |
+| `letter_md` | string \| null | Response letter Markdown (null if no letter generated) |
 
 **Response `200 OK` (failed):**
 
@@ -492,6 +516,7 @@ Returns the full review, including results when completed.
   "review": null,
   "metadata": null,
   "site_boundary": null,
+  "urls": null,
   "error": {
     "code": "scraper_error",
     "message": "Application not found on Cherwell planning portal"
@@ -936,6 +961,76 @@ Binary PDF with styled content, rating badges, and page headers/footers.
 ```bash
 curl -o review.pdf \
   "http://localhost:8080/api/v1/reviews/rev_01JMABCDEF1234567890AB/download?format=pdf" \
+  -H "Authorization: Bearer sk-cycle-dev-key-1"
+```
+
+---
+
+### Files
+
+#### `GET /api/v1/files/{path}` -- Serve Output File
+
+Serves review output artefact files from local storage. This endpoint is only active when using `LocalStorageBackend` (no `S3_ENDPOINT_URL` configured). When S3 is configured, the `urls` field in review responses contains direct S3 public URLs instead.
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | string | Path to the output file (e.g. `25_01178_REM/output/rev_xxx_review.json`) |
+
+**Response `200 OK`:**
+
+Returns the file content with the appropriate content type:
+
+| Extension | Content-Type |
+|-----------|-------------|
+| `.json` | `application/json` |
+| `.md` | `text/markdown` |
+| Other | `application/octet-stream` |
+
+**Error `400 Bad Request`:** Path traversal attempt detected.
+
+```json
+{
+  "error": {
+    "code": "invalid_path",
+    "message": "Invalid file path",
+    "details": {
+      "path": "../../etc/passwd"
+    }
+  }
+}
+```
+
+**Error `404 Not Found`:** File does not exist, or S3 storage is configured.
+
+```json
+{
+  "error": {
+    "code": "file_not_found",
+    "message": "File not found: nonexistent/file.json",
+    "details": {
+      "path": "nonexistent/file.json"
+    }
+  }
+}
+```
+
+When S3 is configured:
+
+```json
+{
+  "error": {
+    "code": "local_files_not_available",
+    "message": "File serving is not available when S3 storage is configured"
+  }
+}
+```
+
+**curl example:**
+
+```bash
+curl http://localhost:8080/api/v1/files/25_01178_REM/output/rev_01JMABCDEF1234567890AB_review.json \
   -H "Authorization: Bearer sk-cycle-dev-key-1"
 ```
 
@@ -1895,6 +1990,17 @@ Values: `review.completed`, `review.completed.markdown`, `review.failed`, `lette
 | `WEBHOOK_URL` | (none) | Global webhook delivery URL; unset = disabled |
 | `WEBHOOK_MAX_RETRIES` | `5` | Maximum delivery attempts per event |
 | `WEBHOOK_TIMEOUT` | `10` | Timeout per delivery attempt (seconds) |
+
+### Storage
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `S3_ENDPOINT_URL` | (none) | S3-compatible endpoint URL. Unset = local storage |
+| `S3_BUCKET` | (none) | S3 bucket name for output files |
+| `S3_KEY_PREFIX` | (none) | Prefix prepended to all S3 keys (e.g. `reviews/`) |
+| `S3_PUBLIC_URL_BASE` | (none) | Base URL for constructing public S3 URLs |
+
+When `S3_ENDPOINT_URL` is set, output artefacts are uploaded to S3 and `urls` contains public S3 URLs. When unset, files are written to `/data/output/` and served via the `/api/v1/files/` endpoint.
 
 ### Advocacy Group Configuration
 
