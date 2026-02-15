@@ -71,7 +71,7 @@ Each aspect must have:
 - "name": A descriptive name for the aspect
 - "rating": red/amber/green for this aspect
 - "key_issue": A brief (1 sentence) summary of the main issue
-- "analysis": A detailed markdown-formatted analysis (2-4 paragraphs) covering findings, evidence references, and policy citations. This will be used by a report writer to produce detailed prose.
+- "analysis": Concise analysis notes for the report writer: key findings, evidence references, and policy citations. Use bullet points or short paragraphs. Do not write draft prose — the report writer will expand these notes.
 
 **policy_compliance**: List specific policy requirements checked. Include at least 8 items covering NPPF, LTN 1/20, Cherwell Local Plan, LCWIP, and Manual for Streets where relevant. Each item:
 - "requirement": What the policy requires
@@ -81,12 +81,12 @@ Each aspect must have:
 
 **recommendations**: List of specific, actionable recommendations with policy justification. Each string should be a complete recommendation.
 
-**suggested_conditions**: Planning conditions to attach if approval is granted. May be an empty array if no conditions are warranted.
+**suggested_conditions**: Planning conditions in standard LPA format. Each condition must have: a trigger (e.g. "Prior to commencement", "Prior to first occupation"), a requirement ("a scheme for X shall be submitted to and approved in writing by the local planning authority"), and a "Reason:" line citing the relevant policy. Keep each condition to 1-2 sentences plus the Reason line. May be an empty array if no conditions are warranted.
 
 **key_documents**: Documents from the ingested documents list that are relevant to the cycling review. Select the most relevant documents. Each item:
 - "title": Document title matching the ingested documents list
 - "category": One of "Transport & Access", "Design & Layout", "Application Core"
-- "summary": 1-2 sentences on content and cycling relevance
+- "summary": One short sentence on cycling relevance (max ~15 words)
 - "url": Download URL from the ingested documents list, or null
 """
 

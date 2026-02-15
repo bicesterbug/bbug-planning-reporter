@@ -679,12 +679,19 @@ class AgentOrchestrator:
                 total=total_docs,
             )
 
+            # Generate filename from description to avoid URL-derived collisions
+            safe_name = "".join(
+                c if c.isalnum() or c in "._- " else "_" for c in desc
+            )[:100]
+            filename = f"{i + 1:03d}_{safe_name}.pdf"
+
             try:
                 result = await self._mcp_client.call_tool(
                     "download_document",
                     {
                         "document_url": doc_url,
                         "output_dir": app_output_dir,
+                        "filename": filename,
                     },
                     timeout=120.0,
                 )
@@ -1523,6 +1530,7 @@ class AgentOrchestrator:
             # --- Phase 5b: Report call (or fallback) ---
             report_input_tokens = 0
             report_output_tokens = 0
+            group_stylised = os.getenv("ADVOCACY_GROUP_STYLISED", "Bicester BUG")
 
             if structure is not None:
                 # Two-phase: report call with JSON as outline
@@ -1532,7 +1540,7 @@ class AgentOrchestrator:
                 report_system, report_user = build_report_prompt(
                     structure_json_str, app_summary, ingested_docs_text,
                     app_evidence_text, policy_evidence_text, plans_submitted_text,
-                    route_evidence_text,
+                    route_evidence_text, group_stylised=group_stylised,
                 )
                 report_msg = client.messages.create(
                     model=model,
@@ -1591,22 +1599,22 @@ class AgentOrchestrator:
                     "{}",  # empty JSON — report call will just produce a review
                     app_summary, ingested_docs_text,
                     app_evidence_text, policy_evidence_text, plans_submitted_text,
-                    route_evidence_text,
+                    route_evidence_text, group_stylised=group_stylised,
                 )
                 # Override the system prompt for fallback — don't reference JSON
-                fallback_system = """You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
+                fallback_system = f"""You are a planning application reviewer acting on behalf of a local cycling advocacy group in the Cherwell District. Your role is to assess planning applications from the perspective of people who walk and cycle.
 
-Write a comprehensive cycle advocacy review in markdown format with these sections:
-1. # Cycle Advocacy Review: [Reference]
+Write a concise cycle advocacy review in markdown format with these sections:
+1. # {group_stylised} Review: [Reference]
 2. ## Application Summary
 3. ## Key Documents
 4. ## Assessment Summary (with Overall Rating and aspect table)
-5. ## Detailed Assessment (subsections per aspect)
+5. ## Detailed Assessment (subsections per aspect, 1-3 paragraphs each)
 6. ## Policy Compliance Matrix (table)
-7. ## Recommendations (numbered list)
-8. ## Suggested Conditions (numbered list, if any)
+7. ## Recommendations (numbered list, one sentence each)
+8. ## Suggested Conditions (numbered list in standard LPA format, if any)
 
-Always cite specific policy references. Be constructive and evidence-based."""
+Be concise and evidence-based. Cite specific policy references."""
 
                 fallback_msg = client.messages.create(
                     model=model,

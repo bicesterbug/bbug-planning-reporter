@@ -4,6 +4,8 @@ Report call prompt builder for the two-phase review generation.
 Implements [structured-review-output:FR-001] - Defines the report call prompt
 Implements [structured-review-output:FR-003] - Prompt constrains Claude to use JSON data
 Implements [structured-review-output:FR-006] - Prompt specifies the report section structure
+Implements [concise-output:FR-002] - Concise report prose
+Implements [concise-output:FR-003] - Branded review title
 
 Implements:
 - [structured-review-output:ReportCallPrompt/TS-01] JSON embedded in prompt
@@ -20,6 +22,7 @@ def build_report_prompt(
     policy_evidence_text: str,
     plans_submitted_text: str = "No plans or drawings were detected.",
     route_evidence_text: str = "No cycling route assessments were performed.",
+    group_stylised: str = "Bicester BUG",
 ) -> tuple[str, str]:
     """
     Build the system and user prompts for the report call.
@@ -36,11 +39,12 @@ def build_report_prompt(
         plans_submitted_text: Formatted list of image-based documents that were
             downloaded but not ingested (plans, elevations, drawings).
         route_evidence_text: Cycling route assessment data with LTN 1/20 scores and issues.
+        group_stylised: Stylised advocacy group name for the report title.
 
     Returns:
         Tuple of (system_prompt, user_prompt).
     """
-    system_prompt = """You are a planning application reviewer writing a detailed cycle advocacy review report. You have already completed a structured assessment (provided as JSON). Your task is to write the full prose markdown report.
+    system_prompt = f"""You are a planning application reviewer writing a cycle advocacy review report. You have already completed a structured assessment (provided as JSON). Your task is to write the prose markdown report.
 
 ## CRITICAL RULES
 
@@ -54,6 +58,7 @@ You MUST use the structured JSON assessment as your authoritative source:
 - You MUST list the EXACT key documents from the JSON in the Key Documents section
 - You MUST NOT add aspects, compliance items, recommendations, or conditions that are not in the JSON
 - You MUST NOT omit any aspects, compliance items, recommendations, or conditions that are in the JSON
+- Be CONCISE throughout. Avoid filler phrases, unnecessary sub-headings, and restating information already present in tables. Each section should add insight, not repeat data.
 
 ## Report Structure
 
@@ -61,7 +66,7 @@ Write the report in this exact markdown format, in this exact order:
 
 ### 1. Title
 ```
-# Cycle Advocacy Review: [Application Reference]
+# {group_stylised} Review: [Application Reference]
 ```
 
 ### 2. Application Summary
@@ -100,13 +105,13 @@ One row per aspect from the JSON, with Rating in UPPERCASE.
 ```
 ## Detailed Assessment
 ```
-One subsection per aspect from the JSON. Use the `analysis` field from each aspect as your starting point and expand it into detailed prose (2-5 paragraphs per aspect). Reference specific evidence and policy requirements. Number the subsections:
+One subsection per aspect from the JSON. Expand the analysis notes into focused prose (1-3 paragraphs per aspect). Be concise: no filler, no restating the summary table, no repeating policy refs already in the compliance matrix. Reference specific evidence. Number the subsections:
 ```
 ### 1. Cycle Parking
-[Expanded prose based on analysis field]
+[Focused prose based on analysis notes]
 
 ### 2. Cycle Route Provision
-[Expanded prose]
+[Focused prose]
 ```
 
 ### 6. Policy Compliance Matrix
@@ -122,7 +127,7 @@ One row per compliance item from the JSON. Render compliant as "YES" or "NO".
 ```
 ## Recommendations
 ```
-Numbered list. Each recommendation from the JSON as a numbered item with policy justification.
+Numbered list. Each recommendation as a single sentence with a policy reference in parentheses.
 
 ### 8. Suggested Conditions
 ```
@@ -130,7 +135,7 @@ Numbered list. Each recommendation from the JSON as a numbered item with policy 
 ```
 If the JSON has suggested conditions, list them numbered. If the array is empty, write "No specific conditions recommended beyond standard requirements." or omit the section."""
 
-    user_prompt = f"""Write a detailed cycle advocacy review report based on the structured assessment below.
+    user_prompt = f"""Write a cycle advocacy review report based on the structured assessment below.
 
 ## Structured Assessment (JSON — authoritative source)
 ```json
@@ -156,6 +161,6 @@ The following documents were identified as image-based (plans, elevations, drawi
 ## Cycling Route Assessments
 {route_evidence_text}
 
-Write the full markdown report following the format specified in your instructions. Expand the analysis notes into detailed prose for each aspect. The report should be suitable for submission as a formal consultation response."""
+Write the markdown report following the format specified in your instructions. Expand the analysis notes into focused prose for each aspect. Be concise and evidence-based."""
 
     return system_prompt, user_prompt

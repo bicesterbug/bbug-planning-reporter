@@ -94,7 +94,7 @@ class TestReportPromptFormat:
         )
 
         sections = [
-            "Cycle Advocacy Review",
+            "Review:",
             "Application Summary",
             "Key Documents",
             "Assessment Summary",
@@ -155,6 +155,82 @@ class TestReportPromptBinding:
         )
 
         assert "authoritative" in system.lower()
+
+
+class TestReportPromptGroupName:
+    """Verifies branded review title using group stylised name."""
+
+    def test_custom_group_name_in_title(self):
+        """
+        Given: group_stylised="Test Cyclists"
+        When: build_report_prompt() called
+        Then: System prompt contains "Test Cyclists Review:" and not "Cycle Advocacy Review"
+        """
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE,
+            POLICY_EVIDENCE, group_stylised="Test Cyclists",
+        )
+
+        assert "# Test Cyclists Review:" in system
+        assert "Cycle Advocacy Review" not in system
+
+    def test_default_group_name(self):
+        """
+        Given: group_stylised not passed (uses default)
+        When: build_report_prompt() called
+        Then: System prompt contains "Bicester BUG Review:"
+        """
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "# Bicester BUG Review:" in system
+
+
+class TestReportPromptConciseness:
+    """Verifies concise output guidance in the report prompt."""
+
+    def test_concise_paragraphs_guidance(self):
+        """
+        Given: Any input
+        When: build_report_prompt() called
+        Then: System prompt says 1-3 paragraphs, not 2-5
+        """
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "1-3 paragraphs" in system
+        assert "2-5 paragraphs" not in system
+
+    def test_conciseness_rule_present(self):
+        """
+        Given: Any input
+        When: build_report_prompt() called
+        Then: System prompt contains "Be CONCISE"
+        """
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "Be CONCISE" in system
+
+    def test_single_sentence_recommendation_guidance(self):
+        """
+        Given: Any input
+        When: build_report_prompt() called
+        Then: System prompt contains "single sentence" in recommendations guidance
+        """
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "single sentence" in system
 
 
 PLANS_SUBMITTED = (

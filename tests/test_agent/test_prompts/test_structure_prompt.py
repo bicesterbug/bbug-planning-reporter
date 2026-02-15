@@ -267,6 +267,48 @@ class TestStructurePromptDocuments:
         assert "no URL" in user
 
 
+class TestStructurePromptConciseness:
+    """Verifies concise output guidance in the structure prompt."""
+
+    def test_condition_format_guidance(self):
+        """
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt contains LPA condition format guidance
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "standard LPA format" in system
+        assert "Reason:" in system
+
+    def test_concise_analysis_guidance(self):
+        """
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt contains concise analysis guidance, not verbose
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "Concise analysis notes" in system
+        assert "2-4 paragraphs" not in system
+
+    def test_short_document_summary_guidance(self):
+        """
+        Given: Default arguments
+        When: build_structure_prompt() called
+        Then: System prompt contains short summary guidance
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "max ~15 words" in system
+
+
 PLANS_SUBMITTED = (
     "- Site Plan (type: Plans - Site Plan, image ratio: 92%)\n"
     "- Elevations (type: Elevations, image ratio: 88%)"
