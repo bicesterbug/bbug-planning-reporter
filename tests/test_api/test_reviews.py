@@ -31,6 +31,8 @@ def mock_redis():
     """Create mock Redis client."""
     mock = AsyncMock()
     mock.has_active_job_for_ref = AsyncMock(return_value=False)
+    mock.get_active_review_id_for_ref = AsyncMock(return_value=None)
+    mock.get_latest_completed_review_id_for_ref = AsyncMock(return_value=None)
     mock.store_job = AsyncMock()
     mock.get_job = AsyncMock(return_value=None)
     mock.list_jobs = AsyncMock(return_value=([], 0))
@@ -94,13 +96,12 @@ class TestSubmitReview:
 
     def test_duplicate_review_prevention(self, client, mock_redis):
         """
-        Verifies [foundation-api:ReviewRouter/TS-03] - Duplicate review prevention
-
         Given: Application with existing active review
-        When: POST /reviews for same application
-        Then: Returns 409 with review_already_exists error
+        When: POST /reviews for same application (no force)
+        Then: Returns 409 with review_in_progress error and active_review_id
         """
-        mock_redis.has_active_job_for_ref = AsyncMock(return_value=True)
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value="rev_active_123")
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
@@ -114,7 +115,83 @@ class TestSubmitReview:
         assert response.status_code == 409
         data = response.json()
         assert "error" in data
-        assert data["error"]["code"] == "review_already_exists"
+        assert data["error"]["code"] == "review_in_progress"
+        assert data["error"]["details"]["active_review_id"] == "rev_active_123"
+
+    def test_resubmission_accepted_when_previous_completed(self, client, mock_redis):
+        """
+        Given: A completed review exists, no active review
+        When: POST /reviews for same application
+        Then: Returns 202 with a new review_id
+        """
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value=None)
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value="rev_previous")
+        mock_arq = AsyncMock()
+        mock_arq.enqueue_job = AsyncMock()
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq
+
+        response = client.post(
+            "/api/v1/reviews",
+            json={"application_ref": "25/01178/REM"},
+        )
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 202
+        data = response.json()
+        assert data["review_id"].startswith("rev_")
+
+    def test_force_cancels_active_review(self, client, mock_redis):
+        """
+        Given: An active review exists
+        When: POST /reviews?force=true
+        Then: Returns 202, active review is cancelled
+        """
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value="rev_active_123")
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value=None)
+        mock_arq = AsyncMock()
+        mock_arq.enqueue_job = AsyncMock()
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq
+
+        response = client.post(
+            "/api/v1/reviews?force=true",
+            json={"application_ref": "25/01178/REM"},
+        )
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 202
+        mock_redis.update_job_status.assert_any_call("rev_active_123", ReviewStatus.CANCELLED)
+
+    def test_previous_review_id_passed_to_worker(self, client, mock_redis):
+        """
+        Given: A completed review exists
+        When: POST /reviews
+        Then: arq job enqueued with previous_review_id
+        """
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value=None)
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value="rev_prev_456")
+        mock_arq = AsyncMock()
+        mock_arq.enqueue_job = AsyncMock()
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq
+
+        response = client.post(
+            "/api/v1/reviews",
+            json={"application_ref": "25/01178/REM"},
+        )
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 202
+        mock_arq.enqueue_job.assert_called_once()
+        _, kwargs = mock_arq.enqueue_job.call_args
+        assert kwargs.get("previous_review_id") == "rev_prev_456"
 
 
 class TestGetReview:

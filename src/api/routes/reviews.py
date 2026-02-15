@@ -67,35 +67,51 @@ async def submit_review(
     request: ReviewRequest,
     redis: RedisClientDep,
     arq_pool: ArqPoolDep,
+    force: bool = Query(False, description="Cancel active review and restart"),
 ) -> ReviewSubmitResponse:
     """
     Submit a new review request.
 
-    Implements [foundation-api:FR-001] - Submit review request
-    Implements [foundation-api:FR-014] - Prevent duplicate reviews
-    Implements [foundation-api:ReviewRouter/TS-01] - Valid review submission
-    Implements [foundation-api:ReviewRouter/TS-02] - Invalid reference format
-    Implements [foundation-api:ReviewRouter/TS-03] - Duplicate review prevention
+    Accepts resubmission for previously-reviewed applications. If an active
+    review exists, returns 409 unless force=true (which cancels it first).
     """
     logger.info(
         "Review submission received",
         application_ref=request.application_ref,
     )
 
-    # Check for existing active review (FR-014)
-    if await redis.has_active_job_for_ref(request.application_ref):
-        logger.warning(
-            "Duplicate review rejected",
-            application_ref=request.application_ref,
-        )
-        raise HTTPException(
-            status_code=409,
-            detail=make_error_response(
-                code="review_already_exists",
-                message=f"A review for application {request.application_ref} is already queued or processing",
-                details={"application_ref": request.application_ref},
-            ),
-        )
+    # Check for existing active review
+    active_review_id = await redis.get_active_review_id_for_ref(request.application_ref)
+    if active_review_id:
+        if force:
+            await redis.update_job_status(active_review_id, ReviewStatus.CANCELLED)
+            logger.info(
+                "Active review force-cancelled",
+                cancelled_review_id=active_review_id,
+                application_ref=request.application_ref,
+            )
+        else:
+            logger.warning(
+                "Duplicate review rejected",
+                application_ref=request.application_ref,
+                active_review_id=active_review_id,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=make_error_response(
+                    code="review_in_progress",
+                    message=f"A review for application {request.application_ref} is already queued or processing",
+                    details={
+                        "application_ref": request.application_ref,
+                        "active_review_id": active_review_id,
+                    },
+                ),
+            )
+
+    # Find previous completed review for document reuse
+    previous_review_id = await redis.get_latest_completed_review_id_for_ref(
+        request.application_ref
+    )
 
     # Generate review ID
     review_id = generate_review_id()
@@ -139,6 +155,7 @@ async def submit_review(
         "review_job",
         review_id=review_id,
         application_ref=request.application_ref,
+        previous_review_id=previous_review_id,
         _queue_name="review_jobs",
     )
 

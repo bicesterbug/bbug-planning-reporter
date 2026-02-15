@@ -171,6 +171,13 @@ class DocumentFilter:
         "geotechnical",
     ]
 
+    # Documents under superseded sections or with "superseded" in the title
+    # are always excluded — no toggle override.
+    CATEGORY_DENYLIST_SUPERSEDED = [
+        "superseded documents",
+        "superseded",
+    ]
+
     # Implements [document-filtering:FR-004] - Officer and decision documents
     # Council-produced documents for decision-making
     ALLOWLIST_OFFICER_PATTERNS = [
@@ -355,8 +362,24 @@ class DocumentFilter:
         if not match_texts:
             return (True, "No document type - allowed by default (fail-safe)")
 
+        # Superseded check — always denied, no toggle, checked before everything else
+        # Documents under superseded sections or with "superseded" in the title
+        # are always excluded regardless of category or allowlist matches.
+        if document_type:
+            category_lower = document_type.lower()
+
+            # Category denylist — superseded documents (always denied, no toggle)
+            for category in self.CATEGORY_DENYLIST_SUPERSEDED:
+                if category_lower == category:
+                    return (False, "Superseded document - excluded from review")
+
+        # Check for "superseded" in title (always denied, no toggle)
+        for text in match_texts:
+            if "superseded" in text:
+                return (False, "Superseded document - excluded from review")
+
         # Implements [review-output-fixes:FR-002] - Category-based filtering
-        # Check portal category first — these are section headers from the
+        # Check portal category — these are section headers from the
         # Cherwell portal document table, more reliable than title matching.
         if document_type:
             category_lower = document_type.lower()

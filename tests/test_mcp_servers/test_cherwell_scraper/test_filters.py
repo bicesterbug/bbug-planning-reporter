@@ -1308,6 +1308,171 @@ class TestThHeaderParserFilterIntegration:
         assert "Masterplan" in allowed_descriptions
 
 
+class TestSupersededDocumentExclusion:
+    """Tests for superseded document filtering."""
+
+    @pytest.fixture
+    def filter(self):
+        """Create a DocumentFilter instance for testing."""
+        return DocumentFilter()
+
+    def test_superseded_category_excluded(self, filter):
+        """
+        Document under superseded category is excluded.
+
+        Given: A document with document_type "Superseded Documents"
+        When: filter_documents is called
+        Then: Document is filtered with superseded reason
+        """
+        docs = [
+            DocumentInfo(
+                document_id="sup1",
+                description="Transport Assessment v1",
+                document_type="Superseded Documents",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Superseded" in filtered[0].filter_reason
+
+    def test_superseded_category_case_insensitive(self, filter):
+        """
+        Superseded category matching is case-insensitive.
+
+        Given: A document with document_type "SUPERSEDED DOCUMENTS"
+        When: filter_documents is called
+        Then: Document is filtered
+        """
+        docs = [
+            DocumentInfo(
+                document_id="sup2",
+                description="Planning Statement v1",
+                document_type="SUPERSEDED DOCUMENTS",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Superseded" in filtered[0].filter_reason
+
+    def test_superseded_in_title_excluded(self, filter):
+        """
+        Document with "superseded" in title is excluded.
+
+        Given: A document with description "Superseded Transport Assessment v1"
+        When: filter_documents is called
+        Then: Document is filtered
+        """
+        docs = [
+            DocumentInfo(
+                document_id="sup3",
+                description="Superseded Transport Assessment v1",
+                document_type="Supporting Documents",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Superseded" in filtered[0].filter_reason
+
+    def test_superseded_in_title_case_insensitive(self, filter):
+        """
+        Superseded title matching is case-insensitive.
+
+        Given: A document with description containing "SUPERSEDED" in uppercase
+        When: filter_documents is called
+        Then: Document is filtered
+        """
+        docs = [
+            DocumentInfo(
+                document_id="sup4",
+                description="SUPERSEDED - Site Layout Plan Rev A",
+                document_type=None,
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+
+    def test_non_superseded_documents_unaffected(self, filter):
+        """
+        Non-superseded documents are unaffected by superseded filter.
+
+        Given: A document with document_type "Supporting Documents" and
+               description "Transport Assessment"
+        When: filter_documents is called
+        Then: Document is allowed (existing behaviour preserved)
+        """
+        docs = [
+            DocumentInfo(
+                document_id="nonsup1",
+                description="Transport Assessment",
+                document_type="Supporting Documents",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs)
+
+        assert len(allowed) == 1
+        assert len(filtered) == 0
+
+    def test_superseded_not_overridden_by_skip_filter_false(self, filter):
+        """
+        Superseded documents are always denied — no toggle override.
+
+        Given: A superseded document
+        When: filter_documents called with all inclusion toggles enabled
+        Then: Document is still filtered
+        """
+        docs = [
+            DocumentInfo(
+                document_id="sup5",
+                description="Superseded Planning Statement",
+                document_type="Superseded",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(
+            docs,
+            include_consultation_responses=True,
+            include_public_comments=True,
+        )
+
+        assert len(allowed) == 0
+        assert len(filtered) == 1
+        assert "Superseded" in filtered[0].filter_reason
+
+    def test_skip_filter_overrides_superseded(self, filter):
+        """
+        skip_filter=True overrides even superseded filtering.
+
+        Given: A superseded document with skip_filter=True
+        When: filter_documents is called
+        Then: Document is allowed (skip_filter overrides everything)
+        """
+        docs = [
+            DocumentInfo(
+                document_id="sup6",
+                description="Superseded Transport Assessment",
+                document_type="Superseded Documents",
+            )
+        ]
+
+        allowed, filtered = filter.filter_documents(docs, skip_filter=True)
+
+        assert len(allowed) == 1
+        assert len(filtered) == 0
+
+
 class TestParserFilterIntegration:
     """
     Integration test for parser + filter pipeline.

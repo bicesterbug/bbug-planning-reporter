@@ -186,6 +186,88 @@ class TestCheckForExistingJob:
         assert has_active is False
 
 
+class TestGetActiveReviewIdForRef:
+    """Tests for get_active_review_id_for_ref."""
+
+    @pytest.mark.asyncio
+    async def test_returns_active_review_id(
+        self, redis_client: RedisClient, sample_job: ReviewJob
+    ) -> None:
+        sample_job.status = ReviewStatus.PROCESSING
+        await redis_client.store_job(sample_job)
+
+        result = await redis_client.get_active_review_id_for_ref(sample_job.application_ref)
+        assert result == sample_job.review_id
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_only_completed(
+        self, redis_client: RedisClient, sample_job: ReviewJob
+    ) -> None:
+        sample_job.status = ReviewStatus.COMPLETED
+        sample_job.completed_at = datetime.now(UTC)
+        await redis_client.store_job(sample_job)
+
+        result = await redis_client.get_active_review_id_for_ref(sample_job.application_ref)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_jobs(
+        self, redis_client: RedisClient
+    ) -> None:
+        result = await redis_client.get_active_review_id_for_ref("99/99999/XXX")
+        assert result is None
+
+
+class TestGetLatestCompletedReviewIdForRef:
+    """Tests for get_latest_completed_review_id_for_ref."""
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_completed(
+        self, redis_client: RedisClient
+    ) -> None:
+        job_old = ReviewJob(
+            review_id="rev_old",
+            application_ref="25/00413/F",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime(2026, 2, 15, 12, 0, tzinfo=UTC),
+            completed_at=datetime(2026, 2, 15, 13, 0, tzinfo=UTC),
+        )
+        job_new = ReviewJob(
+            review_id="rev_new",
+            application_ref="25/00413/F",
+            status=ReviewStatus.COMPLETED,
+            created_at=datetime(2026, 2, 15, 14, 0, tzinfo=UTC),
+            completed_at=datetime(2026, 2, 15, 15, 0, tzinfo=UTC),
+        )
+        await redis_client.store_job(job_old)
+        await redis_client.store_job(job_new)
+
+        result = await redis_client.get_latest_completed_review_id_for_ref("25/00413/F")
+        assert result == "rev_new"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_only_failed(
+        self, redis_client: RedisClient
+    ) -> None:
+        job = ReviewJob(
+            review_id="rev_fail",
+            application_ref="25/00413/F",
+            status=ReviewStatus.FAILED,
+            created_at=datetime(2026, 2, 15, 12, 0, tzinfo=UTC),
+        )
+        await redis_client.store_job(job)
+
+        result = await redis_client.get_latest_completed_review_id_for_ref("25/00413/F")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_jobs(
+        self, redis_client: RedisClient
+    ) -> None:
+        result = await redis_client.get_latest_completed_review_id_for_ref("99/99999/XXX")
+        assert result is None
+
+
 class TestListJobs:
     """Tests for listing jobs."""
 

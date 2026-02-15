@@ -29,6 +29,7 @@ async def process_review(
     ctx: dict[str, Any],
     review_id: str,
     application_ref: str,
+    previous_review_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Process a review job using the agent orchestrator.
@@ -88,6 +89,7 @@ async def process_review(
             redis_client=redis_client,
             options=options,
             storage_backend=storage,
+            previous_review_id=previous_review_id,
         ) as orchestrator:
             result = await orchestrator.run()
 
@@ -321,10 +323,15 @@ def _serialize_application(app) -> dict[str, Any]:
 
 # arq worker function registration
 # These are the functions that arq can call
-async def review_job(ctx: dict[str, Any], review_id: str, application_ref: str) -> dict[str, Any]:
+async def review_job(
+    ctx: dict[str, Any],
+    review_id: str,
+    application_ref: str,
+    previous_review_id: str | None = None,
+) -> dict[str, Any]:
     """
     arq-compatible job function for review processing.
 
     This wrapper exists to provide the arq-expected signature and logging.
     """
-    return await process_review(ctx, review_id, application_ref)
+    return await process_review(ctx, review_id, application_ref, previous_review_id=previous_review_id)

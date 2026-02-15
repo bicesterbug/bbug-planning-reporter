@@ -280,6 +280,42 @@ class RedisClient:
 
         return False
 
+    async def get_active_review_id_for_ref(self, application_ref: str) -> str | None:
+        """Return the review_id of the active (queued/processing) job for an application, or None."""
+        client = await self._ensure_connected()
+        review_ids = await client.smembers(self._ref_index_key(application_ref))
+        if not review_ids:
+            return None
+
+        active_statuses = {ReviewStatus.QUEUED.value, ReviewStatus.PROCESSING.value}
+        for review_id in review_ids:
+            job = await self.get_job(review_id)
+            if job:
+                status_value = job.status.value if isinstance(job.status, ReviewStatus) else job.status
+                if status_value in active_statuses:
+                    return job.review_id
+        return None
+
+    async def get_latest_completed_review_id_for_ref(self, application_ref: str) -> str | None:
+        """Return the review_id of the most recent completed review for an application, or None."""
+        client = await self._ensure_connected()
+        review_ids = await client.smembers(self._ref_index_key(application_ref))
+        if not review_ids:
+            return None
+
+        latest_id: str | None = None
+        latest_time: float = 0.0
+        for review_id in review_ids:
+            job = await self.get_job(review_id)
+            if job:
+                status_value = job.status.value if isinstance(job.status, ReviewStatus) else job.status
+                if status_value == ReviewStatus.COMPLETED.value and job.completed_at:
+                    ts = job.completed_at.timestamp()
+                    if ts > latest_time:
+                        latest_time = ts
+                        latest_id = job.review_id
+        return latest_id
+
     async def list_jobs(
         self,
         status: ReviewStatus | None = None,

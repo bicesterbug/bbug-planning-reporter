@@ -29,6 +29,7 @@ Implements:
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -129,6 +130,7 @@ class AgentOrchestrator:
         redis_client: redis.Redis | None = None,
         options: Any | None = None,
         storage_backend: StorageBackend | None = None,
+        previous_review_id: str | None = None,
     ) -> None:
         """
         Initialize the orchestrator.
@@ -142,6 +144,7 @@ class AgentOrchestrator:
             redis_client: Optional Redis client for state persistence.
             options: Optional ReviewOptions with toggle flags for document filtering.
             storage_backend: Optional StorageBackend for document storage (defaults to local).
+            previous_review_id: Optional ID of previous completed review for document reuse.
         """
         self._review_id = review_id
         self._application_ref = application_ref
@@ -150,6 +153,13 @@ class AgentOrchestrator:
         self._options = options
         self._storage: StorageBackend = storage_backend or LocalStorageBackend()
         self._owns_mcp_client = mcp_client is None
+        self._previous_review_id = previous_review_id
+        self._resubmission_stats: dict[str, Any] = {
+            "previous_review_id": previous_review_id,
+            "documents_reused": 0,
+            "documents_new": 0,
+            "documents_removed": 0,
+        }
 
         # Progress tracker
         self._progress = ProgressTracker(
@@ -638,11 +648,136 @@ class AgentOrchestrator:
                 recoverable=False,
             )
 
+    def _load_manifest(self, safe_ref: str) -> dict[str, dict[str, Any]]:
+        """Load previous manifest from S3 and return a lookup by document_id.
+
+        Returns empty dict if no manifest found, or manifest is malformed.
+        """
+        if not self._previous_review_id or not self._storage.is_remote:
+            return {}
+
+        manifest_key = f"{safe_ref}/manifest.json"
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            self._storage.download_to(manifest_key, tmp_path)
+            manifest_data = json.loads(tmp_path.read_text())
+            tmp_path.unlink(missing_ok=True)
+
+            manifest_by_id: dict[str, dict[str, Any]] = {}
+            for entry in manifest_data.get("documents", []):
+                doc_id = entry.get("document_id")
+                if doc_id:
+                    manifest_by_id[doc_id] = entry
+
+            logger.info(
+                "Previous manifest loaded",
+                review_id=self._review_id,
+                previous_review_id=self._previous_review_id,
+                manifest_documents=len(manifest_by_id),
+            )
+            return manifest_by_id
+
+        except FileNotFoundError:
+            logger.info(
+                "No previous manifest found",
+                review_id=self._review_id,
+                previous_review_id=self._previous_review_id,
+            )
+            return {}
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning(
+                "Previous manifest malformed, treating as fresh review",
+                review_id=self._review_id,
+                error=str(e),
+            )
+            return {}
+        except Exception as e:
+            logger.warning(
+                "Failed to load previous manifest",
+                review_id=self._review_id,
+                error=str(e),
+            )
+            return {}
+
+    def _save_manifest(
+        self,
+        safe_ref: str,
+        downloaded: list[dict[str, Any]],
+        output_dir: str,
+    ) -> None:
+        """Build and upload manifest JSON to S3."""
+        if not self._storage.is_remote:
+            return
+
+        manifest_entries = []
+        for dl in downloaded:
+            file_path = dl.get("file_path")
+            if not file_path:
+                continue
+            s3_key = file_path.removeprefix(output_dir + "/")
+
+            # Compute file hash
+            file_hash = ""
+            try:
+                sha = hashlib.sha256()
+                with open(file_path, "rb") as f:
+                    for chunk in iter(lambda: f.read(8192), b""):
+                        sha.update(chunk)
+                file_hash = f"sha256:{sha.hexdigest()}"
+            except OSError:
+                pass
+
+            manifest_entries.append({
+                "document_id": dl.get("document_id", ""),
+                "description": dl.get("description", ""),
+                "document_type": dl.get("document_type"),
+                "date_published": dl.get("date_published"),
+                "s3_key": s3_key,
+                "file_hash": file_hash,
+                "cherwell_url": dl.get("url", ""),
+            })
+
+        from datetime import UTC, datetime
+        manifest = {
+            "review_id": self._review_id,
+            "application_ref": self._application_ref,
+            "created_at": datetime.now(UTC).isoformat(),
+            "documents": manifest_entries,
+        }
+
+        manifest_key = f"{safe_ref}/manifest.json"
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as tmp:
+                json.dump(manifest, tmp, indent=2)
+                tmp_path = Path(tmp.name)
+            self._storage.upload(tmp_path, manifest_key)
+            tmp_path.unlink(missing_ok=True)
+            logger.info(
+                "Manifest saved to S3",
+                review_id=self._review_id,
+                manifest_key=manifest_key,
+                documents=len(manifest_entries),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to save manifest",
+                review_id=self._review_id,
+                error=str(e),
+            )
+
     async def _phase_download_documents(self) -> None:
         """
         Phase 3: Download selected documents individually.
 
         Implements [review-workflow-redesign:FR-001] - Downloads only LLM-selected documents
+
+        When a previous_review_id is set, loads the previous manifest from S3
+        and reuses documents that still appear in the selected list.
         """
         assert self._mcp_client is not None
 
@@ -660,10 +795,18 @@ class AgentOrchestrator:
         safe_ref = self._application_ref.replace("/", "_")
         app_output_dir = f"{output_dir}/{safe_ref}"
 
+        # Load previous manifest for document reuse
+        manifest_by_id = self._load_manifest(safe_ref)
+
         downloaded: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
         document_metadata: dict[str, dict[str, Any]] = {}
         total_docs = len(self._selected_documents)
+        reused_count = 0
+        new_count = 0
+
+        # Track which manifest entries are still in use
+        selected_doc_ids = {doc.get("document_id", "") for doc in self._selected_documents}
 
         for i, doc in enumerate(self._selected_documents):
             doc_url = doc.get("url")
@@ -685,7 +828,52 @@ class AgentOrchestrator:
                 c if c.isalnum() or c in "._- " else "_" for c in desc
             )[:100]
             filename = f"{i + 1:03d}_{safe_name}.pdf"
+            local_path = f"{app_output_dir}/{filename}"
 
+            # Try reusing from S3 if document exists in previous manifest
+            manifest_entry = manifest_by_id.get(doc_id) if manifest_by_id else None
+            if manifest_entry and self._storage.is_remote:
+                s3_key = manifest_entry.get("s3_key", "")
+                try:
+                    Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+                    self._storage.download_to(s3_key, Path(local_path))
+
+                    dl_record = {
+                        "document_id": doc_id,
+                        "file_path": local_path,
+                        "file_size": Path(local_path).stat().st_size,
+                        "success": True,
+                        "description": desc,
+                        "document_type": doc.get("document_type"),
+                        "url": doc_url,
+                        "reused": True,
+                    }
+                    downloaded.append(dl_record)
+
+                    public_url = self._storage.public_url(s3_key)
+                    document_metadata[local_path] = {
+                        "description": desc,
+                        "document_type": doc.get("document_type"),
+                        "url": public_url or doc_url,
+                    }
+
+                    reused_count += 1
+                    logger.info(
+                        "Reusing document from S3",
+                        review_id=self._review_id,
+                        document_id=doc_id,
+                        s3_key=s3_key,
+                    )
+                    continue
+                except Exception as e:
+                    logger.warning(
+                        "S3 reuse failed, falling back to Cherwell download",
+                        review_id=self._review_id,
+                        document_id=doc_id,
+                        error=str(e),
+                    )
+
+            # Download from Cherwell (new document or S3 reuse failed)
             try:
                 result = await self._mcp_client.call_tool(
                     "download_document",
@@ -707,6 +895,7 @@ class AgentOrchestrator:
                         "description": desc,
                         "document_type": doc.get("document_type"),
                         "url": doc_url,
+                        "reused": False,
                     }
                     downloaded.append(dl_record)
 
@@ -716,6 +905,7 @@ class AgentOrchestrator:
                             "document_type": doc.get("document_type"),
                             "url": doc_url,
                         }
+                    new_count += 1
                 else:
                     failed.append({
                         "document_id": doc_id,
@@ -741,7 +931,7 @@ class AgentOrchestrator:
             upload_start = time.monotonic()
             for dl in downloaded:
                 file_path = dl.get("file_path")
-                if not file_path:
+                if not file_path or dl.get("reused"):
                     continue
                 s3_key = file_path.removeprefix(output_dir + "/")
                 try:
@@ -761,8 +951,19 @@ class AgentOrchestrator:
                 "S3 uploads complete",
                 review_id=self._review_id,
                 s3_upload_total_seconds=round(upload_elapsed, 2),
-                files_uploaded=len([dl for dl in downloaded if dl.get("file_path")]),
+                files_uploaded=len([dl for dl in downloaded if dl.get("file_path") and not dl.get("reused")]),
             )
+
+        # Save manifest to S3
+        self._save_manifest(safe_ref, downloaded, output_dir)
+
+        # Update resubmission stats
+        removed_count = len(set(manifest_by_id.keys()) - selected_doc_ids) if manifest_by_id else 0
+        self._resubmission_stats.update({
+            "documents_reused": reused_count,
+            "documents_new": new_count,
+            "documents_removed": removed_count,
+        })
 
         self._ingestion_result = DocumentIngestionResult(
             documents_fetched=len(downloaded),
@@ -776,6 +977,9 @@ class AgentOrchestrator:
             review_id=self._review_id,
             downloaded=len(downloaded),
             failed=len(failed),
+            reused=reused_count,
+            new=new_count,
+            removed=removed_count,
         )
 
     async def _phase_ingest_documents(self) -> None:
@@ -1687,6 +1891,10 @@ Be concise and evidence-based. Cite specific policy references."""
                     ),
                     # Implements [cycle-route-assessment:FR-008] - Site boundary in output
                     "site_boundary": self._site_boundary,
+                    "previous_review_id": self._previous_review_id,
+                    "documents_reused": self._resubmission_stats["documents_reused"],
+                    "documents_new": self._resubmission_stats["documents_new"],
+                    "documents_removed": self._resubmission_stats["documents_removed"],
                 },
                 success=True,
             )

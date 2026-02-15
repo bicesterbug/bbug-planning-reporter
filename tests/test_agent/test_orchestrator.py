@@ -2020,8 +2020,8 @@ class TestS3StorageDownloadPhase:
         orchestrator._selected_documents = S3_SELECTED_DOCUMENTS[:]
         await orchestrator._phase_download_documents()
 
-        # Verify upload was called for each file
-        assert backend.upload.call_count == 3
+        # Verify upload was called for each file + manifest
+        assert backend.upload.call_count == 4  # 3 docs + 1 manifest
         upload_calls = backend.upload.call_args_list
         assert upload_calls[0][0] == (
             Path("/data/raw/25_01178_REM/001_Transport Assessment.pdf"),
@@ -2035,6 +2035,8 @@ class TestS3StorageDownloadPhase:
             Path("/data/raw/25_01178_REM/003_Design Statement.pdf"),
             "25_01178_REM/003_Design Statement.pdf",
         )
+        # 4th call is the manifest
+        assert "manifest.json" in str(upload_calls[3][0][1])
 
         # Verify URLs were rewritten to S3 URLs
         meta = orchestrator._ingestion_result.document_metadata
@@ -3373,3 +3375,394 @@ class TestEvidenceContextUrlEncoding:
         })
         _, ingested_docs_text, *_ = orchestrator._build_evidence_context()
         assert "no URL" in ingested_docs_text
+
+
+# ---------------------------------------------------------------------------
+# Manifest persistence and document reuse tests
+# ---------------------------------------------------------------------------
+
+
+class TestManifestPersistence:
+    """Tests for document manifest persistence to S3."""
+
+    @pytest.mark.asyncio
+    async def test_manifest_persisted_after_download(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        sample_s3_per_doc_download_responses,
+    ):
+        """
+        Given: Orchestrator completes download phase with 3 documents
+        When: Download phase finishes
+        Then: manifest.json is uploaded to S3 containing 3 document entries
+        """
+        backend = _make_s3_backend_mock()
+
+        # Capture manifest content when uploaded
+        captured_manifests: list[dict] = []
+        original_upload = backend.upload
+
+        def capture_upload(local_path, key):
+            if "manifest.json" in key:
+                captured_manifests.append(json.loads(local_path.read_text()))
+
+        backend.upload.side_effect = capture_upload
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            *sample_s3_per_doc_download_responses,
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_manifest",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = S3_SELECTED_DOCUMENTS[:]
+        await orchestrator._phase_download_documents()
+
+        # Verify manifest was captured
+        assert len(captured_manifests) == 1
+        manifest_data = captured_manifests[0]
+
+        assert manifest_data["review_id"] == "rev_manifest"
+        assert manifest_data["application_ref"] == "25/01178/REM"
+        assert len(manifest_data["documents"]) == 3
+        assert manifest_data["documents"][0]["document_id"] == "doc1"
+        assert manifest_data["documents"][0]["s3_key"] == "25_01178_REM/001_Transport Assessment.pdf"
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_manifest_not_saved_for_local_storage(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+    ):
+        """
+        Given: Local storage backend (not remote)
+        When: Download phase completes
+        Then: No manifest upload attempted
+        """
+        backend = _make_local_backend_mock()
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            {"status": "success", "file_path": "/data/raw/25_01178_REM/001_doc.pdf", "file_size": 100},
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_local",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = [S3_SELECTED_DOCUMENTS[0]]
+        await orchestrator._phase_download_documents()
+
+        backend.upload.assert_not_called()
+        await orchestrator.close()
+
+
+class TestDocumentReuse:
+    """Tests for document reuse from S3 when manifest exists."""
+
+    @pytest.mark.asyncio
+    async def test_documents_reused_from_s3(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        tmp_path,
+    ):
+        """
+        Given: Previous manifest with docs A and B. Selected docs include A and C (new).
+        When: Download phase runs
+        Then: Doc A from S3, doc C from Cherwell. Stats: reused=1, new=1, removed=1.
+        """
+        backend = _make_s3_backend_mock()
+
+        # Manifest download returns JSON with doc1 (exists) and doc_old (removed)
+        manifest_data = {
+            "review_id": "rev_prev",
+            "application_ref": "25/01178/REM",
+            "created_at": "2026-02-14T12:00:00Z",
+            "documents": [
+                {
+                    "document_id": "doc1",
+                    "description": "Transport Assessment",
+                    "s3_key": "25_01178_REM/001_Transport Assessment.pdf",
+                    "file_hash": "sha256:abc",
+                    "cherwell_url": "https://example.com/doc1",
+                },
+                {
+                    "document_id": "doc_old",
+                    "description": "Old Document",
+                    "s3_key": "25_01178_REM/old.pdf",
+                    "file_hash": "sha256:old",
+                    "cherwell_url": "https://example.com/old",
+                },
+            ],
+        }
+
+        def mock_download_to(key, local_path):
+            if key == "25_01178_REM/manifest.json":
+                # Manifest is in a temp file — actually write it
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text(json.dumps(manifest_data))
+            elif "Transport Assessment" in key:
+                # Document reuse — mock accepts, no actual write needed
+                pass
+            else:
+                raise FileNotFoundError(f"Key not found: {key}")
+
+        backend.download_to.side_effect = mock_download_to
+
+        # Only doc3 (new) will go through Cherwell download
+        new_doc_path = str(tmp_path / "25_01178_REM" / "002_Design and Access Statement.pdf")
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            {"status": "success", "file_path": new_doc_path, "file_size": 120000},
+        ]
+
+        # Selected: doc1 (in manifest) and doc3 (new, not in manifest)
+        selected = [S3_SELECTED_DOCUMENTS[0], S3_SELECTED_DOCUMENTS[2]]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_resub",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+            previous_review_id="rev_prev",
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = selected
+
+        # Patch Path.mkdir and Path.stat so reuse code works without real filesystem
+        with patch.object(Path, 'mkdir', return_value=None), \
+             patch.object(Path, 'stat', return_value=SimpleNamespace(st_size=23)):
+            await orchestrator._phase_download_documents()
+
+        # Verify doc1 was downloaded from S3 (via download_to)
+        download_calls = [c for c in backend.download_to.call_args_list
+                         if "Transport Assessment" in str(c)]
+        assert len(download_calls) == 1
+
+        # Verify doc3 was downloaded from Cherwell (via call_tool)
+        cherwell_calls = [c for c in mock_mcp_client.call_tool.call_args_list
+                         if c[0][0] == "download_document"]
+        assert len(cherwell_calls) == 1
+
+        # Verify resubmission stats
+        assert orchestrator._resubmission_stats["documents_reused"] == 1
+        assert orchestrator._resubmission_stats["documents_new"] == 1
+        assert orchestrator._resubmission_stats["documents_removed"] == 1
+
+        # Verify 2 documents total in result
+        assert orchestrator._ingestion_result.documents_fetched == 2
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_s3_reuse_failure_falls_back_to_cherwell(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+    ):
+        """
+        Given: Previous manifest with doc A. S3 download_to raises exception.
+        When: Download phase runs for doc A
+        Then: Falls back to downloading from Cherwell. Document still in result.
+        """
+        backend = _make_s3_backend_mock()
+
+        manifest_data = {
+            "review_id": "rev_prev",
+            "application_ref": "25/01178/REM",
+            "documents": [
+                {
+                    "document_id": "doc1",
+                    "s3_key": "25_01178_REM/001_Transport Assessment.pdf",
+                    "file_hash": "sha256:abc",
+                },
+            ],
+        }
+
+        call_count = {"n": 0}
+
+        def mock_download_to(key, local_path):
+            call_count["n"] += 1
+            if key == "25_01178_REM/manifest.json":
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text(json.dumps(manifest_data))
+            else:
+                raise Exception("S3 download failed")
+
+        backend.download_to.side_effect = mock_download_to
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            {"status": "success", "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf", "file_size": 150000},
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_fallback",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+            previous_review_id="rev_prev",
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = [S3_SELECTED_DOCUMENTS[0]]
+        await orchestrator._phase_download_documents()
+
+        # Doc should still be downloaded via Cherwell fallback
+        assert orchestrator._ingestion_result.documents_fetched == 1
+        assert orchestrator._resubmission_stats["documents_new"] == 1
+        assert orchestrator._resubmission_stats["documents_reused"] == 0
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_no_manifest_treated_as_fresh(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+    ):
+        """
+        Given: previous_review_id is set but no manifest exists in S3
+        When: Download phase runs
+        Then: All documents downloaded from Cherwell. Stats: reused=0.
+        """
+        backend = _make_s3_backend_mock()
+        backend.download_to.side_effect = FileNotFoundError("No manifest")
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            {"status": "success", "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf", "file_size": 150000},
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_no_manifest",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+            previous_review_id="rev_prev",
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = [S3_SELECTED_DOCUMENTS[0]]
+        await orchestrator._phase_download_documents()
+
+        assert orchestrator._ingestion_result.documents_fetched == 1
+        assert orchestrator._resubmission_stats["documents_reused"] == 0
+        assert orchestrator._resubmission_stats["documents_new"] == 1
+        assert orchestrator._resubmission_stats["documents_removed"] == 0
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_malformed_manifest_treated_as_fresh(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+    ):
+        """
+        Given: previous_review_id is set but manifest JSON is invalid
+        When: Download phase runs
+        Then: All documents downloaded from Cherwell. Warning logged.
+        """
+        backend = _make_s3_backend_mock()
+
+        def mock_download_to(key, local_path):
+            if key == "25_01178_REM/manifest.json":
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text("not valid json {{{")
+            else:
+                raise FileNotFoundError()
+
+        backend.download_to.side_effect = mock_download_to
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            {"status": "success", "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf", "file_size": 150000},
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_malformed",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+            previous_review_id="rev_prev",
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = [S3_SELECTED_DOCUMENTS[0]]
+        await orchestrator._phase_download_documents()
+
+        assert orchestrator._ingestion_result.documents_fetched == 1
+        assert orchestrator._resubmission_stats["documents_reused"] == 0
+
+        await orchestrator.close()
+
+
+class TestResubmissionMetadata:
+    """Tests for resubmission metadata in review result."""
+
+    def test_fresh_review_metadata_has_null_previous(self):
+        """
+        Given: Orchestrator runs without previous_review_id
+        When: Resubmission stats are checked
+        Then: previous_review_id is None, all documents counted as new
+        """
+        orchestrator = AgentOrchestrator(
+            review_id="rev_fresh",
+            application_ref="25/00413/F",
+            mcp_client=MagicMock(),
+        )
+
+        assert orchestrator._resubmission_stats["previous_review_id"] is None
+        assert orchestrator._resubmission_stats["documents_reused"] == 0
+        assert orchestrator._resubmission_stats["documents_new"] == 0
+        assert orchestrator._resubmission_stats["documents_removed"] == 0
+
+    def test_resubmission_metadata_has_previous_review_id(self):
+        """
+        Given: Orchestrator runs with previous_review_id="rev_old"
+        When: Resubmission stats are checked
+        Then: previous_review_id is "rev_old"
+        """
+        orchestrator = AgentOrchestrator(
+            review_id="rev_new",
+            application_ref="25/00413/F",
+            mcp_client=MagicMock(),
+            previous_review_id="rev_old",
+        )
+
+        assert orchestrator._resubmission_stats["previous_review_id"] == "rev_old"
+        assert orchestrator._previous_review_id == "rev_old"

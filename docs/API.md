@@ -202,6 +202,12 @@ When Redis is unreachable, returns `200` with `"status": "degraded"` and `"redis
 
 Queue an AI review of a Cherwell planning application.
 
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `force` | boolean | `false` | If `true`, cancel any active review for this application and start a new one |
+
 **Request Body (`application/json`):**
 
 ```json
@@ -248,15 +254,16 @@ Queue an AI review of a Cherwell planning application.
 }
 ```
 
-**Error `409 Conflict`:** Active review already exists for this application.
+**Error `409 Conflict`:** Active review already exists for this application. Use `?force=true` to cancel it and start a new one.
 
 ```json
 {
   "error": {
-    "code": "review_already_exists",
+    "code": "review_in_progress",
     "message": "A review for application 25/01178/REM is already queued or processing",
     "details": {
-      "application_ref": "25/01178/REM"
+      "application_ref": "25/01178/REM",
+      "active_review_id": "rev_01JMABCDEF1234567890AB"
     }
   }
 }
@@ -459,7 +466,11 @@ Returns the full review, including results when completed.
         "revision_id": "rev_NPPF_2024_12",
         "version_label": "December 2024"
       }
-    ]
+    ],
+    "previous_review_id": "rev_01JM9876ZYXWVU543210ZY",
+    "documents_reused": 35,
+    "documents_new": 3,
+    "documents_removed": 2
   },
   "site_boundary": {
     "type": "FeatureCollection",

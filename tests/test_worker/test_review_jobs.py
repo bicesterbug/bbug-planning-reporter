@@ -659,6 +659,111 @@ class TestReviewOutputUpload:
         assert urls == {"review_json": None, "review_md": None, "routes_json": None}
 
 
+class TestPreviousReviewIdThreading:
+    """Tests that previous_review_id is threaded from worker to orchestrator."""
+
+    @pytest.mark.asyncio
+    async def test_previous_review_id_passed_to_orchestrator(
+        self, mock_redis_wrapper, sample_success_result,
+    ):
+        """
+        Given: Worker receives job with previous_review_id="rev_prev"
+        When: process_review() creates the orchestrator
+        Then: Orchestrator is constructed with previous_review_id="rev_prev"
+        """
+        mock_redis_wrapper.get_job = AsyncMock(return_value=None)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            ctx = {
+                "redis": AsyncMock(),
+                "redis_client": mock_redis_wrapper,
+            }
+
+            await process_review(
+                ctx=ctx,
+                review_id="rev_new",
+                application_ref="25/00413/F",
+                previous_review_id="rev_prev",
+            )
+
+            mock_orch_cls.assert_called_once()
+            call_kwargs = mock_orch_cls.call_args[1]
+            assert call_kwargs["previous_review_id"] == "rev_prev"
+
+    @pytest.mark.asyncio
+    async def test_previous_review_id_none_by_default(
+        self, mock_redis_wrapper, sample_success_result,
+    ):
+        """
+        Given: Worker receives job without previous_review_id
+        When: process_review() creates the orchestrator
+        Then: Orchestrator is constructed with previous_review_id=None
+        """
+        mock_redis_wrapper.get_job = AsyncMock(return_value=None)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            ctx = {
+                "redis": AsyncMock(),
+                "redis_client": mock_redis_wrapper,
+            }
+
+            await process_review(
+                ctx=ctx,
+                review_id="rev_fresh",
+                application_ref="25/00413/F",
+            )
+
+            mock_orch_cls.assert_called_once()
+            call_kwargs = mock_orch_cls.call_args[1]
+            assert call_kwargs["previous_review_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_review_job_forwards_previous_review_id(
+        self, mock_redis_wrapper, sample_success_result,
+    ):
+        """
+        Given: review_job called with previous_review_id
+        When: It delegates to process_review
+        Then: previous_review_id is forwarded to process_review
+        """
+        mock_redis_wrapper.get_job = AsyncMock(return_value=None)
+
+        with patch("src.worker.review_jobs.AgentOrchestrator") as mock_orch_cls:
+            mock_instance = AsyncMock()
+            mock_orch_cls.return_value = mock_instance
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.run.return_value = sample_success_result
+
+            ctx = {
+                "redis": AsyncMock(),
+                "redis_client": mock_redis_wrapper,
+            }
+
+            await review_job(
+                ctx=ctx,
+                review_id="rev_arq",
+                application_ref="25/00413/F",
+                previous_review_id="rev_old",
+            )
+
+            mock_orch_cls.assert_called_once()
+            call_kwargs = mock_orch_cls.call_args[1]
+            assert call_kwargs["previous_review_id"] == "rev_old"
+
+
 class TestProcessReviewPassesStorageBackend:
     """Tests that process_review creates and passes storage backend to orchestrator."""
 

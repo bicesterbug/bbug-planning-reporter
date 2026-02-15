@@ -213,7 +213,8 @@ class TestDestinationsRoundTrip:
 
     def test_created_destination_usable_in_review(self, client, mock_redis):
         """[ITS-05] Created destination ID can be passed in review options."""
-        mock_redis.has_active_job_for_ref = AsyncMock(return_value=False)
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value=None)
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value=None)
         mock_redis.store_job = AsyncMock()
         mock_arq = AsyncMock()
         mock_arq.enqueue_job = AsyncMock()
@@ -241,7 +242,8 @@ class TestReviewOptionsDestinationIds:
 
     def test_with_destination_ids(self, client, mock_redis):
         """[ReviewOptionsRequest/TS-01] Request with destination_ids passes validation."""
-        mock_redis.has_active_job_for_ref = AsyncMock(return_value=False)
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value=None)
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value=None)
         mock_redis.store_job = AsyncMock()
         mock_arq = AsyncMock()
         mock_arq.enqueue_job = AsyncMock()
@@ -263,7 +265,8 @@ class TestReviewOptionsDestinationIds:
 
     def test_without_destination_ids(self, client, mock_redis):
         """[ReviewOptionsRequest/TS-02] Request without destination_ids defaults to None."""
-        mock_redis.has_active_job_for_ref = AsyncMock(return_value=False)
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value=None)
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value=None)
         mock_redis.store_job = AsyncMock()
         mock_arq = AsyncMock()
         mock_arq.enqueue_job = AsyncMock()
@@ -285,7 +288,8 @@ class TestReviewOptionsDestinationIds:
 
     def test_with_empty_destination_ids(self, client, mock_redis):
         """[ReviewOptionsRequest/TS-03] Empty destination_ids = no assessment."""
-        mock_redis.has_active_job_for_ref = AsyncMock(return_value=False)
+        mock_redis.get_active_review_id_for_ref = AsyncMock(return_value=None)
+        mock_redis.get_latest_completed_review_id_for_ref = AsyncMock(return_value=None)
         mock_redis.store_job = AsyncMock()
         mock_arq = AsyncMock()
         mock_arq.enqueue_job = AsyncMock()
