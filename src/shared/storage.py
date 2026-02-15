@@ -20,7 +20,7 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import structlog
 
@@ -142,7 +142,7 @@ class LocalStorageBackend:
         shutil.copy2(local_path, dest)
 
     def public_url(self, key: str) -> str | None:
-        return f"/api/v1/files/{key}"
+        return f"/api/v1/files/{quote(key, safe='/')}"
 
     def download_to(self, key: str, local_path: Path) -> None:
         src = self._output_dir / key
@@ -370,7 +370,7 @@ class S3StorageBackend:
         Implements [s3-document-storage:S3StorageBackend/TS-10] - Default prefix
         """
         full_key = self._full_key(key)
-        return f"{self._public_base_url}/{full_key}"
+        return f"{self._public_base_url}/{quote(full_key, safe='/')}"
 
     def download_to(self, key: str, local_path: Path) -> None:
         """Download an object from S3 to a local file."""
@@ -420,7 +420,7 @@ class InMemoryStorageBackend:
 
     def public_url(self, key: str) -> str | None:
         # Implements [s3-document-storage:InMemoryBackend/TS-02]
-        return f"{self._base_url}/{key}"
+        return f"{self._base_url}/{quote(key, safe='/')}"
 
     def download_to(self, key: str, local_path: Path) -> None:
         if key not in self.uploads:

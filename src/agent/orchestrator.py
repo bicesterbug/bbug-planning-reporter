@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import anthropic
 import redis.asyncio as redis
@@ -1292,7 +1293,8 @@ class AgentOrchestrator:
             for file_path, meta in self._ingestion_result.document_metadata.items():
                 desc = meta.get("description") or os.path.basename(file_path)
                 doc_type = meta.get("document_type", "Unknown")
-                url = meta.get("url") or "no URL"
+                raw_url = meta.get("url")
+                url = quote(raw_url, safe=":/?#[]@!$&'()*+,;=-._~%") if raw_url else "no URL"
                 doc_lines.append(f"- {desc} (type: {doc_type}, url: {url})")
             if doc_lines:
                 ingested_docs_text = "\n".join(doc_lines)

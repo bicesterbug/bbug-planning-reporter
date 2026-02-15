@@ -90,6 +90,18 @@ class TestLocalStorageBackend:
         url = backend.public_url("25_01178_REM/output/rev_xxx_review.json")
         assert url == "/api/v1/files/25_01178_REM/output/rev_xxx_review.json"
 
+    def test_public_url_encodes_spaces(self):
+        """public_url percent-encodes spaces in the key."""
+        backend = LocalStorageBackend()
+        url = backend.public_url("25_01178_REM/003_Delegated Officer Report.pdf")
+        assert url == "/api/v1/files/25_01178_REM/003_Delegated%20Officer%20Report.pdf"
+
+    def test_public_url_preserves_slashes(self):
+        """public_url does not encode path separators."""
+        backend = LocalStorageBackend()
+        url = backend.public_url("path/to/file.json")
+        assert "/" in url.replace("/api/v1/files/", "")
+
     def test_is_remote_false(self):
         """is_remote returns False for local storage."""
         backend = LocalStorageBackend()
@@ -163,6 +175,13 @@ class TestS3StorageBackend:
         backend = self._make_backend()
         url = backend.public_url("25_00284_F/001_Transport.pdf")
         assert url == "https://mybucket.nyc3.digitaloceanspaces.com/planning/25_00284_F/001_Transport.pdf"
+
+    def test_public_url_encodes_spaces(self):
+        """public_url percent-encodes spaces in S3 keys."""
+        backend = self._make_backend()
+        url = backend.public_url("25_00284_F/003_Delegated Officer Report.pdf")
+        assert "Delegated%20Officer%20Report" in url
+        assert "Delegated Officer" not in url
 
     def test_upload_retry_on_failure(self, tmp_path: Path):
         """Verifies [s3-document-storage:S3StorageBackend/TS-03] - Retry on failure."""
@@ -342,6 +361,13 @@ class TestInMemoryStorageBackend:
         backend = InMemoryStorageBackend()
         url = backend.public_url("25_00284_F/001_Transport.pdf")
         assert url == "https://test-bucket.example.com/25_00284_F/001_Transport.pdf"
+
+    def test_public_url_encodes_spaces(self):
+        """public_url percent-encodes spaces."""
+        backend = InMemoryStorageBackend()
+        url = backend.public_url("path/file name.pdf")
+        assert "file%20name.pdf" in url
+        assert "file name" not in url
 
     def test_public_url_custom_base(self):
         """Custom base URL is used in public_url."""

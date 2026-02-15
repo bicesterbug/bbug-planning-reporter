@@ -3318,3 +3318,58 @@ class TestDocumentTypeDetection:
         assert "url" in plans[0]
 
         await orchestrator.close()
+
+
+class TestEvidenceContextUrlEncoding:
+    """Tests for URL encoding in _build_evidence_context document list."""
+
+    def _make_orchestrator(self, monkeypatch, document_metadata):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+        orchestrator = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="25/00413/F",
+            mcp_client=MagicMock(),
+            redis_client=AsyncMock(),
+        )
+        orchestrator._ingestion_result = DocumentIngestionResult(
+            documents_fetched=len(document_metadata),
+            documents_ingested=len(document_metadata),
+            document_metadata=document_metadata,
+        )
+        orchestrator._search_results = []
+        return orchestrator
+
+    def test_spaces_in_url_are_encoded(self, monkeypatch):
+        orchestrator = self._make_orchestrator(monkeypatch, {
+            "/data/doc.pdf": {
+                "description": "Officer Report",
+                "document_type": "Report",
+                "url": "https://example.com/docs/Officer Report.pdf",
+            }
+        })
+        _, ingested_docs_text, *_ = orchestrator._build_evidence_context()
+        assert "Officer%20Report.pdf" in ingested_docs_text
+        assert "Officer Report.pdf" not in ingested_docs_text
+
+    def test_already_encoded_url_not_double_encoded(self, monkeypatch):
+        orchestrator = self._make_orchestrator(monkeypatch, {
+            "/data/doc.pdf": {
+                "description": "Report",
+                "document_type": "Report",
+                "url": "https://example.com/docs/Officer%20Report.pdf",
+            }
+        })
+        _, ingested_docs_text, *_ = orchestrator._build_evidence_context()
+        assert "Officer%20Report.pdf" in ingested_docs_text
+        assert "%2520" not in ingested_docs_text
+
+    def test_none_url_shows_no_url(self, monkeypatch):
+        orchestrator = self._make_orchestrator(monkeypatch, {
+            "/data/doc.pdf": {
+                "description": "Report",
+                "document_type": "Report",
+                "url": None,
+            }
+        })
+        _, ingested_docs_text, *_ = orchestrator._build_evidence_context()
+        assert "no URL" in ingested_docs_text

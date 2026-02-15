@@ -462,7 +462,7 @@ class CherwellScraperMCP:
                 description = doc.description or f"document_{i}"
                 # Sanitize filename
                 safe_name = "".join(
-                    c if c.isalnum() or c in "._- " else "_" for c in description
+                    c if c.isalnum() or c in "._-" else "_" for c in description
                 )[:100]
                 filename = f"{i:03d}_{safe_name}.pdf"
                 output_path = output_dir / filename
