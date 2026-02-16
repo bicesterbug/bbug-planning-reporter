@@ -59,6 +59,8 @@ uvicorn src.api.main:app --reload --port 8080
 python -m src.worker.main
 ```
 
+For detailed setup instructions including running individual MCP servers, policy seeding, volume path overrides, and connecting to Claude Code or Claude Desktop, see [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md).
+
 ## API Usage
 
 ### Submit a Review
