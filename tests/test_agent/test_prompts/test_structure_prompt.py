@@ -309,6 +309,86 @@ class TestStructurePromptConciseness:
         assert "max ~15 words" in system
 
 
+class TestStructurePromptProportionateParkingGuidance:
+    """Tests for proportionate parking assessment guidance."""
+
+    def test_proportionate_parking_guidance(self):
+        """
+        Given: The structure prompt is built
+        When: The system prompt text is inspected
+        Then: It contains guidance about considering applicant evidence for reduced parking provision
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "proportionality" in system.lower()
+        assert "evidence" in system.lower()
+        assert "reduced provision" in system
+
+    def test_unjustified_shortfall_still_flagged(self):
+        """
+        Given: The structure prompt is built
+        When: The system prompt text is inspected
+        Then: It contains guidance to firmly flag unjustified non-compliance
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "no justification" in system.lower()
+        assert "non-compliance" in system.lower()
+
+
+class TestStructurePromptCrossingTypeGuidance:
+    """Tests for crossing type assessment guidance."""
+
+    def test_crossing_type_guidance(self):
+        """
+        Given: The structure prompt is built
+        When: The system prompt text is inspected
+        Then: It contains guidance about assessing specific crossing types
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "parallel" in system.lower()
+        assert "toucan" in system.lower()
+        assert "uncontrolled" in system.lower()
+        assert "Crossing Design" in system
+
+    def test_crossing_absence_noted(self):
+        """
+        Given: The structure prompt is built
+        When: The system prompt text is inspected
+        Then: It contains guidance to note when TA doesn't describe crossing designs
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "note the absence" in system
+
+
+class TestStructurePromptEvidenceAwareCompliance:
+    """Tests for evidence-aware compliance guidance."""
+
+    def test_evidence_aware_compliance_guidance(self):
+        """
+        Given: The structure prompt is built
+        When: The system prompt text is inspected
+        Then: It contains guidance distinguishing unjustified non-compliance from justified departures
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert "unjustified non-compliance" in system.lower()
+        assert "justified departure" in system.lower()
+        assert "notes" in system.lower()
+
+
 PLANS_SUBMITTED = (
     "- Site Plan (type: Plans - Site Plan, image ratio: 92%)\n"
     "- Elevations (type: Elevations, image ratio: 88%)"

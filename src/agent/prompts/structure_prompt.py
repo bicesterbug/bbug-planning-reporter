@@ -59,8 +59,9 @@ Field guidance:
 **summary**: A concise 2-4 sentence summary of the review including the overall rating. This should capture the key finding, main concerns, and overall recommendation. Do not use markdown formatting.
 
 **aspects**: Include the aspects that are relevant to the application under review. Consider these standard aspects but select only those applicable:
-- "Cycle Parking" — quantity, type, location, security, accessibility
+- "Cycle Parking" — quantity, type, location, security, accessibility. When assessing cycle parking quantity, consider proportionality: if the applicant provides evidence for reduced provision (industry data, low staffing levels, shift patterns, phased delivery with monitoring), acknowledge the justification and assess whether the evidence is convincing. Note the shortfall against standards but distinguish between unjustified non-compliance and an evidence-backed departure. Assess whether delivery mechanisms for future provision are adequately secured (e.g. conditions, triggers, monitoring). If no justification is provided for a shortfall, flag it firmly as non-compliance.
 - "Cycle Routes" — on-site and connections to existing cycle network
+- "Crossing Design" — assess specific crossing types described in the transport assessment (parallel, toucan, signal-controlled, uncontrolled, raised table). Evaluate whether crossing types give adequate priority to cyclists and pedestrians, considering traffic speed, visibility, and driver awareness. Flag inadequate types (e.g. uncontrolled crossings on busy internal roads, lack of cyclist priority). If the TA doesn't describe crossing designs, note the absence.
 - "Junctions" — junction design safety for cyclists, LTN 1/20 compliance
 - "Permeability" — pedestrian/cycle permeability and filtered permeability
 - "Policy Compliance" — overall policy compliance assessment
@@ -77,7 +78,7 @@ Each aspect must have:
 - "requirement": What the policy requires
 - "policy_source": Specific policy and paragraph/section reference
 - "compliant": true/false (use false for partial compliance)
-- "notes": Brief explanation, or null
+- "notes": Brief explanation, or null. In the notes field, distinguish between unjustified non-compliance ("No justification provided for departure from [standard]") and justified departure ("Applicant provides [type of evidence] to justify reduced provision. [Assessment of evidence strength]"). The compliant field remains boolean — use notes for nuance.
 
 **recommendations**: List of specific, actionable recommendations with policy justification. Each string should be a complete recommendation.
 

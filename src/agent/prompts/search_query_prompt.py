@@ -66,7 +66,13 @@ Make queries specific to the proposal type (e.g. residential vs commercial vs mi
   - "OCC_LTCP" (Oxfordshire Local Transport and Connectivity Plan)
   - "BICESTER_LCWIP" (Bicester Local Cycling and Walking Infrastructure Plan)
   - "MANUAL_FOR_STREETS" (Manual for Streets)
-Target policies that are most relevant to the proposal type and the application queries above."""
+Target policies that are most relevant to the proposal type and the application queries above.
+
+When generating policy queries, ensure at least one query targets the Bicester LCWIP for local-specific standards such as:
+- Required shared path widths (may differ from LTN 1/20 minimums)
+- Crossing type requirements at junctions and access points
+- Network connectivity requirements for the site's location
+- Specific route improvements identified in the LCWIP for the area"""
 
     # Build application context
     ref = application_metadata.get("reference", "Unknown")

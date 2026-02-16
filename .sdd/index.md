@@ -10,7 +10,8 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
-| 2026-02-16 | [local-dev-setup](local-dev-setup/) | [spec](local-dev-setup/specification.md) | — | Draft | Documentation |
+| 2026-02-16 | [review-quality-improvements](review-quality-improvements/) | [spec](review-quality-improvements/specification.md) | [design](review-quality-improvements/design.md) | Implemented | Enhancement |
+| 2026-02-16 | [local-dev-setup](local-dev-setup/) | [spec](local-dev-setup/specification.md) | [design](local-dev-setup/design.md) | Implemented | Documentation |
 | 2026-02-15 | [review-resubmission](review-resubmission/) | [spec](review-resubmission/specification.md) | [design](review-resubmission/design.md) | Implemented | Enhancement |
 | 2026-02-15 | [url-encoding-fix](url-encoding-fix/) | [spec](url-encoding-fix/specification.md) | — | Draft | Bugfix |
 | 2026-02-15 | [review-output-urls](review-output-urls/) | [spec](review-output-urls/specification.md) | [design](review-output-urls/design.md) | Draft | Enhancement |

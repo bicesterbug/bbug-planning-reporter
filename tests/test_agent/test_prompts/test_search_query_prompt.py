@@ -126,3 +126,31 @@ class TestSearchQueryPromptIngestedDocs:
 
         assert "0 documents" in user
         assert "No documents ingested" in user
+
+
+class TestSearchQueryPromptLCWIPGuidance:
+    """Tests for LCWIP-specific query guidance in the system prompt."""
+
+    def test_lcwip_guidance_in_prompt(self):
+        """
+        Given: The search query prompt is built
+        When: The system prompt text is inspected
+        Then: It contains guidance about querying BICESTER_LCWIP for path widths and crossing standards
+        """
+        system, _ = build_search_query_prompt(SAMPLE_METADATA, SAMPLE_INGESTED_DOCS)
+
+        assert "LCWIP" in system
+        assert "shared path widths" in system
+        assert "crossing type" in system.lower()
+
+    def test_lcwip_guidance_mentions_specific_standards(self):
+        """
+        Given: The search query prompt is built
+        When: The system prompt text is inspected
+        Then: It mentions shared path widths, crossing type, and network connectivity
+        """
+        system, _ = build_search_query_prompt(SAMPLE_METADATA, SAMPLE_INGESTED_DOCS)
+
+        assert "shared path widths" in system
+        assert "crossing type" in system.lower()
+        assert "network connectivity" in system.lower()
