@@ -1557,6 +1557,22 @@ class AgentOrchestrator:
                     if upgraded:
                         route_lines.append(f"- Parallel detection: {upgraded} segment(s) upgraded via adjacent cycleway")
 
+                    # Transition statistics
+                    transitions = route_data.get("transitions", {})
+                    if transitions and not transitions.get("unavailable"):
+                        barrier_count = len(transitions.get("barriers", []))
+                        crossing_count = len(transitions.get("non_priority_crossings", []))
+                        side_change_count = len(transitions.get("side_changes", []))
+                        directness = transitions.get("directness_differential")
+
+                        route_lines.append(
+                            f"- Transitions: {barrier_count} barriers, "
+                            f"{crossing_count} non-priority crossings, "
+                            f"{side_change_count} side changes"
+                        )
+                        if directness is not None:
+                            route_lines.append(f"- Directness differential: {directness:.2f}")
+
                     if issues:
                         route_lines.append("- Issues:")
                         for issue in issues:
@@ -1627,6 +1643,18 @@ class AgentOrchestrator:
                 upgraded = sum(1 for s in segments if s.get("original_provision"))
                 if upgraded:
                     summary_lines.append(f"- Parallel detection: {upgraded} segment(s) upgraded")
+
+                # Transition statistics
+                transitions = route_data.get("transitions", {})
+                if transitions and not transitions.get("unavailable"):
+                    barrier_count = len(transitions.get("barriers", []))
+                    crossing_count = len(transitions.get("non_priority_crossings", []))
+                    side_change_count = len(transitions.get("side_changes", []))
+                    summary_lines.append(
+                        f"- Transitions: {barrier_count} barriers, "
+                        f"{crossing_count} non-priority crossings, "
+                        f"{side_change_count} side changes"
+                    )
 
                 # Issue counts by severity
                 severity_order = {"high": 0, "medium": 1, "low": 2}
@@ -1824,6 +1852,22 @@ class AgentOrchestrator:
                     for d in structure.key_documents
                 ]
 
+                # Implements [route-narrative-report:FR-001] - Extract route narrative
+                route_narrative = None
+                if structure.route_assessment is not None:
+                    route_narrative = {
+                        "destinations": [
+                            {
+                                "destination_name": d.destination_name,
+                                "shortest_route_summary": d.shortest_route_summary.model_dump(),
+                                "safest_route_summary": d.safest_route_summary.model_dump(),
+                                "narrative": d.narrative,
+                                "same_route": d.same_route,
+                            }
+                            for d in structure.route_assessment.destinations
+                        ]
+                    }
+
             else:
                 # Fallback: single markdown call (no structured field extraction)
                 # Implements [structured-review-output:FR-007]
@@ -1846,9 +1890,10 @@ Write a concise cycle advocacy review in markdown format with these sections:
 3. ## Key Documents
 4. ## Assessment Summary (with Overall Rating and aspect table)
 5. ## Detailed Assessment (subsections per aspect, 1-3 paragraphs each)
-6. ## Policy Compliance Matrix (table)
-7. ## Recommendations (numbered list, one sentence each)
-8. ## Suggested Conditions (numbered list in standard LPA format, if any)
+6. ## Route Assessment (if route data available)
+7. ## Policy Compliance Matrix (table)
+8. ## Recommendations (numbered list, one sentence each)
+9. ## Suggested Conditions (numbered list in standard LPA format, if any)
 
 Be concise and evidence-based. Cite specific policy references."""
 
@@ -1878,6 +1923,7 @@ Be concise and evidence-based. Cite specific policy references."""
                 suggested_conditions = None
                 key_documents = None
                 summary = None
+                route_narrative = None
 
             # Combined token tracking
             total_input = structure_input_tokens + report_input_tokens
@@ -1903,6 +1949,8 @@ Be concise and evidence-based. Cite specific policy references."""
                     "output_tokens": total_output,
                     # Implements [cycle-route-assessment:FR-008] - Route assessments in output
                     "route_assessments": self._route_assessments or None,
+                    # Implements [route-narrative-report:FR-001] - Route narrative section
+                    "route_narrative": route_narrative,
                 },
                 metadata={
                     "model": model,

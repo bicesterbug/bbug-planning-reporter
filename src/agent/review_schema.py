@@ -84,6 +84,40 @@ class KeyDocumentItem(BaseModel):
     url: str | None = None
 
 
+class RouteDestinationSummary(BaseModel):
+    """Summary metrics for a single route variant (shortest or safest)."""
+
+    distance_m: float
+    ltn_score: int = Field(..., description="LTN 1/20 score out of 100")
+    rating: Rating
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def validate_rating(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+
+class RouteDestinationItem(BaseModel):
+    """Per-destination route assessment with dual-route comparison."""
+
+    destination_name: str
+    shortest_route_summary: RouteDestinationSummary
+    safest_route_summary: RouteDestinationSummary
+    narrative: str = Field(
+        ...,
+        description="3-8 sentence narrative grounded in assessment statistics",
+    )
+    same_route: bool
+
+
+class RouteAssessmentSection(BaseModel):
+    """Route assessment section with per-destination narratives."""
+
+    destinations: list[RouteDestinationItem] = Field(..., min_length=1)
+
+
 class ReviewStructure(BaseModel):
     """
     Schema for the structure call JSON response.
@@ -102,6 +136,8 @@ class ReviewStructure(BaseModel):
     recommendations: list[str]
     suggested_conditions: list[str]
     key_documents: list[KeyDocumentItem]
+    # Implements [route-narrative-report:FR-001] - Optional route assessment section
+    route_assessment: RouteAssessmentSection | None = None
 
     # Implements [reliable-structure-extraction:FR-002] - mode="before" normalises casing
     @field_validator("overall_rating", mode="before")

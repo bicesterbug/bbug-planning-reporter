@@ -2581,7 +2581,7 @@ class TestTwoPhaseReviewGeneration:
             "overall_rating", "key_documents", "aspects", "policy_compliance",
             "recommendations", "suggested_conditions", "full_markdown",
             "summary", "model", "input_tokens", "output_tokens",
-            "route_assessments",
+            "route_assessments", "route_narrative",
         }
         assert set(review.keys()) == expected_keys
 

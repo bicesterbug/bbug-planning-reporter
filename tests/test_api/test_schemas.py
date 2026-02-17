@@ -316,6 +316,43 @@ class TestReviewOptionsRequestToggles:
         assert options.include_public_comments is False
 
 
+class TestReviewContentRouteNarrative:
+    """
+    Tests for route_narrative field on ReviewContent.
+
+    Verifies [route-narrative-report:FR-005] - Backward compatibility
+    """
+
+    def test_route_narrative_accepted(self) -> None:
+        """ReviewContent accepts route_narrative dict."""
+        content = ReviewContent(
+            overall_rating="amber",
+            route_narrative={
+                "destinations": [
+                    {
+                        "destination_name": "Bicester North",
+                        "shortest_route_summary": {"distance_m": 2200, "ltn_score": 35, "rating": "red"},
+                        "safest_route_summary": {"distance_m": 2800, "ltn_score": 72, "rating": "amber"},
+                        "narrative": "Test narrative.",
+                        "same_route": False,
+                    }
+                ]
+            },
+        )
+        assert content.route_narrative is not None
+        assert len(content.route_narrative["destinations"]) == 1
+
+    def test_route_narrative_defaults_to_none(self) -> None:
+        """ReviewContent defaults route_narrative to None for backward compatibility."""
+        content = ReviewContent(overall_rating="green")
+        assert content.route_narrative is None
+
+    def test_route_narrative_null_accepted(self) -> None:
+        """ReviewContent accepts explicit null for route_narrative."""
+        content = ReviewContent(overall_rating="green", route_narrative=None)
+        assert content.route_narrative is None
+
+
 class TestReviewOptionsToggles:
     """
     Tests for review-scope-control toggle fields on internal ReviewOptions model.

@@ -389,6 +389,38 @@ class TestStructurePromptEvidenceAwareCompliance:
         assert "notes" in system.lower()
 
 
+class TestStructurePromptRouteAssessment:
+    """Verifies [route-narrative-report:FR-001] - route_assessment guidance in structure prompt."""
+
+    def test_route_assessment_guidance_present(self):
+        """System prompt contains route_assessment field guidance."""
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "route_assessment" in system
+
+    def test_route_assessment_marked_optional(self):
+        """System prompt marks route_assessment as OPTIONAL."""
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "OPTIONAL" in system
+
+    def test_narrative_sentence_guidance(self):
+        """System prompt specifies 3-8 sentences for narrative."""
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "3-8 sentences" in system
+
+    def test_must_not_invent_data(self):
+        """System prompt contains 'Must not invent data' guidance."""
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "Must not invent data" in system
+
+
 PLANS_SUBMITTED = (
     "- Site Plan (type: Plans - Site Plan, image ratio: 92%)\n"
     "- Elevations (type: Elevations, image ratio: 88%)"

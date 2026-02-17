@@ -125,7 +125,7 @@ def _make_boundary_result():
 
 
 def _make_route_data(distance=2500, score=55, rating="amber", provision=None,
-                     issues=None, s106=None, segments=None):
+                     issues=None, s106=None, segments=None, transitions=None):
     """Create a single route data object."""
     if provision is None:
         provision = {"segregated": 1500, "none": 1000}
@@ -141,7 +141,7 @@ def _make_route_data(distance=2500, score=55, rating="amber", provision=None,
         s106 = [{"suggestion": "Contribute to cycleway along Buckingham Road"}]
     if segments is None:
         segments = []
-    return {
+    result = {
         "distance_m": distance,
         "duration_minutes": round(distance / 250, 1),
         "provision_breakdown": provision,
@@ -151,6 +151,9 @@ def _make_route_data(distance=2500, score=55, rating="amber", provision=None,
         "segments": segments,
         "route_geometry": [],
     }
+    if transitions is not None:
+        result["transitions"] = transitions
+    return result
 
 
 def _make_route_result(destination="Bicester North", same_route=True):
@@ -534,3 +537,223 @@ class TestBuildRouteEvidenceSummary:
         summary = orch._build_route_evidence_summary()
         assert "Parallel detection" in summary
         assert "upgraded" in summary
+
+
+# =============================================================================
+# Transition evidence tests
+# =============================================================================
+
+
+def _make_transitions_data(barriers=None, crossings=None, side_changes=None,
+                           directness=None, unavailable=False):
+    """Create a transitions dict for test helpers."""
+    result = {
+        "barriers": barriers or [],
+        "non_priority_crossings": crossings or [],
+        "side_changes": side_changes or [],
+        "directness_differential": directness,
+    }
+    if unavailable:
+        result["unavailable"] = True
+    return result
+
+
+class TestTransitionEvidence:
+    """Verifies [route-transition-analysis:_build_evidence_context/TS-14] through TS-16."""
+
+    def test_evidence_includes_transition_stats(self):
+        """[TS-14] Evidence text includes transition statistics."""
+        transitions = _make_transitions_data(
+            barriers=[{"type": "bollard"}, {"type": "gate"}],
+            crossings=[{"road_speed_limit": 30}],
+        )
+        route = _make_route_data(transitions=transitions)
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [{
+            "status": "success",
+            "destination": "Test",
+            "shortest_route": route,
+            "safest_route": route,
+            "same_route": True,
+        }]
+
+        result = orch._build_evidence_context()
+        route_text = result[5]
+        assert "2 barriers" in route_text
+        assert "1 non-priority crossings" in route_text
+        assert "0 side changes" in route_text
+
+    def test_evidence_includes_directness_differential(self):
+        """[TS-15] Evidence text includes directness differential."""
+        transitions = _make_transitions_data(directness=1.15)
+        route = _make_route_data(transitions=transitions)
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [{
+            "status": "success",
+            "destination": "Test",
+            "shortest_route": route,
+            "safest_route": route,
+            "same_route": True,
+        }]
+
+        result = orch._build_evidence_context()
+        route_text = result[5]
+        assert "Directness differential: 1.15" in route_text
+
+    def test_evidence_omits_unavailable_transitions(self):
+        """[TS-16] Evidence text omits transitions when unavailable."""
+        transitions = _make_transitions_data(unavailable=True)
+        route = _make_route_data(transitions=transitions)
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [{
+            "status": "success",
+            "destination": "Test",
+            "shortest_route": route,
+            "safest_route": route,
+            "same_route": True,
+        }]
+
+        result = orch._build_evidence_context()
+        route_text = result[5]
+        assert "Transitions:" not in route_text
+
+
+# =============================================================================
+# Route narrative extraction tests
+# =============================================================================
+
+
+class TestRouteNarrativeExtraction:
+    """Verifies [route-narrative-report:FR-001] - Route narrative from structure."""
+
+    def test_route_narrative_extracted_when_present(self):
+        """route_narrative is extracted when structure has route_assessment."""
+        from src.agent.review_schema import ReviewStructure
+
+        structure_data = {
+            "overall_rating": "amber",
+            "summary": "Test summary.",
+            "aspects": [{"name": "Cycle Routes", "rating": "amber",
+                         "key_issue": "Test", "analysis": "Test analysis."}],
+            "policy_compliance": [],
+            "recommendations": [],
+            "suggested_conditions": [],
+            "key_documents": [],
+            "route_assessment": {
+                "destinations": [
+                    {
+                        "destination_name": "Bicester North",
+                        "shortest_route_summary": {"distance_m": 2200, "ltn_score": 35, "rating": "red"},
+                        "safest_route_summary": {"distance_m": 2800, "ltn_score": 72, "rating": "amber"},
+                        "narrative": "The shortest route scores 35/100. The safest scores 72/100.",
+                        "same_route": False,
+                    }
+                ]
+            },
+        }
+        structure = ReviewStructure.model_validate(structure_data)
+
+        # Simulate the orchestrator extraction logic
+        route_narrative = None
+        if structure.route_assessment is not None:
+            route_narrative = {
+                "destinations": [
+                    {
+                        "destination_name": d.destination_name,
+                        "shortest_route_summary": d.shortest_route_summary.model_dump(),
+                        "safest_route_summary": d.safest_route_summary.model_dump(),
+                        "narrative": d.narrative,
+                        "same_route": d.same_route,
+                    }
+                    for d in structure.route_assessment.destinations
+                ]
+            }
+
+        assert route_narrative is not None
+        assert len(route_narrative["destinations"]) == 1
+        dest = route_narrative["destinations"][0]
+        assert dest["destination_name"] == "Bicester North"
+        assert dest["shortest_route_summary"]["distance_m"] == 2200
+        assert dest["shortest_route_summary"]["ltn_score"] == 35
+        assert dest["safest_route_summary"]["rating"] == "amber"
+        assert dest["narrative"] == "The shortest route scores 35/100. The safest scores 72/100."
+        assert dest["same_route"] is False
+
+    def test_route_narrative_none_when_no_assessment(self):
+        """route_narrative is None when structure has no route_assessment."""
+        from src.agent.review_schema import ReviewStructure
+
+        structure_data = {
+            "overall_rating": "amber",
+            "summary": "Test summary.",
+            "aspects": [{"name": "Cycle Routes", "rating": "amber",
+                         "key_issue": "Test", "analysis": "Test analysis."}],
+            "policy_compliance": [],
+            "recommendations": [],
+            "suggested_conditions": [],
+            "key_documents": [],
+        }
+        structure = ReviewStructure.model_validate(structure_data)
+
+        route_narrative = None
+        if structure.route_assessment is not None:
+            route_narrative = {"destinations": []}
+
+        assert route_narrative is None
+
+
+class TestTransitionSummary:
+    """Verifies [route-transition-analysis:_build_route_evidence_summary/TS-17] and TS-18."""
+
+    def test_summary_includes_transition_counts(self):
+        """[TS-17] Summary includes transition counts."""
+        transitions = _make_transitions_data(
+            barriers=[{"type": "bollard"}],
+            crossings=[{"road_speed_limit": 30}, {"road_speed_limit": 20}],
+            side_changes=[{"road_name": "Cross St"}],
+        )
+        route = _make_route_data(transitions=transitions)
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [{
+            "status": "success",
+            "destination": "Test",
+            "shortest_route": route,
+            "safest_route": route,
+            "same_route": True,
+        }]
+
+        summary = orch._build_route_evidence_summary()
+        assert "1 barriers" in summary
+        assert "2 non-priority crossings" in summary
+        assert "1 side changes" in summary
+
+    def test_summary_omits_unavailable_transitions(self):
+        """[TS-18] Summary omits transitions when unavailable."""
+        transitions = _make_transitions_data(unavailable=True)
+        route = _make_route_data(transitions=transitions)
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [{
+            "status": "success",
+            "destination": "Test",
+            "shortest_route": route,
+            "safest_route": route,
+            "same_route": True,
+        }]
+
+        summary = orch._build_route_evidence_summary()
+        assert "Transitions:" not in summary

@@ -114,7 +114,40 @@ One subsection per aspect from the JSON. Expand the analysis notes into focused 
 [Focused prose]
 ```
 
-### 6. Policy Compliance Matrix
+### 6. Route Assessment (CONDITIONAL)
+```
+## Route Assessment
+```
+Include this section ONLY if the JSON contains a `route_assessment` object. If `route_assessment` is absent or null, OMIT this entire section — do not render an empty heading.
+
+For each destination in `route_assessment.destinations`, create a subsection:
+```
+### [destination_name]
+
+[narrative text — use EXACT text from JSON]
+
+| Metric | Shortest Route | Safest Route |
+|--------|---------------|--------------|
+| Distance | [distance_m]m | [distance_m]m |
+| LTN 1/20 Score | [ltn_score]/100 | [ltn_score]/100 |
+| Rating | [RATING] | [RATING] |
+```
+
+When `same_route` is true, use a single-column table instead:
+```
+| Metric | Route |
+|--------|-------|
+| Distance | [distance_m]m |
+| LTN 1/20 Score | [ltn_score]/100 |
+| Rating | [RATING] |
+```
+
+Rules for this section:
+- You MUST use the EXACT narrative text from the JSON — do not paraphrase or embellish
+- You MUST use the EXACT distances, scores, and ratings from the JSON
+- Ratings in the table should be UPPERCASE (RED, AMBER, GREEN)
+
+### 7. Policy Compliance Matrix
 ```
 ## Policy Compliance Matrix
 
@@ -123,13 +156,13 @@ One subsection per aspect from the JSON. Expand the analysis notes into focused 
 ```
 One row per compliance item from the JSON. Render compliant as "YES" or "NO".
 
-### 7. Recommendations
+### 8. Recommendations
 ```
 ## Recommendations
 ```
 Numbered list. Each recommendation as a single sentence with a policy reference in parentheses.
 
-### 8. Suggested Conditions
+### 9. Suggested Conditions
 ```
 ## Suggested Conditions
 ```

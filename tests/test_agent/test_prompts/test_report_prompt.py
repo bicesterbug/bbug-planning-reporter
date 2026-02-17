@@ -86,7 +86,7 @@ class TestReportPromptFormat:
         """
         Given: Any input
         When: build_report_prompt() called
-        Then: System prompt specifies all 8 report sections in order
+        Then: System prompt specifies all report sections in order
         """
         structure_json = json.dumps(SAMPLE_STRUCTURE)
         system, _ = build_report_prompt(
@@ -99,6 +99,7 @@ class TestReportPromptFormat:
             "Key Documents",
             "Assessment Summary",
             "Detailed Assessment",
+            "Route Assessment",
             "Policy Compliance Matrix",
             "Recommendations",
             "Suggested Conditions",
@@ -231,6 +232,46 @@ class TestReportPromptConciseness:
         )
 
         assert "single sentence" in system
+
+
+class TestReportPromptRouteAssessment:
+    """Verifies [route-narrative-report:FR-003] - Route assessment section in report prompt."""
+
+    def test_route_assessment_heading(self):
+        """System prompt contains ## Route Assessment heading."""
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "## Route Assessment" in system
+
+    def test_statistics_table_format(self):
+        """System prompt specifies statistics table with Distance, LTN 1/20 Score, Rating."""
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "Distance" in system
+        assert "LTN 1/20 Score" in system
+        assert "Rating" in system
+
+    def test_conditional_omission_guidance(self):
+        """System prompt contains guidance to omit section when route_assessment absent."""
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "OMIT" in system
+        assert "absent or null" in system
+
+    def test_binding_language_for_narrative(self):
+        """System prompt contains binding language for route narrative text."""
+        structure_json = json.dumps(SAMPLE_STRUCTURE)
+        system, _ = build_report_prompt(
+            structure_json, APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "EXACT narrative text" in system
+        assert "EXACT distances, scores, and ratings" in system
 
 
 PLANS_SUBMITTED = (

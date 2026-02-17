@@ -217,6 +217,8 @@ class ReviewContent(BaseModel):
     full_markdown: str | None = None
     # Implements [cycle-route-assessment:FR-008] - Route assessments in review output
     route_assessments: list[RouteAssessment] | None = None
+    # Implements [route-narrative-report:FR-001] - Route narrative section
+    route_narrative: dict[str, Any] | None = None
 
 
 class PolicyRevisionUsed(BaseModel):

@@ -89,6 +89,15 @@ Each aspect must have:
 - "category": One of "Transport & Access", "Design & Layout", "Application Core"
 - "summary": One short sentence on cycling relevance (max ~15 words)
 - "url": Download URL from the ingested documents list, or null
+
+**route_assessment** (OPTIONAL — include ONLY if Cycling Route Assessments data is provided in the user prompt):
+An object with a "destinations" array. Each destination entry has:
+- "destination_name": Name of the destination assessed
+- "shortest_route_summary": {"distance_m": float, "ltn_score": int (0-100), "rating": "red"/"amber"/"green"}
+- "safest_route_summary": {"distance_m": float, "ltn_score": int (0-100), "rating": "red"/"amber"/"green"}
+- "narrative": 3-8 sentences explaining the route findings for this destination. Must reference specific distances, scores, and issues from the assessment data. Compare shortest vs safest route trade-offs. Note transition quality issues (barriers, crossings, side changes) if present. Conclude with LTN 1/20 compliance assessment. Must not invent data — ground all claims in the provided statistics.
+- "same_route": true if shortest and safest are the same route, false otherwise
+Do NOT include route_assessment if no Cycling Route Assessments data was provided. Do NOT include it with empty destinations.
 """
 
     user_prompt = f"""Assess the following planning application from a cycling advocacy perspective using the submit_review_structure tool.
