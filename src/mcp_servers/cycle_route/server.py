@@ -34,6 +34,7 @@ from src.mcp_servers.cycle_route.geojson import parse_arcgis_response
 from src.mcp_servers.cycle_route.infrastructure import (
     OVERPASS_API_URL,
     build_overpass_query,
+    detect_parallel_provision,
     parse_overpass_ways,
     summarise_provision,
 )
@@ -205,8 +206,57 @@ class CycleRouteMCP:
             "geojson": geojson,
         }
 
+    async def _assess_single_route(
+        self,
+        route: dict[str, Any],
+        dest_name: str,
+    ) -> dict[str, Any] | None:
+        """
+        Assess a single OSRM route: query Overpass, parse segments,
+        run parallel detection, score, and identify issues.
+
+        Returns route assessment dict or None if no infrastructure data.
+        """
+        cycling_distance_m = route["distance"]
+        cycling_duration_s = route["duration"]
+        route_coords = route["geometry"]["coordinates"]
+
+        # Rate limit before Overpass call
+        await asyncio.sleep(EXTERNAL_API_DELAY)
+
+        overpass_query = build_overpass_query(route_coords)
+        overpass_response = await self.http.post(
+            OVERPASS_API_URL,
+            data={"data": overpass_query},
+        )
+        overpass_response.raise_for_status()
+        overpass_data = overpass_response.json()
+
+        segments = parse_overpass_ways(overpass_data, cycling_distance_m)
+        if not segments:
+            return None
+
+        # Parallel detection: upgrade provisions for road segments with adjacent cycleways
+        detect_parallel_provision(segments, overpass_data)
+
+        provision = summarise_provision(segments)
+        route_score = score_route(segments, cycling_distance_m)
+        route_issues = identify_issues(segments)
+        s106 = generate_s106_suggestions(route_issues)
+
+        return {
+            "distance_m": round(cycling_distance_m),
+            "duration_minutes": round(cycling_duration_s / 60, 1),
+            "provision_breakdown": provision,
+            "segments": [s.to_dict() for s in segments],
+            "score": route_score,
+            "issues": route_issues,
+            "s106_suggestions": s106,
+            "route_geometry": route_coords,
+        }
+
     async def _assess_cycle_route(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Assess cycling route between two points."""
+        """Assess cycling route between two points with dual routing."""
         origin_lon = arguments["origin_lon"]
         origin_lat = arguments["origin_lat"]
         dest_lon = arguments["destination_lon"]
@@ -220,7 +270,7 @@ class CycleRouteMCP:
             destination_coords=f"{dest_lat:.4f},{dest_lon:.4f}",
         )
 
-        # Step 1: Get cycling route from OSRM
+        # Step 1: Get cycling routes from OSRM (with alternatives)
         osrm_url = (
             f"{self.osrm_url}/{origin_lon},{origin_lat};"
             f"{dest_lon},{dest_lat}"
@@ -229,6 +279,7 @@ class CycleRouteMCP:
             "overview": "full",
             "geometries": "geojson",
             "steps": "false",
+            "alternatives": "true",
         }
 
         response = await self.http.get(osrm_url, params=osrm_params)
@@ -242,70 +293,67 @@ class CycleRouteMCP:
                 "message": f"No cycling route found to {dest_name}",
             }
 
-        route = osrm_data["routes"][0]
-        cycling_distance_m = route["distance"]
-        cycling_duration_s = route["duration"]
-        route_coords = route["geometry"]["coordinates"]
+        # Step 2: Assess each alternative route
+        assessed_routes = []
+        for route in osrm_data["routes"]:
+            assessment = await self._assess_single_route(route, dest_name)
+            if assessment:
+                assessed_routes.append(assessment)
 
-        # Rate limit before next API call
-        await asyncio.sleep(EXTERNAL_API_DELAY)
-
-        # Step 2: Query Overpass for infrastructure along route
-        overpass_query = build_overpass_query(route_coords)
-
-        overpass_response = await self.http.post(
-            OVERPASS_API_URL,
-            data={"data": overpass_query},
-        )
-        overpass_response.raise_for_status()
-        overpass_data = overpass_response.json()
-
-        # Step 3: Parse infrastructure segments
-        segments = parse_overpass_ways(overpass_data, cycling_distance_m)
-
-        if not segments:
-            logger.warning(
-                "No infrastructure data found",
-                destination=dest_name,
-            )
+        if not assessed_routes:
+            route = osrm_data["routes"][0]
             return {
                 "status": "success",
                 "destination": dest_name,
-                "distance_m": round(cycling_distance_m),
-                "duration_minutes": round(cycling_duration_s / 60, 1),
-                "provision_breakdown": {},
-                "score": {"score": 0, "rating": "red", "breakdown": {}},
-                "issues": [],
-                "s106_suggestions": [],
+                "shortest_route": {
+                    "distance_m": round(route["distance"]),
+                    "duration_minutes": round(route["duration"] / 60, 1),
+                    "provision_breakdown": {},
+                    "score": {"score": 0, "rating": "red", "breakdown": {}},
+                    "issues": [],
+                    "s106_suggestions": [],
+                    "route_geometry": route["geometry"]["coordinates"],
+                },
+                "safest_route": {
+                    "distance_m": round(route["distance"]),
+                    "duration_minutes": round(route["duration"] / 60, 1),
+                    "provision_breakdown": {},
+                    "score": {"score": 0, "rating": "red", "breakdown": {}},
+                    "issues": [],
+                    "s106_suggestions": [],
+                    "route_geometry": route["geometry"]["coordinates"],
+                },
+                "same_route": True,
                 "note": "No infrastructure data available along route",
             }
 
-        # Step 4: Score and identify issues
-        provision = summarise_provision(segments)
-        route_score = score_route(segments, cycling_distance_m)
-        route_issues = identify_issues(segments)
-        s106 = generate_s106_suggestions(route_issues)
+        # Step 3: Select shortest (min distance) and safest (max score, tie-break shorter)
+        shortest = min(assessed_routes, key=lambda r: r["distance_m"])
+        safest = max(
+            assessed_routes,
+            key=lambda r: (r["score"]["score"], -r["distance_m"]),
+        )
+
+        same_route = shortest is safest
 
         logger.info(
-            "Route assessed",
+            "Dual route assessed",
             destination=dest_name,
-            distance_m=round(cycling_distance_m),
-            score=route_score["score"],
-            rating=route_score["rating"],
-            issues_count=len(route_issues),
+            alternatives=len(osrm_data["routes"]),
+            assessed=len(assessed_routes),
+            shortest_distance=shortest["distance_m"],
+            shortest_score=shortest["score"]["score"],
+            safest_distance=safest["distance_m"],
+            safest_score=safest["score"]["score"],
+            same_route=same_route,
         )
 
         return {
             "status": "success",
             "destination": dest_name,
-            "distance_m": round(cycling_distance_m),
-            "duration_minutes": round(cycling_duration_s / 60, 1),
-            "provision_breakdown": provision,
-            "segments": [s.to_dict() for s in segments],
-            "score": route_score,
-            "issues": route_issues,
-            "s106_suggestions": s106,
-            "route_geometry": route_coords,
+            "shortest_route": shortest,
+            "safest_route": safest,
+            "same_route": same_route,
         }
 
 

@@ -17,8 +17,11 @@ import pytest
 
 from src.mcp_servers.cycle_route.infrastructure import (
     RouteSegment,
+    bearing_difference,
     build_overpass_query,
+    calculate_way_bearing,
     classify_provision,
+    detect_parallel_provision,
     extract_lit,
     extract_speed_limit,
     extract_surface,
@@ -334,3 +337,247 @@ class TestSummariseProvision:
         assert result["segregated"] == 500.0
         assert result["none"] == 300.0
         assert result["shared_use"] == 200.0
+
+
+# =============================================================================
+# RouteSegment.original_provision
+# =============================================================================
+
+
+class TestRouteSegmentOriginalProvision:
+    def test_includes_original_provision_when_upgraded(self):
+        """to_dict() includes original_provision when set."""
+        seg = RouteSegment(1, "segregated", "secondary", 30, "asphalt", True, 500, "Banbury Rd",
+                          original_provision="none")
+        d = seg.to_dict()
+        assert d["provision"] == "segregated"
+        assert d["original_provision"] == "none"
+
+    def test_omits_original_provision_when_not_set(self):
+        """to_dict() omits original_provision when None."""
+        seg = RouteSegment(1, "none", "secondary", 30, "asphalt", True, 500, "Banbury Rd")
+        d = seg.to_dict()
+        assert "original_provision" not in d
+
+
+# =============================================================================
+# build_overpass_query — out geom
+# =============================================================================
+
+
+class TestBuildOverpassQueryGeom:
+    def test_query_uses_out_geom(self):
+        """Query requests geometry output."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords)
+        assert "out geom" in query
+        assert "out body" not in query
+
+
+# =============================================================================
+# calculate_way_bearing
+# =============================================================================
+
+
+class TestCalculateWayBearing:
+    def test_east_west_bearing(self):
+        """Way running east returns ~90 degrees."""
+        geometry = [
+            {"lat": 51.90, "lon": -1.16},
+            {"lat": 51.90, "lon": -1.14},
+        ]
+        bearing = calculate_way_bearing(geometry)
+        assert bearing is not None
+        assert abs(bearing - 90) < 2
+
+    def test_north_south_bearing(self):
+        """Way running north returns ~0 degrees."""
+        geometry = [
+            {"lat": 51.89, "lon": -1.15},
+            {"lat": 51.91, "lon": -1.15},
+        ]
+        bearing = calculate_way_bearing(geometry)
+        assert bearing is not None
+        assert bearing < 2 or bearing > 358
+
+    def test_single_node_returns_none(self):
+        """Way with only one node returns None."""
+        geometry = [{"lat": 51.90, "lon": -1.15}]
+        assert calculate_way_bearing(geometry) is None
+
+    def test_empty_returns_none(self):
+        """Empty geometry returns None."""
+        assert calculate_way_bearing([]) is None
+
+
+# =============================================================================
+# bearing_difference
+# =============================================================================
+
+
+class TestBearingDifference:
+    def test_same_bearing(self):
+        """Same bearing returns 0."""
+        assert bearing_difference(90, 90) == 0
+
+    def test_opposite_directions_parallel(self):
+        """Opposite directions (east vs west) treated as parallel."""
+        assert bearing_difference(90, 270) == 0
+
+    def test_wrap_around(self):
+        """350 and 10 degrees differ by 20."""
+        assert bearing_difference(350, 10) == 20
+
+    def test_perpendicular(self):
+        """North vs east is 90 degrees."""
+        assert bearing_difference(0, 90) == 90
+
+    def test_slight_angle(self):
+        """Small difference correctly calculated."""
+        assert bearing_difference(85, 95) == 10
+
+    def test_opposite_wrap(self):
+        """170 and 350 are opposite-ish (180 apart → 0)."""
+        assert bearing_difference(170, 350) == 0
+
+
+# =============================================================================
+# detect_parallel_provision
+# =============================================================================
+
+
+def _make_overpass_data(ways):
+    """Helper to build Overpass-style response with geometry."""
+    return {"elements": ways}
+
+
+def _make_road_way(way_id, lat_start, lon_start, lat_end, lon_end, tags=None):
+    """Helper to build a road way element."""
+    base_tags = {"highway": "secondary", "name": "Test Road"}
+    if tags:
+        base_tags.update(tags)
+    return {
+        "type": "way",
+        "id": way_id,
+        "tags": base_tags,
+        "geometry": [
+            {"lat": lat_start, "lon": lon_start},
+            {"lat": lat_end, "lon": lon_end},
+        ],
+    }
+
+
+def _make_cycleway_way(way_id, lat_start, lon_start, lat_end, lon_end, tags=None):
+    """Helper to build a cycleway way element."""
+    base_tags = {"highway": "cycleway", "surface": "asphalt"}
+    if tags:
+        base_tags.update(tags)
+    return {
+        "type": "way",
+        "id": way_id,
+        "tags": base_tags,
+        "geometry": [
+            {"lat": lat_start, "lon": lon_start},
+            {"lat": lat_end, "lon": lon_end},
+        ],
+    }
+
+
+class TestDetectParallelProvision:
+    def test_parallel_cycleway_upgrades_provision(self):
+        """Road segment with parallel cycleway gets provision upgraded."""
+        # Road running east-west
+        road = _make_road_way(100, 51.90, -1.16, 51.90, -1.14)
+        # Parallel cycleway running east-west (slightly offset)
+        cycleway = _make_cycleway_way(200, 51.9001, -1.16, 51.9001, -1.14)
+
+        segments = [
+            RouteSegment(100, "none", "secondary", 30, "asphalt", True, 500, "Test Road"),
+        ]
+        overpass = _make_overpass_data([road, cycleway])
+
+        result = detect_parallel_provision(segments, overpass)
+        assert result[0].provision == "segregated"
+        assert result[0].original_provision == "none"
+
+    def test_no_upgrade_without_parallel(self):
+        """Road segment without parallel cycleway keeps original provision."""
+        road = _make_road_way(100, 51.90, -1.16, 51.90, -1.14)
+
+        segments = [
+            RouteSegment(100, "none", "secondary", 30, "asphalt", True, 500, "Test Road"),
+        ]
+        overpass = _make_overpass_data([road])
+
+        result = detect_parallel_provision(segments, overpass)
+        assert result[0].provision == "none"
+        assert result[0].original_provision is None
+
+    def test_no_upgrade_when_bearing_differs(self):
+        """Perpendicular cycleway does not upgrade provision."""
+        # Road running east-west
+        road = _make_road_way(100, 51.90, -1.16, 51.90, -1.14)
+        # Cycleway running north-south (perpendicular)
+        cycleway = _make_cycleway_way(200, 51.89, -1.15, 51.91, -1.15)
+
+        segments = [
+            RouteSegment(100, "none", "secondary", 30, "asphalt", True, 500, "Test Road"),
+        ]
+        overpass = _make_overpass_data([road, cycleway])
+
+        result = detect_parallel_provision(segments, overpass)
+        assert result[0].provision == "none"
+        assert result[0].original_provision is None
+
+    def test_best_provision_selected(self):
+        """When multiple candidates match, the best provision is used."""
+        # Road running east-west
+        road = _make_road_way(100, 51.90, -1.16, 51.90, -1.14)
+        # Shared-use path parallel
+        shared = _make_cycleway_way(
+            200, 51.9001, -1.16, 51.9001, -1.14,
+            tags={"highway": "path", "bicycle": "designated", "foot": "designated"},
+        )
+        # Segregated cycleway parallel
+        segregated = _make_cycleway_way(300, 51.9002, -1.16, 51.9002, -1.14)
+
+        segments = [
+            RouteSegment(100, "none", "secondary", 30, "asphalt", True, 500, "Test Road"),
+        ]
+        overpass = _make_overpass_data([road, shared, segregated])
+
+        result = detect_parallel_provision(segments, overpass)
+        assert result[0].provision == "segregated"
+        assert result[0].original_provision == "none"
+
+    def test_already_good_provision_not_upgraded(self):
+        """Segment with segregated provision is not touched."""
+        road = _make_road_way(100, 51.90, -1.16, 51.90, -1.14,
+                             tags={"highway": "cycleway"})
+        cycleway = _make_cycleway_way(200, 51.9001, -1.16, 51.9001, -1.14)
+
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Route"),
+        ]
+        overpass = _make_overpass_data([road, cycleway])
+
+        result = detect_parallel_provision(segments, overpass)
+        assert result[0].provision == "segregated"
+        assert result[0].original_provision is None
+
+    def test_cycleway_already_in_segments_not_candidate(self):
+        """A cycleway that's already a route segment is not used as a candidate."""
+        road = _make_road_way(100, 51.90, -1.16, 51.90, -1.14)
+        # This cycleway has the same way_id as a segment — should be excluded
+        cycleway = _make_cycleway_way(200, 51.9001, -1.16, 51.9001, -1.14)
+
+        segments = [
+            RouteSegment(100, "none", "secondary", 30, "asphalt", True, 500, "Test Road"),
+            RouteSegment(200, "segregated", "cycleway", 0, "asphalt", True, 200, "Cycle Path"),
+        ]
+        overpass = _make_overpass_data([road, cycleway])
+
+        result = detect_parallel_provision(segments, overpass)
+        # The road segment should NOT be upgraded because way 200 is already in segments
+        assert result[0].provision == "none"
+        assert result[0].original_provision is None

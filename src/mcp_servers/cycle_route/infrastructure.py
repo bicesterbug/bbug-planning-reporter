@@ -13,7 +13,8 @@ Implements test scenarios:
 - [cycle-route-assessment:InfrastructureAnalyser/TS-06] Unknown surface handled
 """
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -55,9 +56,10 @@ class RouteSegment:
     lit: bool | None  # True/False/None if unknown
     distance_m: float  # approximate segment length in metres
     name: str  # road/path name if available
+    original_provision: str | None = field(default=None)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "way_id": self.way_id,
             "provision": self.provision,
             "highway": self.highway,
@@ -67,6 +69,9 @@ class RouteSegment:
             "distance_m": round(self.distance_m, 1),
             "name": self.name,
         }
+        if self.original_provision is not None:
+            result["original_provision"] = self.original_provision
+        return result
 
 
 def classify_provision(tags: dict[str, str]) -> str:
@@ -177,7 +182,7 @@ def build_overpass_query(coordinates: list[list[float]], buffer_m: int = 20) -> 
 (
   way(around:{buffer_m},{coords_str})["highway"];
 );
-out body;
+out geom;
 """
     return query.strip()
 
@@ -243,3 +248,161 @@ def summarise_provision(segments: list[RouteSegment]) -> dict[str, float]:
     for seg in segments:
         breakdown[seg.provision] = breakdown.get(seg.provision, 0) + seg.distance_m
     return {k: round(v, 1) for k, v in breakdown.items()}
+
+
+# Provision quality ranking for parallel detection (higher = better)
+PROVISION_RANK: dict[str, int] = {
+    "segregated": 4,
+    "shared_use": 3,
+    "on_road_lane": 2,
+    "advisory_lane": 1,
+    "none": 0,
+}
+
+# Provisions that are candidates for upgrade via parallel detection
+POOR_PROVISIONS = {"none", "advisory_lane", "on_road_lane"}
+
+# Highway types that are roads (not off-road paths)
+ROAD_HIGHWAY_TYPES = {
+    "residential", "tertiary", "secondary", "primary",
+    "trunk", "unclassified", "living_street", "service",
+}
+
+
+def detect_parallel_provision(
+    segments: list[RouteSegment],
+    overpass_data: dict[str, Any],
+) -> list[RouteSegment]:
+    """
+    Scan Overpass data for cycleways parallel to road segments with poor provision.
+
+    For each road segment with poor provision, checks if any cycleway/designated-path
+    way in the Overpass data has similar bearing and hasn't already been included as
+    a route segment. If found, upgrades the segment's provision.
+
+    Args:
+        segments: Route segments parsed from Overpass data.
+        overpass_data: Raw Overpass JSON response (with geometry from out geom).
+
+    Returns:
+        The same segments list with provisions upgraded where parallel
+        infrastructure was detected.
+    """
+    # Collect way_ids already in route segments
+    segment_way_ids = {seg.way_id for seg in segments}
+
+    # Find candidate cycleways from the Overpass data
+    elements = overpass_data.get("elements", [])
+    candidates = []
+    for elem in elements:
+        if elem.get("type") != "way":
+            continue
+        if elem.get("id") in segment_way_ids:
+            continue
+        tags = elem.get("tags", {})
+        highway = tags.get("highway", "")
+        bicycle = tags.get("bicycle", "")
+
+        is_cycleway = highway == "cycleway"
+        is_designated_path = highway in ("path", "footway") and bicycle in ("designated", "yes")
+
+        if not is_cycleway and not is_designated_path:
+            continue
+
+        geometry = elem.get("geometry", [])
+        candidate_bearing = calculate_way_bearing(geometry)
+        if candidate_bearing is None:
+            continue
+
+        provision = classify_provision(tags)
+        candidates.append({
+            "way_id": elem["id"],
+            "bearing": candidate_bearing,
+            "provision": provision,
+            "geometry": geometry,
+        })
+
+    if not candidates:
+        return segments
+
+    # For each poor-provision road segment, find matching parallel cycleways
+    for seg in segments:
+        if seg.provision not in POOR_PROVISIONS:
+            continue
+        if seg.highway not in ROAD_HIGHWAY_TYPES:
+            continue
+
+        # Find this segment's way in the overpass data to get its geometry
+        seg_bearing = None
+        for elem in elements:
+            if elem.get("type") == "way" and elem.get("id") == seg.way_id:
+                geometry = elem.get("geometry", [])
+                seg_bearing = calculate_way_bearing(geometry)
+                break
+
+        if seg_bearing is None:
+            continue
+
+        # Find best matching candidate
+        best_candidate = None
+        best_rank = PROVISION_RANK.get(seg.provision, 0)
+
+        for cand in candidates:
+            diff = bearing_difference(seg_bearing, cand["bearing"])
+            if diff > 30:
+                continue
+
+            cand_rank = PROVISION_RANK.get(cand["provision"], 0)
+            if cand_rank > best_rank:
+                best_candidate = cand
+                best_rank = cand_rank
+
+        if best_candidate:
+            seg.original_provision = seg.provision
+            seg.provision = best_candidate["provision"]
+
+    return segments
+
+
+def calculate_way_bearing(geometry: list[dict]) -> float | None:
+    """
+    Calculate compass bearing of an OSM way from first to last node.
+
+    Args:
+        geometry: List of {lat, lon} dicts from Overpass out geom response.
+
+    Returns:
+        Bearing in degrees (0-360), or None if fewer than 2 nodes.
+    """
+    if len(geometry) < 2:
+        return None
+
+    lat1 = math.radians(geometry[0]["lat"])
+    lon1 = math.radians(geometry[0]["lon"])
+    lat2 = math.radians(geometry[-1]["lat"])
+    lon2 = math.radians(geometry[-1]["lon"])
+
+    dlon = lon2 - lon1
+    x = math.sin(dlon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    bearing = math.degrees(math.atan2(x, y))
+    return bearing % 360
+
+
+def bearing_difference(bearing_a: float, bearing_b: float) -> float:
+    """
+    Calculate minimum angular difference between two bearings.
+
+    Parallel ways going in opposite directions (180 degrees apart)
+    are treated as having 0 degree difference.
+
+    Returns:
+        Difference in degrees (0-90).
+    """
+    diff = abs(bearing_a - bearing_b) % 360
+    if diff > 180:
+        diff = 360 - diff
+    # Opposite directions are parallel
+    if diff > 90:
+        diff = 180 - diff
+    return diff

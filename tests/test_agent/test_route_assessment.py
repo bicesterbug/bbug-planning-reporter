@@ -124,27 +124,71 @@ def _make_boundary_result():
     }
 
 
-def _make_route_result(destination="Bicester North"):
-    """Create a mock route assessment result."""
-    return {
-        "status": "success",
-        "destination": destination,
-        "distance_m": 2500,
-        "duration_minutes": 10.0,
-        "provision_breakdown": {"segregated": 1500, "none": 1000},
-        "score": {"score": 55, "rating": "amber", "breakdown": {}},
-        "issues": [
+def _make_route_data(distance=2500, score=55, rating="amber", provision=None,
+                     issues=None, s106=None, segments=None):
+    """Create a single route data object."""
+    if provision is None:
+        provision = {"segregated": 1500, "none": 1000}
+    if issues is None:
+        issues = [
             {
                 "severity": "high",
                 "problem": "No cycling provision on A-road",
                 "suggested_improvement": "Segregated cycleway needed",
             }
+        ]
+    if s106 is None:
+        s106 = [{"suggestion": "Contribute to cycleway along Buckingham Road"}]
+    if segments is None:
+        segments = []
+    return {
+        "distance_m": distance,
+        "duration_minutes": round(distance / 250, 1),
+        "provision_breakdown": provision,
+        "score": {"score": score, "rating": rating, "breakdown": {}},
+        "issues": issues,
+        "s106_suggestions": s106,
+        "segments": segments,
+        "route_geometry": [],
+    }
+
+
+def _make_route_result(destination="Bicester North", same_route=True):
+    """Create a mock dual-route assessment result."""
+    route = _make_route_data()
+    result = {
+        "status": "success",
+        "destination": destination,
+        "shortest_route": route,
+        "safest_route": route,
+        "same_route": same_route,
+    }
+    return result
+
+
+def _make_dual_route_result(destination="Bicester North"):
+    """Create a mock dual-route result where shortest != safest."""
+    shortest = _make_route_data(
+        distance=2200, score=35, rating="red",
+        provision={"none": 2200},
+        issues=[{"severity": "high", "problem": "No cycling provision"}],
+    )
+    safest = _make_route_data(
+        distance=2800, score=72, rating="amber",
+        provision={"segregated": 2000, "none": 800},
+        issues=[{"severity": "medium", "problem": "Short gap in provision"}],
+        segments=[
+            {"way_id": 100, "provision": "segregated", "original_provision": "none",
+             "highway": "secondary", "speed_limit": 30, "surface": "asphalt",
+             "lit": True, "distance_m": 500, "name": "Banbury Rd"},
         ],
-        "s106_suggestions": [
-            {"suggestion": "Contribute to cycleway along Buckingham Road"},
-        ],
-        "segments": [],
-        "route_geometry": {"type": "LineString", "coordinates": []},
+    )
+    return {
+        "status": "success",
+        "destination": destination,
+        "shortest_route": shortest,
+        "safest_route": safest,
+        "same_route": False,
     }
 
 
@@ -388,8 +432,8 @@ class TestBuildEvidenceContext:
         assert len(result) == 6
         assert "No cycling route assessments" in result[5]
 
-    def test_routes_included_in_evidence(self):
-        """Route assessment data included in evidence context."""
+    def test_same_route_in_evidence(self):
+        """Same-route assessment shows single labelled route."""
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
@@ -402,4 +446,91 @@ class TestBuildEvidenceContext:
         assert "2500m" in route_text
         assert "55/100" in route_text
         assert "amber" in route_text
+        assert "Shortest & safest route (same)" in route_text
         assert "S106" in route_text
+
+    def test_dual_route_in_evidence(self):
+        """Dual-route assessment shows both routes with labels."""
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [_make_dual_route_result("Bicester North")]
+
+        result = orch._build_evidence_context()
+        route_text = result[5]
+        assert "Shortest route" in route_text
+        assert "Safest route" in route_text
+        assert "2200m" in route_text
+        assert "2800m" in route_text
+        assert "35/100" in route_text
+        assert "72/100" in route_text
+
+    def test_parallel_detection_noted_in_evidence(self):
+        """Parallel detection upgrades are noted in evidence text."""
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [_make_dual_route_result("Bicester North")]
+
+        result = orch._build_evidence_context()
+        route_text = result[5]
+        assert "Parallel detection" in route_text
+        assert "upgraded" in route_text
+
+
+# =============================================================================
+# _build_route_evidence_summary with dual routes
+# =============================================================================
+
+
+class TestBuildRouteEvidenceSummary:
+    """Test condensed route evidence for structure call."""
+
+    def test_no_routes_default(self):
+        """No routes returns default text."""
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        assert "No cycling route assessments" in orch._build_route_evidence_summary()
+
+    def test_same_route_single_block(self):
+        """Same route shows single block with label."""
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [_make_route_result("Bicester North")]
+
+        summary = orch._build_route_evidence_summary()
+        assert "Bicester North" in summary
+        assert "Shortest & safest (same route)" in summary
+        assert "55/100" in summary
+
+    def test_dual_route_both_shown(self):
+        """Different routes show both blocks."""
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [_make_dual_route_result("Bicester North")]
+
+        summary = orch._build_route_evidence_summary()
+        assert "Shortest route" in summary
+        assert "Safest route" in summary
+        assert "35/100" in summary
+        assert "72/100" in summary
+
+    def test_parallel_detection_in_summary(self):
+        """Parallel detection upgrades noted in summary."""
+        orch = AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="21/03267/OUT",
+        )
+        orch._route_assessments = [_make_dual_route_result("Bicester North")]
+
+        summary = orch._build_route_evidence_summary()
+        assert "Parallel detection" in summary
+        assert "upgraded" in summary

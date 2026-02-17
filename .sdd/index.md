@@ -10,6 +10,9 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-17 | [route-narrative-report](route-narrative-report/) | [spec](route-narrative-report/specification.md) | — | Draft | Enhancement |
+| 2026-02-17 | [route-transition-analysis](route-transition-analysis/) | [spec](route-transition-analysis/specification.md) | — | Draft | Enhancement |
+| 2026-02-17 | [route-dual-routing](route-dual-routing/) | [spec](route-dual-routing/specification.md) | [design](route-dual-routing/design.md) | Implemented | Enhancement |
 | 2026-02-17 | [policy-authority-model](policy-authority-model/) | [spec](policy-authority-model/specification.md) | — | Draft | Enhancement |
 | 2026-02-17 | [policy-s3-storage](policy-s3-storage/) | [spec](policy-s3-storage/specification.md) | — | Draft | Enhancement |
 | 2026-02-17 | [policy-ingestion-fix](policy-ingestion-fix/) | [spec](policy-ingestion-fix/specification.md) | [design](policy-ingestion-fix/design.md) | Implemented | Bugfix |

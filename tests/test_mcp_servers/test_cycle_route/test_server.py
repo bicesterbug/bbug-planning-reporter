@@ -47,12 +47,12 @@ def _load_arcgis_fixture() -> dict:
         return json.load(f)
 
 
-def _make_osrm_response(
+def _make_osrm_route(
     distance: float = 2500,
     duration: float = 600,
     coordinates: list | None = None,
 ) -> dict:
-    """Create a mock OSRM response."""
+    """Create a single OSRM route object."""
     if coordinates is None:
         coordinates = [
             [-1.1534, 51.8997],
@@ -61,20 +61,33 @@ def _make_osrm_response(
             [-1.1450, 51.9050],
         ]
     return {
+        "distance": distance,
+        "duration": duration,
+        "geometry": {
+            "type": "LineString",
+            "coordinates": coordinates,
+        },
+    }
+
+
+def _make_osrm_response(
+    distance: float = 2500,
+    duration: float = 600,
+    coordinates: list | None = None,
+    alternatives: list[dict] | None = None,
+) -> dict:
+    """Create a mock OSRM response with optional alternatives."""
+    routes = [_make_osrm_route(distance, duration, coordinates)]
+    if alternatives:
+        routes.extend(alternatives)
+    return {
         "code": "Ok",
-        "routes": [{
-            "distance": distance,
-            "duration": duration,
-            "geometry": {
-                "type": "LineString",
-                "coordinates": coordinates,
-            },
-        }],
+        "routes": routes,
     }
 
 
 def _make_overpass_response(ways: list[dict] | None = None) -> dict:
-    """Create a mock Overpass response."""
+    """Create a mock Overpass response with geometry."""
     if ways is None:
         ways = [
             {
@@ -86,6 +99,10 @@ def _make_overpass_response(ways: list[dict] | None = None) -> dict:
                     "lit": "yes",
                     "name": "NCN Route 51",
                 },
+                "geometry": [
+                    {"lat": 51.8997, "lon": -1.1534},
+                    {"lat": 51.9010, "lon": -1.1510},
+                ],
             },
             {
                 "type": "way",
@@ -96,6 +113,10 @@ def _make_overpass_response(ways: list[dict] | None = None) -> dict:
                     "surface": "asphalt",
                     "name": "Buckingham Road",
                 },
+                "geometry": [
+                    {"lat": 51.9010, "lon": -1.1510},
+                    {"lat": 51.9025, "lon": -1.1480},
+                ],
             },
             {
                 "type": "way",
@@ -105,6 +126,10 @@ def _make_overpass_response(ways: list[dict] | None = None) -> dict:
                     "surface": "asphalt",
                     "name": "Station Approach",
                 },
+                "geometry": [
+                    {"lat": 51.9025, "lon": -1.1480},
+                    {"lat": 51.9050, "lon": -1.1450},
+                ],
             },
         ]
     return {"elements": ways}
@@ -182,11 +207,11 @@ class TestGetSiteBoundary:
 
 
 class TestAssessCycleRoute:
-    """Verifies [cycle-route-assessment:CycleRouteMCP/TS-03] and TS-04."""
+    """Tests for dual-route cycle assessment."""
 
     @pytest.mark.anyio
-    async def test_full_assessment(self):
-        """[CycleRouteMCP/TS-03] assess_cycle_route returns full assessment."""
+    async def test_full_assessment_dual_route(self):
+        """assess_cycle_route returns dual route assessment."""
         osrm_data = _make_osrm_response(distance=2500, duration=600)
         overpass_data = _make_overpass_response()
 
@@ -207,22 +232,165 @@ class TestAssessCycleRoute:
 
         assert result["status"] == "success"
         assert result["destination"] == "Bicester North"
-        assert result["distance_m"] == 2500
-        assert result["duration_minutes"] == 10.0
-        assert "provision_breakdown" in result
-        assert "score" in result
-        assert "issues" in result
-        assert "s106_suggestions" in result
-        assert "segments" in result
-        assert "route_geometry" in result
+        assert "shortest_route" in result
+        assert "safest_route" in result
+        assert "same_route" in result
 
-        # Score should have rating and breakdown
-        assert result["score"]["rating"] in ("green", "amber", "red")
-        assert "breakdown" in result["score"]
+        # With single OSRM route, same_route should be true
+        assert result["same_route"] is True
+
+        shortest = result["shortest_route"]
+        assert shortest["distance_m"] == 2500
+        assert shortest["duration_minutes"] == 10.0
+        assert "provision_breakdown" in shortest
+        assert "score" in shortest
+        assert "issues" in shortest
+        assert "s106_suggestions" in shortest
+        assert "segments" in shortest
+        assert "route_geometry" in shortest
+        assert shortest["score"]["rating"] in ("green", "amber", "red")
+
+    @pytest.mark.anyio
+    async def test_osrm_called_with_alternatives(self):
+        """OSRM request includes alternatives=true."""
+        captured_params = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "router.project-osrm.org" in url:
+                captured_params.update(dict(request.url.params))
+                return httpx.Response(200, json=_make_osrm_response())
+            if "overpass-api.de" in url:
+                return httpx.Response(200, json=_make_overpass_response())
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert captured_params.get("alternatives") == "true"
+
+    @pytest.mark.anyio
+    async def test_shortest_selected_by_min_distance(self):
+        """Shortest route is the one with minimum distance."""
+        alt1 = _make_osrm_route(distance=2100, duration=500)
+        alt2 = _make_osrm_route(distance=2800, duration=700)
+        osrm_data = _make_osrm_response(
+            distance=2400, duration=600,
+            alternatives=[alt1, alt2],
+        )
+        overpass_data = _make_overpass_response()
+
+        transport = _make_mock_transport({
+            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
+            "overpass-api.de": httpx.Response(200, json=overpass_data),
+        })
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert result["shortest_route"]["distance_m"] == 2100
+
+    @pytest.mark.anyio
+    async def test_safest_selected_by_max_score(self):
+        """Safest route is the one with maximum score."""
+        # Route 1 (shorter, 2200m): all roads (lower score)
+        bad_ways = [
+            {
+                "type": "way", "id": 300,
+                "tags": {"highway": "primary", "maxspeed": "40 mph", "surface": "asphalt", "name": "Main Road"},
+                "geometry": [{"lat": 51.90, "lon": -1.16}, {"lat": 51.91, "lon": -1.13}],
+            },
+        ]
+        # Route 2 (longer, 2800m): all cycleways (higher score)
+        good_ways = [
+            {
+                "type": "way", "id": 200,
+                "tags": {"highway": "cycleway", "surface": "asphalt", "name": "Cycleway A"},
+                "geometry": [{"lat": 51.90, "lon": -1.16}, {"lat": 51.90, "lon": -1.14}],
+            },
+            {
+                "type": "way", "id": 201,
+                "tags": {"highway": "cycleway", "surface": "asphalt", "name": "Cycleway B"},
+                "geometry": [{"lat": 51.90, "lon": -1.14}, {"lat": 51.91, "lon": -1.13}],
+            },
+        ]
+
+        overpass_call_count = [0]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "router.project-osrm.org" in url:
+                # First route is shorter (2200m), second is longer (2800m)
+                alt = _make_osrm_route(distance=2800, duration=700)
+                return httpx.Response(200, json=_make_osrm_response(
+                    distance=2200, duration=550,
+                    alternatives=[alt],
+                ))
+            if "overpass-api.de" in url:
+                # First call (shorter route) gets bad data, second (longer) gets good
+                overpass_call_count[0] += 1
+                if overpass_call_count[0] == 1:
+                    return httpx.Response(200, json={"elements": bad_ways})
+                else:
+                    return httpx.Response(200, json={"elements": good_ways})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.16,
+            "origin_lat": 51.90,
+            "destination_lon": -1.13,
+            "destination_lat": 51.91,
+        })
+
+        assert result["same_route"] is False
+        # Shortest route is the 2200m one
+        assert result["shortest_route"]["distance_m"] == 2200
+        # Safest route is the 2800m one with cycleways
+        assert result["safest_route"]["distance_m"] == 2800
+        assert result["safest_route"]["score"]["score"] > result["shortest_route"]["score"]["score"]
+
+    @pytest.mark.anyio
+    async def test_same_route_when_single_alternative(self):
+        """Single OSRM route produces same_route=true."""
+        osrm_data = _make_osrm_response(distance=1500, duration=400)
+        overpass_data = _make_overpass_response()
+
+        transport = _make_mock_transport({
+            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
+            "overpass-api.de": httpx.Response(200, json=overpass_data),
+        })
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert result["same_route"] is True
+        assert result["shortest_route"]["distance_m"] == result["safest_route"]["distance_m"]
 
     @pytest.mark.anyio
     async def test_no_route_found(self):
-        """[CycleRouteMCP/TS-04] assess_cycle_route handles no route."""
+        """No route from OSRM returns error."""
         osrm_data = {"code": "NoRoute", "routes": []}
 
         transport = _make_mock_transport({
@@ -245,9 +413,9 @@ class TestAssessCycleRoute:
 
     @pytest.mark.anyio
     async def test_no_infrastructure_data(self):
-        """Route with no infrastructure data returns note."""
+        """Route with no infrastructure data returns dual structure with note."""
         osrm_data = _make_osrm_response(distance=1000, duration=300)
-        overpass_data = {"elements": []}  # No ways found
+        overpass_data = {"elements": []}
 
         transport = _make_mock_transport({
             "router.project-osrm.org": httpx.Response(200, json=osrm_data),
@@ -265,7 +433,8 @@ class TestAssessCycleRoute:
 
         assert result["status"] == "success"
         assert "note" in result
-        assert result["score"]["score"] == 0
+        assert result["same_route"] is True
+        assert result["shortest_route"]["score"]["score"] == 0
 
     @pytest.mark.anyio
     async def test_default_destination_name(self):
