@@ -406,6 +406,7 @@ async def upload_revision(
         source,
         revision_id,
         str(file_path),
+        _queue_name="review_jobs",
     )
     ingestion_job_id = job.job_id
 
@@ -810,6 +811,7 @@ async def reindex_revision(
         revision_id,
         revision.file_path,
         True,  # reindex=True
+        _queue_name="review_jobs",
     )
 
     logger.info(

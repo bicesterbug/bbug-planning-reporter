@@ -649,6 +649,7 @@ class TestUploadRevision:
         assert call_args[0][0] == "ingest_policy_revision"
         assert call_args[0][1] == "LTN_1_20"
         assert call_args[0][2] == "rev_LTN_1_20_2020_07"
+        assert call_args[1]["_queue_name"] == "review_jobs"
 
     def test_upload_non_pdf_rejected(self, client, mock_registry, tmp_path, monkeypatch):
         """
@@ -1113,6 +1114,7 @@ class TestReindexRevision:
         assert call_args[0][1] == "LTN_1_20"
         assert call_args[0][2] == "rev_LTN120_2020_07"
         assert call_args[0][4] is True  # reindex=True
+        assert call_args[1]["_queue_name"] == "review_jobs"
 
     def test_reindex_allows_stuck_processing_revision(self, client, mock_registry, mock_arq_pool):
         """
