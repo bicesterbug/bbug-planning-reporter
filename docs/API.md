@@ -446,6 +446,25 @@ Returns the full review, including results when completed.
         ]
       }
     ],
+    "route_narrative": {
+      "destinations": [
+        {
+          "destination_name": "Bicester North Station",
+          "shortest_route_summary": {
+            "distance_m": 2200,
+            "ltn_score": 35,
+            "rating": "red"
+          },
+          "safest_route_summary": {
+            "distance_m": 2800,
+            "ltn_score": 62,
+            "rating": "amber"
+          },
+          "narrative": "The shortest route to Bicester North Station is 2200m via Gavray Drive and the A4095 but scores only 35/100 due to the absence of cycling provision on the A-road section. The safest route is 600m longer at 2800m, routing via Buckingham Road where a shared-use path provides some protection, achieving 62/100. Two barriers (bollards) and one non-priority crossing were identified on the safest route. The significant score gap between routes highlights the need for S106-funded improvements along the A4095 corridor to provide a direct, safe connection to the station.",
+          "same_route": false
+        }
+      ]
+    },
     "full_markdown": "# Cycle Advocacy Review: 25/01178/REM\n\n## Overall Rating: NON-COMPLIANT\n..."
   },
   "metadata": {
@@ -1781,6 +1800,7 @@ All webhook payloads share a common envelope structure:
       "recommendations": [],
       "suggested_conditions": [],
       "route_assessments": [],
+      "route_narrative": null,
       "key_documents": []
     },
     "metadata": {
