@@ -71,6 +71,8 @@ ReviewContent = _module.ReviewContent
 PolicyRevisionUsed = _module.PolicyRevisionUsed
 OutputUrls = _module.OutputUrls
 ReviewMetadata = _module.ReviewMetadata
+RouteAssessment = _module.RouteAssessment
+RouteData = _module.RouteData
 
 __all__ = [
     # Letter schemas
@@ -102,6 +104,8 @@ __all__ = [
     "ReviewContent",
     "PolicyRevisionUsed",
     "ReviewMetadata",
+    "RouteAssessment",
+    "RouteData",
     # Policy schemas
     "SOURCE_SLUG_PATTERN",
     "CreatePolicyRequest",

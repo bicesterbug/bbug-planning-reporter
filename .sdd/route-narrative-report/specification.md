@@ -1,8 +1,8 @@
 # Specification: Route Narrative Report
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** 2026-02-17
-**Status:** Draft
+**Status:** Implemented
 
 ---
 
@@ -70,6 +70,16 @@ The route assessment currently produces structured data (scores, segments, issue
 - Acceptance criteria: A review with no route assessment produces the same structure and report as before this feature. No empty `route_assessment: {}` stub.
 - Failure/edge cases: If route assessment was attempted but all destinations failed, the section is omitted rather than showing empty results.
 
+**FR-006: Reliable Structure Call Population**
+- Description: The structure prompt must strongly direct the LLM to populate the `route_assessment` tool field when route evidence is present. The current OPTIONAL guidance is too weak — the LLM skips the field and relies on the report call to render route data from evidence context alone, bypassing structured validation.
+- Acceptance criteria: When Cycling Route Assessments data is present in the user prompt, the LLM populates the `route_assessment` field in the structure call response. The prompt must use binding language (MUST/REQUIRED) conditional on route data presence, not merely OPTIONAL.
+- Failure/edge cases: If the route evidence text is the default "No cycling route assessments were performed", the field must not be populated.
+
+**FR-007: Dual-Route API Schema**
+- Description: The API `RouteAssessment` model must reflect the dual-route data structure (shortest_route, safest_route, same_route) introduced by route-dual-routing. The current flat model (distance_m, score, etc. at top level) drops all dual-route fields during Pydantic serialisation, resulting in null values in the API response.
+- Acceptance criteria: The `RouteAssessment` Pydantic model includes `shortest_route` and `safest_route` sub-objects (each with distance_m, duration_minutes, provision_breakdown, score, issues, s106_suggestions) and a `same_route` boolean. The API response correctly reflects the full route data stored by the orchestrator.
+- Failure/edge cases: Old reviews with flat route data (if any exist) should still deserialise without error — all new fields should be optional.
+
 ---
 
 ## QA Plan
@@ -120,4 +130,5 @@ None — all questions resolved during discovery.
 ### Change History
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.1 | 2026-02-17 | Claude | Add FR-006 (reliable structure call population) and FR-007 (dual-route API schema) based on production testing |
 | 1.0 | 2026-02-17 | Claude | Initial specification |

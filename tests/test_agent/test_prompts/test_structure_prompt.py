@@ -399,12 +399,19 @@ class TestStructurePromptRouteAssessment:
         )
         assert "route_assessment" in system
 
-    def test_route_assessment_marked_optional(self):
-        """System prompt marks route_assessment as OPTIONAL."""
+    def test_route_assessment_marked_required_when_data_present(self):
+        """System prompt marks route_assessment as REQUIRED when data is present."""
         system, _ = build_structure_prompt(
             APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
         )
-        assert "OPTIONAL" in system
+        assert "MUST populate route_assessment" in system
+
+    def test_route_assessment_omit_when_no_data(self):
+        """System prompt instructs to omit route_assessment when no data provided."""
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+        assert "Do NOT include route_assessment" in system
 
     def test_narrative_sentence_guidance(self):
         """System prompt specifies 3-8 sentences for narrative."""

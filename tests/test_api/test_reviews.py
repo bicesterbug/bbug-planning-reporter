@@ -763,12 +763,19 @@ class TestReviewContentRouteAssessments:
                     {
                         "destination": "Bicester North",
                         "destination_id": "dest_001",
-                        "distance_m": 2500,
-                        "duration_minutes": 10.0,
-                        "provision_breakdown": {"segregated": 1500, "none": 1000},
-                        "score": {"score": 55, "rating": "amber"},
-                        "issues": [{"severity": "high", "problem": "No cycle lane"}],
-                        "s106_suggestions": [{"suggestion": "Fund cycleway"}],
+                        "shortest_route": {
+                            "distance_m": 2500,
+                            "duration_minutes": 10.0,
+                            "provision_breakdown": {"segregated": 1500, "none": 1000},
+                            "score": {"score": 55, "rating": "amber"},
+                            "issues": [{"severity": "high", "problem": "No cycle lane"}],
+                            "s106_suggestions": [{"suggestion": "Fund cycleway"}],
+                        },
+                        "safest_route": {
+                            "distance_m": 3000,
+                            "score": {"score": 68, "rating": "amber"},
+                        },
+                        "same_route": False,
                     }
                 ],
             },
@@ -789,8 +796,9 @@ class TestReviewContentRouteAssessments:
         route = data["review"]["route_assessments"][0]
         assert route["destination"] == "Bicester North"
         assert route["destination_id"] == "dest_001"
-        assert route["distance_m"] == 2500
-        assert route["score"]["rating"] == "amber"
+        assert route["shortest_route"]["distance_m"] == 2500
+        assert route["shortest_route"]["score"]["rating"] == "amber"
+        assert route["same_route"] is False
 
     def test_review_without_route_assessments(self, client, mock_redis):
         """
