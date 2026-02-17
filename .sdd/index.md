@@ -19,17 +19,17 @@ The system is decomposed into the following features, aligned with the developme
 | 2026-02-16 | [review-quality-improvements](review-quality-improvements/) | [spec](review-quality-improvements/specification.md) | [design](review-quality-improvements/design.md) | Implemented | Enhancement |
 | 2026-02-16 | [local-dev-setup](local-dev-setup/) | [spec](local-dev-setup/specification.md) | [design](local-dev-setup/design.md) | Implemented | Documentation |
 | 2026-02-15 | [review-resubmission](review-resubmission/) | [spec](review-resubmission/specification.md) | [design](review-resubmission/design.md) | Implemented | Enhancement |
-| 2026-02-15 | [url-encoding-fix](url-encoding-fix/) | [spec](url-encoding-fix/specification.md) | — | Draft | Bugfix |
-| 2026-02-15 | [review-output-urls](review-output-urls/) | [spec](review-output-urls/specification.md) | [design](review-output-urls/design.md) | Draft | Enhancement |
-| 2026-02-15 | [concise-output](concise-output/) | [spec](concise-output/specification.md) | [design](concise-output/design.md) | Draft | Enhancement |
-| 2026-02-15 | [consultation-filter-enforcement](consultation-filter-enforcement/) | [spec](consultation-filter-enforcement/specification.md) | [design](consultation-filter-enforcement/design.md) | Draft | Bugfix |
-| 2026-02-14 | [reliable-structure-extraction](reliable-structure-extraction/) | [spec](reliable-structure-extraction/specification.md) | [design](reliable-structure-extraction/design.md) | Draft | Enhancement |
+| 2026-02-15 | [url-encoding-fix](url-encoding-fix/) | [spec](url-encoding-fix/specification.md) | — | Implemented | Bugfix |
+| 2026-02-15 | [review-output-urls](review-output-urls/) | [spec](review-output-urls/specification.md) | [design](review-output-urls/design.md) | Implemented | Enhancement |
+| 2026-02-15 | [concise-output](concise-output/) | [spec](concise-output/specification.md) | [design](concise-output/design.md) | Implemented | Enhancement |
+| 2026-02-15 | [consultation-filter-enforcement](consultation-filter-enforcement/) | [spec](consultation-filter-enforcement/specification.md) | [design](consultation-filter-enforcement/design.md) | Implemented | Bugfix |
+| 2026-02-14 | [reliable-structure-extraction](reliable-structure-extraction/) | [spec](reliable-structure-extraction/specification.md) | [design](reliable-structure-extraction/design.md) | Implemented | Enhancement |
 | 2026-02-14 | [rest-api-contract](rest-api-contract/) | [spec](rest-api-contract/specification.md) | — | As-Built | API Contract |
 | 2026-02-14 | [cherwell-scraper-api](cherwell-scraper-api/) | [spec](cherwell-scraper-api/specification.md) | — | As-Built | API Contract |
 | 2026-02-14 | [document-store-api](document-store-api/) | [spec](document-store-api/specification.md) | — | As-Built | API Contract |
 | 2026-02-14 | [policy-kb-api](policy-kb-api/) | [spec](policy-kb-api/specification.md) | — | As-Built | API Contract |
 | 2026-02-14 | [cycle-route-api](cycle-route-api/) | [spec](cycle-route-api/specification.md) | — | As-Built | API Contract |
-| 2026-02-14 | [cycle-route-assessment](cycle-route-assessment/) | [spec](cycle-route-assessment/specification.md) | — | Draft | Enhancement |
+| 2026-02-14 | [cycle-route-assessment](cycle-route-assessment/) | [spec](cycle-route-assessment/specification.md) | — | Implemented | Enhancement |
 | 2026-02-14 | [reliable-category-filtering](reliable-category-filtering/) | [spec](reliable-category-filtering/specification.md) | [design](reliable-category-filtering/design.md) | Implemented | Bugfix |
 | 2026-02-14 | [document-type-detection](document-type-detection/) | [spec](document-type-detection/specification.md) | [design](document-type-detection/design.md) | Implemented | Enhancement |
 | 2026-02-14 | [download-filename-fix](download-filename-fix/) | [spec](download-filename-fix/specification.md) | [design](download-filename-fix/design.md) | Implemented | Bugfix |
