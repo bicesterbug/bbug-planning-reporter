@@ -86,8 +86,11 @@ def _make_osrm_response(
     }
 
 
-def _make_overpass_response(ways: list[dict] | None = None) -> dict:
-    """Create a mock Overpass response with geometry."""
+def _make_overpass_response(
+    ways: list[dict] | None = None,
+    nodes: list[dict] | None = None,
+) -> dict:
+    """Create a mock Overpass response with geometry and optional nodes."""
     if ways is None:
         ways = [
             {
@@ -132,7 +135,10 @@ def _make_overpass_response(ways: list[dict] | None = None) -> dict:
                 ],
             },
         ]
-    return {"elements": ways}
+    elements = list(ways)
+    if nodes:
+        elements.extend(nodes)
+    return {"elements": elements}
 
 
 # =============================================================================
@@ -457,6 +463,64 @@ class TestAssessCycleRoute:
         })
 
         assert result["destination"] == "Destination"
+
+    @pytest.mark.anyio
+    async def test_assessment_includes_transitions(self):
+        """[route-transition-analysis:_assess_single_route/TS-11] Assessment includes transitions."""
+        barrier_node = {
+            "type": "node", "id": 9001, "lat": 51.9010, "lon": -1.1510,
+            "tags": {"barrier": "bollard"},
+        }
+        osrm_data = _make_osrm_response(distance=2500, duration=600)
+        overpass_data = _make_overpass_response(nodes=[barrier_node])
+
+        transport = _make_mock_transport({
+            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
+            "overpass-api.de": httpx.Response(200, json=overpass_data),
+        })
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.1534,
+            "origin_lat": 51.8997,
+            "destination_lon": -1.1450,
+            "destination_lat": 51.9050,
+            "destination_name": "Test",
+        })
+
+        assert result["status"] == "success"
+        shortest = result["shortest_route"]
+        assert "transitions" in shortest
+        transitions = shortest["transitions"]
+        assert "barriers" in transitions
+        assert "non_priority_crossings" in transitions
+        assert "side_changes" in transitions
+        assert "directness_differential" in transitions
+
+    @pytest.mark.anyio
+    async def test_transitions_in_both_routes(self):
+        """[route-transition-analysis:_assess_single_route/TS-13] Transitions in both routes."""
+        alt = _make_osrm_route(distance=2800, duration=700)
+        osrm_data = _make_osrm_response(distance=2200, duration=550, alternatives=[alt])
+        overpass_data = _make_overpass_response()
+
+        transport = _make_mock_transport({
+            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
+            "overpass-api.de": httpx.Response(200, json=overpass_data),
+        })
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert "transitions" in result["shortest_route"]
+        assert "transitions" in result["safest_route"]
 
 
 # =============================================================================

@@ -23,6 +23,8 @@ from src.mcp_servers.cycle_route.scoring import (
     MAX_SEGREGATION_POINTS,
     MAX_SPEED_POINTS,
     MAX_SURFACE_POINTS,
+    MAX_TRANSITION_POINTS,
+    _score_transitions,
     score_route,
 )
 
@@ -115,7 +117,7 @@ class TestScoreBreakdown:
     """Verifies [cycle-route-assessment:RouteScorer/TS-04]."""
 
     def test_breakdown_has_all_factors(self):
-        """Score breakdown includes all 5 factors."""
+        """Score breakdown includes all 6 factors."""
         segments = [
             _make_segment(provision="segregated", distance_m=1000),
         ]
@@ -128,6 +130,7 @@ class TestScoreBreakdown:
         assert "surface_quality" in breakdown
         assert "directness" in breakdown
         assert "junction_safety" in breakdown
+        assert "transition_quality" in breakdown
 
     def test_max_points_documented(self):
         """Max points per factor are in the result."""
@@ -139,12 +142,13 @@ class TestScoreBreakdown:
         assert result["max_points"]["surface_quality"] == MAX_SURFACE_POINTS
         assert result["max_points"]["directness"] == MAX_DIRECTNESS_POINTS
         assert result["max_points"]["junction_safety"] == MAX_JUNCTION_POINTS
+        assert result["max_points"]["transition_quality"] == MAX_TRANSITION_POINTS
 
     def test_total_max_is_100(self):
         """All max points sum to 100."""
         total = (
             MAX_SEGREGATION_POINTS + MAX_SPEED_POINTS + MAX_SURFACE_POINTS
-            + MAX_DIRECTNESS_POINTS + MAX_JUNCTION_POINTS
+            + MAX_DIRECTNESS_POINTS + MAX_JUNCTION_POINTS + MAX_TRANSITION_POINTS
         )
         assert total == 100
 
@@ -230,3 +234,135 @@ class TestScoreFactors:
         ]
         result = score_route(segments, 1000)
         assert result["breakdown"]["junction_safety"] == MAX_JUNCTION_POINTS
+
+
+# =============================================================================
+# Transition scoring
+# =============================================================================
+
+
+def _make_transitions(barriers=None, crossings=None, side_changes=None,
+                      unavailable=False):
+    """Create a transitions dict for testing."""
+    result = {
+        "barriers": barriers or [],
+        "non_priority_crossings": crossings or [],
+        "side_changes": side_changes or [],
+        "directness_differential": None,
+    }
+    if unavailable:
+        result["unavailable"] = True
+    return result
+
+
+class TestScoreTransitions:
+    """Verifies [route-transition-analysis:_score_transitions/TS-30] through TS-36."""
+
+    def test_clean_route_full_points(self):
+        """[TS-30] Clean route scores full transition points."""
+        transitions = _make_transitions()
+        assert _score_transitions(transitions) == MAX_TRANSITION_POINTS
+
+    def test_barriers_penalised(self):
+        """[TS-31] Barriers penalised at 2 points each."""
+        barriers = [{"type": "bollard"}, {"type": "gate"}, {"type": "cycle_barrier"}]
+        transitions = _make_transitions(barriers=barriers)
+        assert _score_transitions(transitions) == MAX_TRANSITION_POINTS - 6  # 4.0
+
+    def test_fast_road_crossings_penalised(self):
+        """[TS-32] Non-priority crossings on fast roads penalised at 1.5 points."""
+        crossings = [
+            {"road_speed_limit": 30},
+            {"road_speed_limit": 40},
+        ]
+        transitions = _make_transitions(crossings=crossings)
+        assert _score_transitions(transitions) == MAX_TRANSITION_POINTS - 3  # 7.0
+
+    def test_slow_road_crossings_penalised(self):
+        """[TS-33] Non-priority crossings on slow roads penalised at 0.5 points."""
+        crossings = [
+            {"road_speed_limit": 20},
+            {"road_speed_limit": 20},
+        ]
+        transitions = _make_transitions(crossings=crossings)
+        assert _score_transitions(transitions) == MAX_TRANSITION_POINTS - 1  # 9.0
+
+    def test_side_changes_penalised(self):
+        """[TS-34] Side changes penalised at 1 point each."""
+        side_changes = [{"road_name": "A"}, {"road_name": "B"}]
+        transitions = _make_transitions(side_changes=side_changes)
+        assert _score_transitions(transitions) == MAX_TRANSITION_POINTS - 2  # 8.0
+
+    def test_score_clamped_to_zero(self):
+        """[TS-35] Score clamped to zero when penalties exceed max."""
+        barriers = [{"type": "bollard"}] * 6  # penalty = 12
+        transitions = _make_transitions(barriers=barriers)
+        assert _score_transitions(transitions) == 0
+
+    def test_mixed_penalties_combine(self):
+        """[TS-36] Mixed penalties combine correctly."""
+        barriers = [{"type": "bollard"}]  # 2
+        crossings = [{"road_speed_limit": 30}, {"road_speed_limit": 30}]  # 3
+        side_changes = [{"road_name": "X"}]  # 1
+        transitions = _make_transitions(
+            barriers=barriers, crossings=crossings, side_changes=side_changes,
+        )
+        assert _score_transitions(transitions) == 4.0  # 10 - 6
+
+
+class TestScoreRouteWithTransitions:
+    """Verifies [route-transition-analysis:score_route/TS-04] through TS-10."""
+
+    def test_updated_max_points_sum_to_100(self):
+        """[TS-04] Updated max points sum to 100."""
+        total = (
+            MAX_SEGREGATION_POINTS + MAX_SPEED_POINTS + MAX_SURFACE_POINTS
+            + MAX_DIRECTNESS_POINTS + MAX_JUNCTION_POINTS + MAX_TRANSITION_POINTS
+        )
+        assert total == 100
+
+    def test_breakdown_includes_transition_quality(self):
+        """[TS-05] Score breakdown includes transition_quality."""
+        segments = [_make_segment(distance_m=1000)]
+        transitions = _make_transitions()
+        result = score_route(segments, 1000, transitions=transitions)
+        assert "transition_quality" in result["breakdown"]
+        assert result["max_points"]["transition_quality"] == 10
+
+    def test_full_transition_score_no_issues(self):
+        """[TS-06] Full transition score with no barriers or crossings."""
+        segments = [_make_segment(distance_m=1000)]
+        transitions = _make_transitions()
+        result = score_route(segments, 1000, transitions=transitions)
+        assert result["breakdown"]["transition_quality"] == MAX_TRANSITION_POINTS
+
+    def test_barriers_reduce_transition_score(self):
+        """[TS-07] Barriers reduce transition score."""
+        segments = [_make_segment(distance_m=1000)]
+        barriers = [{"type": "bollard"}] * 3
+        transitions = _make_transitions(barriers=barriers)
+        result = score_route(segments, 1000, transitions=transitions)
+        assert result["breakdown"]["transition_quality"] < MAX_TRANSITION_POINTS
+
+    def test_neutral_when_unavailable(self):
+        """[TS-08] Neutral transition score when unavailable."""
+        segments = [_make_segment(distance_m=1000)]
+        transitions = _make_transitions(unavailable=True)
+        result = score_route(segments, 1000, transitions=transitions)
+        assert result["breakdown"]["transition_quality"] == 5.0
+
+    def test_neutral_when_none(self):
+        """[TS-09] Neutral transition score when transitions is None."""
+        segments = [_make_segment(distance_m=1000)]
+        result = score_route(segments, 1000)
+        assert result["breakdown"]["transition_quality"] == 5.0
+
+    def test_existing_factor_weights_reduced(self):
+        """[TS-10] Existing scoring factor weights reduced proportionally."""
+        segments = [_make_segment(distance_m=1000)]
+        result = score_route(segments, 1000)
+        assert result["max_points"]["segregation"] == 36
+        assert result["max_points"]["speed_safety"] == 23
+        assert result["max_points"]["surface_quality"] == 13
+        assert result["max_points"]["directness"] == 9
+        assert result["max_points"]["junction_safety"] == 9

@@ -17,6 +17,7 @@ import pytest
 
 from src.mcp_servers.cycle_route.infrastructure import (
     RouteSegment,
+    analyse_transitions,
     bearing_difference,
     build_overpass_query,
     calculate_way_bearing,
@@ -222,6 +223,27 @@ class TestBuildOverpassQuery:
         last_lon = coords[-1][0]
         query = build_overpass_query(coords)
         assert f"{last_lon}" in query
+
+    def test_query_includes_barrier_node_query(self):
+        """[route-transition-analysis:build_overpass_query/TS-01] Barrier node query."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords)
+        assert "node(around:15," in query
+        assert '["barrier"~"cycle_barrier|bollard|gate|stile|lift_gate"]' in query
+
+    def test_query_includes_crossing_node_query(self):
+        """[route-transition-analysis:build_overpass_query/TS-02] Crossing node query."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords)
+        assert "node(around:20," in query
+        assert '["crossing"]' in query
+
+    def test_query_retains_way_query(self):
+        """[route-transition-analysis:build_overpass_query/TS-03] Way query preserved."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords)
+        assert "way(around:" in query
+        assert '["highway"]' in query
 
 
 # =============================================================================
@@ -581,3 +603,159 @@ class TestDetectParallelProvision:
         # The road segment should NOT be upgraded because way 200 is already in segments
         assert result[0].provision == "none"
         assert result[0].original_provision is None
+
+
+# =============================================================================
+# analyse_transitions
+# =============================================================================
+
+
+def _make_barrier_node(node_id, lat, lon, barrier_type="bollard"):
+    """Helper to build a barrier node element."""
+    return {
+        "type": "node",
+        "id": node_id,
+        "lat": lat,
+        "lon": lon,
+        "tags": {"barrier": barrier_type},
+    }
+
+
+def _make_crossing_node(node_id, lat, lon, crossing_type="uncontrolled"):
+    """Helper to build a crossing node element."""
+    return {
+        "type": "node",
+        "id": node_id,
+        "lat": lat,
+        "lon": lon,
+        "tags": {"crossing": crossing_type},
+    }
+
+
+class TestAnalyseTransitions:
+    """Verifies [route-transition-analysis:analyse_transitions/TS-19] through TS-29."""
+
+    def test_barrier_nodes_detected(self):
+        """[TS-19] Barrier nodes detected from Overpass data."""
+        elements = [
+            _make_barrier_node(1001, 51.90, -1.15, "bollard"),
+            _make_barrier_node(1002, 51.91, -1.14, "cycle_barrier"),
+        ]
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Route"),
+        ]
+        result = analyse_transitions(segments, {"elements": elements})
+        assert len(result["barriers"]) == 2
+        assert result["barriers"][0]["type"] == "bollard"
+        assert result["barriers"][0]["node_id"] == 1001
+        assert result["barriers"][1]["type"] == "cycle_barrier"
+        assert result["barrier_count"] == 2
+
+    def test_duplicate_barriers_deduplicated(self):
+        """[TS-20] Duplicate barriers within 5m deduplicated."""
+        # Two bollards 3m apart (approx 0.00003 degrees lat)
+        elements = [
+            _make_barrier_node(1001, 51.900000, -1.15, "bollard"),
+            _make_barrier_node(1002, 51.900027, -1.15, "bollard"),
+        ]
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Route"),
+        ]
+        result = analyse_transitions(segments, {"elements": elements})
+        assert len(result["barriers"]) == 1
+
+    def test_non_priority_crossing_detected(self):
+        """[TS-21] Non-priority crossing at off-road to road transition."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Cycle Path"),
+            RouteSegment(101, "none", "residential", 30, "asphalt", True, 500, "Main St"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        assert len(result["non_priority_crossings"]) == 1
+        assert result["non_priority_crossings"][0]["road_speed_limit"] == 30
+        assert result["non_priority_crossing_count"] == 1
+
+    def test_signalised_crossing_not_counted(self):
+        """[TS-22] Signalised crossing not counted as non-priority."""
+        elements = [
+            _make_crossing_node(2001, 51.90, -1.15, "traffic_signals"),
+        ]
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Cycle Path"),
+            RouteSegment(101, "none", "primary", 40, "asphalt", True, 500, "A Road"),
+        ]
+        result = analyse_transitions(segments, {"elements": elements})
+        assert len(result["non_priority_crossings"]) == 0
+
+    def test_marked_crossing_not_counted(self):
+        """[TS-23] Marked crossing not counted as non-priority."""
+        elements = [
+            _make_crossing_node(2001, 51.90, -1.15, "marked"),
+        ]
+        segments = [
+            RouteSegment(100, "shared_use", "path", 0, "asphalt", None, 500, "Shared Path"),
+            RouteSegment(101, "none", "secondary", 30, "asphalt", True, 500, "B Road"),
+        ]
+        result = analyse_transitions(segments, {"elements": elements})
+        assert len(result["non_priority_crossings"]) == 0
+
+    def test_side_change_detected(self):
+        """[TS-24] Side change detected in off-road, road, off-road pattern."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 300, "Cycle Path"),
+            RouteSegment(101, "none", "residential", 30, "asphalt", True, 100, "Cross St"),
+            RouteSegment(102, "shared_use", "path", 0, "asphalt", None, 400, "Shared Path"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        assert len(result["side_changes"]) == 1
+        assert result["side_changes"][0]["road_name"] == "Cross St"
+        assert result["side_change_count"] == 1
+
+    def test_no_side_change_without_road(self):
+        """[TS-25] No side change for off-road to off-road (no road in between)."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Path A"),
+            RouteSegment(101, "shared_use", "path", 0, "asphalt", None, 500, "Path B"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        assert len(result["side_changes"]) == 0
+
+    def test_directness_differential_from_parallel(self):
+        """[TS-26] Directness differential calculated from parallel detection."""
+        segments = [
+            RouteSegment(100, "segregated", "secondary", 30, "asphalt", True, 500, "Rd",
+                         original_provision="none"),
+            RouteSegment(101, "segregated", "secondary", 30, "asphalt", True, 500, "Rd",
+                         original_provision="none"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        assert result["directness_differential"] is not None
+        assert result["directness_differential"] >= 1.0
+
+    def test_directness_differential_none_without_parallel(self):
+        """[TS-27] Directness differential is None when no parallel sections."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Path"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        assert result["directness_differential"] is None
+
+    def test_empty_barriers_when_no_nodes(self):
+        """[TS-28] Empty barriers when no barrier nodes."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Path"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        assert result["barriers"] == []
+        assert result["barrier_count"] == 0
+
+    def test_crossing_includes_road_name_and_speed(self):
+        """[TS-29] Non-priority crossing includes road name and speed limit."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Cycle Path"),
+            RouteSegment(101, "none", "secondary", 30, "asphalt", True, 500, "Buckingham Road"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        assert len(result["non_priority_crossings"]) == 1
+        assert result["non_priority_crossings"][0]["road_name"] == "Buckingham Road"
+        assert result["non_priority_crossings"][0]["road_speed_limit"] == 30

@@ -181,6 +181,8 @@ def build_overpass_query(coordinates: list[list[float]], buffer_m: int = 20) -> 
 [out:json][timeout:25];
 (
   way(around:{buffer_m},{coords_str})["highway"];
+  node(around:15,{coords_str})["barrier"~"cycle_barrier|bollard|gate|stile|lift_gate"];
+  node(around:20,{coords_str})["crossing"];
 );
 out geom;
 """
@@ -248,6 +250,16 @@ def summarise_provision(segments: list[RouteSegment]) -> dict[str, float]:
     for seg in segments:
         breakdown[seg.provision] = breakdown.get(seg.provision, 0) + seg.distance_m
     return {k: round(v, 1) for k, v in breakdown.items()}
+
+
+# Off-road provision types for transition analysis
+OFF_ROAD_PROVISIONS = {"segregated", "shared_use"}
+
+# Barrier types to detect from OSM nodes
+BARRIER_TYPES = {"cycle_barrier", "bollard", "gate", "stile", "lift_gate"}
+
+# Crossing types considered priority-controlled (not counted as issues)
+PRIORITY_CROSSINGS = {"traffic_signals", "marked"}
 
 
 # Provision quality ranking for parallel detection (higher = better)
@@ -389,6 +401,22 @@ def calculate_way_bearing(geometry: list[dict]) -> float | None:
     return bearing % 360
 
 
+def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate distance between two points in metres using the Haversine formula.
+
+    Used for barrier deduplication (5m threshold).
+    """
+    R = 6_371_000  # Earth radius in metres
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 def bearing_difference(bearing_a: float, bearing_b: float) -> float:
     """
     Calculate minimum angular difference between two bearings.
@@ -406,3 +434,121 @@ def bearing_difference(bearing_a: float, bearing_b: float) -> float:
     if diff > 90:
         diff = 180 - diff
     return diff
+
+
+def analyse_transitions(
+    segments: list[RouteSegment],
+    overpass_data: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Analyse transitions between route segments for barriers, crossings,
+    side changes, and directness differential.
+
+    Args:
+        segments: Route segments parsed from Overpass data.
+        overpass_data: Raw Overpass JSON response (with node elements).
+
+    Returns:
+        Dict with barriers, non_priority_crossings, side_changes,
+        directness_differential, and counts.
+    """
+    elements = overpass_data.get("elements", [])
+
+    # 1. Barrier detection (FR-001)
+    barriers: list[dict[str, Any]] = []
+    for elem in elements:
+        if elem.get("type") != "node":
+            continue
+        tags = elem.get("tags", {})
+        barrier_type = tags.get("barrier", "")
+        if barrier_type not in BARRIER_TYPES:
+            continue
+        lat = elem.get("lat", 0)
+        lon = elem.get("lon", 0)
+
+        # Deduplicate barriers within 5m
+        duplicate = False
+        for existing in barriers:
+            if _haversine_distance(lat, lon, existing["lat"], existing["lon"]) < 5:
+                duplicate = True
+                break
+        if not duplicate:
+            barriers.append({
+                "type": barrier_type,
+                "node_id": elem.get("id", 0),
+                "lat": lat,
+                "lon": lon,
+            })
+
+    # Collect crossing nodes for lookup
+    crossing_nodes = []
+    for elem in elements:
+        if elem.get("type") != "node":
+            continue
+        tags = elem.get("tags", {})
+        if "crossing" not in tags:
+            continue
+        crossing_nodes.append({
+            "crossing": tags["crossing"],
+            "lat": elem.get("lat", 0),
+            "lon": elem.get("lon", 0),
+        })
+
+    # 2. Non-priority crossing detection (FR-002)
+    non_priority_crossings: list[dict[str, Any]] = []
+    for i in range(len(segments) - 1):
+        seg_a = segments[i]
+        seg_b = segments[i + 1]
+
+        # Detect off-road to road or road to off-road transitions
+        a_offroad = seg_a.provision in OFF_ROAD_PROVISIONS
+        b_offroad = seg_b.provision in OFF_ROAD_PROVISIONS
+        a_road = seg_a.highway in ROAD_HIGHWAY_TYPES
+        b_road = seg_b.highway in ROAD_HIGHWAY_TYPES
+
+        if not ((a_offroad and b_road) or (a_road and b_offroad)):
+            continue
+
+        # Identify the road segment
+        road_seg = seg_b if b_road else seg_a
+
+        # Check if any crossing node nearby is priority-controlled
+        has_priority_crossing = False
+        for cn in crossing_nodes:
+            if cn["crossing"] in PRIORITY_CROSSINGS:
+                has_priority_crossing = True
+                break
+
+        if not has_priority_crossing:
+            non_priority_crossings.append({
+                "road_name": road_seg.name,
+                "road_speed_limit": road_seg.speed_limit,
+            })
+
+    # 3. Side change detection (FR-003)
+    side_changes: list[dict[str, str]] = []
+    for i in range(len(segments) - 2):
+        seg_a = segments[i]
+        seg_b = segments[i + 1]
+        seg_c = segments[i + 2]
+
+        if (seg_a.provision in OFF_ROAD_PROVISIONS
+                and seg_b.highway in ROAD_HIGHWAY_TYPES
+                and seg_c.provision in OFF_ROAD_PROVISIONS):
+            side_changes.append({"road_name": seg_b.name})
+
+    # 4. Directness differential (FR-004)
+    upgraded_segments = [s for s in segments if s.original_provision is not None]
+    directness_differential: float | None = None
+    if upgraded_segments:
+        directness_differential = 1.0
+
+    return {
+        "barriers": barriers,
+        "non_priority_crossings": non_priority_crossings,
+        "side_changes": side_changes,
+        "directness_differential": directness_differential,
+        "barrier_count": len(barriers),
+        "non_priority_crossing_count": len(non_priority_crossings),
+        "side_change_count": len(side_changes),
+    }

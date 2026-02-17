@@ -24,11 +24,12 @@ if TYPE_CHECKING:
 # =============================================================================
 
 # Maximum points per scoring factor
-MAX_SEGREGATION_POINTS = 40  # Proportion of route on segregated infrastructure
-MAX_SPEED_POINTS = 25  # Speed safety on unsegregated sections
-MAX_SURFACE_POINTS = 15  # Surface quality across route
-MAX_DIRECTNESS_POINTS = 10  # Route directness vs driving distance
-MAX_JUNCTION_POINTS = 10  # Hostile junction penalty
+MAX_SEGREGATION_POINTS = 36  # Proportion of route on segregated infrastructure
+MAX_SPEED_POINTS = 23  # Speed safety on unsegregated sections
+MAX_SURFACE_POINTS = 13  # Surface quality across route
+MAX_DIRECTNESS_POINTS = 9  # Route directness vs driving distance
+MAX_JUNCTION_POINTS = 9  # Hostile junction penalty
+MAX_TRANSITION_POINTS = 10  # Transition quality (barriers, crossings, side changes)
 
 # RAG rating thresholds
 GREEN_THRESHOLD = 70
@@ -166,10 +167,31 @@ def _score_junctions(segments: list[RouteSegment]) -> float:
     return 0
 
 
+def _score_transitions(transitions: dict[str, Any]) -> float:
+    """Score based on transition quality: barriers, crossings, and side changes."""
+    penalty = 0.0
+
+    for _barrier in transitions.get("barriers", []):
+        penalty += 2.0
+
+    for crossing in transitions.get("non_priority_crossings", []):
+        if crossing.get("road_speed_limit", 30) >= 30:
+            penalty += 1.5
+        else:
+            penalty += 0.5
+
+    for _side_change in transitions.get("side_changes", []):
+        penalty += 1.0
+
+    score = max(0, MAX_TRANSITION_POINTS - penalty)
+    return round(score, 1)
+
+
 def score_route(
     segments: list[RouteSegment],
     cycling_distance_m: float,
     driving_distance_m: float | None = None,
+    transitions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Calculate a 0-100 LTN 1/20 cycling quality score for a route.
@@ -188,7 +210,13 @@ def score_route(
     directness = _score_directness(cycling_distance_m, driving_distance_m)
     junctions = _score_junctions(segments)
 
-    total = round(segregation + speed + surface + directness + junctions)
+    # Transition scoring: neutral when unavailable or not provided
+    if transitions and not transitions.get("unavailable"):
+        transition = _score_transitions(transitions)
+    else:
+        transition = MAX_TRANSITION_POINTS / 2
+
+    total = round(segregation + speed + surface + directness + junctions + transition)
     total = max(0, min(100, total))
 
     if total >= GREEN_THRESHOLD:
@@ -207,6 +235,7 @@ def score_route(
             "surface_quality": round(surface, 1),
             "directness": round(directness, 1),
             "junction_safety": round(junctions, 1),
+            "transition_quality": round(transition, 1),
         },
         "max_points": {
             "segregation": MAX_SEGREGATION_POINTS,
@@ -214,6 +243,7 @@ def score_route(
             "surface_quality": MAX_SURFACE_POINTS,
             "directness": MAX_DIRECTNESS_POINTS,
             "junction_safety": MAX_JUNCTION_POINTS,
+            "transition_quality": MAX_TRANSITION_POINTS,
         },
     }
 

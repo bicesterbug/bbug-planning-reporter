@@ -33,6 +33,7 @@ from starlette.applications import Starlette
 from src.mcp_servers.cycle_route.geojson import parse_arcgis_response
 from src.mcp_servers.cycle_route.infrastructure import (
     OVERPASS_API_URL,
+    analyse_transitions,
     build_overpass_query,
     detect_parallel_provision,
     parse_overpass_ways,
@@ -239,8 +240,21 @@ class CycleRouteMCP:
         # Parallel detection: upgrade provisions for road segments with adjacent cycleways
         detect_parallel_provision(segments, overpass_data)
 
+        # Transition analysis: barriers, crossings, side changes
+        try:
+            transitions = analyse_transitions(segments, overpass_data)
+        except Exception:
+            logger.warning("Transition analysis failed", destination=dest_name)
+            transitions = {
+                "unavailable": True,
+                "barriers": [],
+                "non_priority_crossings": [],
+                "side_changes": [],
+                "directness_differential": None,
+            }
+
         provision = summarise_provision(segments)
-        route_score = score_route(segments, cycling_distance_m)
+        route_score = score_route(segments, cycling_distance_m, transitions=transitions)
         route_issues = identify_issues(segments)
         s106 = generate_s106_suggestions(route_issues)
 
@@ -252,6 +266,7 @@ class CycleRouteMCP:
             "score": route_score,
             "issues": route_issues,
             "s106_suggestions": s106,
+            "transitions": transitions,
             "route_geometry": route_coords,
         }
 
