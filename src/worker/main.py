@@ -14,6 +14,7 @@ from arq.connections import RedisSettings
 
 from src.worker.jobs import ingest_application_documents, ingest_directory, search_documents
 from src.worker.letter_jobs import letter_job
+from src.worker.policy_jobs import ingest_policy_revision
 from src.worker.review_jobs import review_job
 
 # Configure structured logging
@@ -97,6 +98,7 @@ class WorkerSettings:
         search_documents,
         review_job,
         letter_job,
+        ingest_policy_revision,
     ]
     queue_name = "review_jobs"
     max_jobs = 10

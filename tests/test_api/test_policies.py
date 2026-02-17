@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.dependencies import get_effective_date_resolver, get_policy_registry
+from src.api.dependencies import get_arq_pool, get_effective_date_resolver, get_policy_registry
 from src.api.main import app
 from src.api.schemas import PolicyCategory
 from src.api.schemas.policy import (
@@ -56,6 +56,16 @@ def mock_resolver():
     """Create mock EffectiveDateResolver."""
     mock = AsyncMock()
     mock.resolve_snapshot = AsyncMock()
+    return mock
+
+
+@pytest.fixture
+def mock_arq_pool():
+    """Create mock arq pool."""
+    mock = AsyncMock()
+    job = AsyncMock()
+    job.job_id = "test_job_123"
+    mock.enqueue_job = AsyncMock(return_value=job)
     return mock
 
 
@@ -576,13 +586,11 @@ class TestUploadRevision:
     Implements [policy-knowledge-base:PolicyRouter/TS-06] - Overlapping dates rejected
     """
 
-    def test_upload_revision(self, client, mock_registry, tmp_path, monkeypatch):
+    def test_upload_revision(self, client, mock_registry, mock_arq_pool, tmp_path, monkeypatch):
         """
-        Verifies [policy-knowledge-base:PolicyRouter/TS-04] - Upload revision
-
         Given: PDF file, valid dates
         When: POST /policies/LTN_1_20/revisions
-        Then: Returns 202 with status "processing"
+        Then: Returns 202 with status "processing" and enqueues ingestion job
         """
         from src.api.schemas.policy import PolicyRevisionRecord
 
@@ -611,6 +619,7 @@ class TestUploadRevision:
         mock_registry.list_revisions = AsyncMock(return_value=[])
 
         app.dependency_overrides[get_policy_registry] = lambda: mock_registry
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq_pool
 
         # Create a test PDF file
         pdf_content = b"%PDF-1.4 test content"
@@ -631,8 +640,15 @@ class TestUploadRevision:
         assert data["source"] == "LTN_1_20"
         assert data["revision_id"] == "rev_LTN_1_20_2020_07"
         assert data["status"] == "processing"
-        assert "ingestion_job_id" in data
+        assert data["ingestion_job_id"] == "test_job_123"
         assert "links" in data
+
+        # Verify arq job was enqueued
+        mock_arq_pool.enqueue_job.assert_called_once()
+        call_args = mock_arq_pool.enqueue_job.call_args
+        assert call_args[0][0] == "ingest_policy_revision"
+        assert call_args[0][1] == "LTN_1_20"
+        assert call_args[0][2] == "rev_LTN_1_20_2020_07"
 
     def test_upload_non_pdf_rejected(self, client, mock_registry, tmp_path, monkeypatch):
         """
@@ -1055,13 +1071,11 @@ class TestReindexRevision:
     Implements [policy-knowledge-base:PolicyRouter/TS-15] - Reindex revision
     """
 
-    def test_reindex_revision(self, client, mock_registry):
+    def test_reindex_revision(self, client, mock_registry, mock_arq_pool):
         """
-        Verifies [policy-knowledge-base:PolicyRouter/TS-15] - Reindex revision
-
-        Given: Existing active revision
+        Given: Existing active revision with file_path
         When: POST /policies/LTN_1_20/revisions/rev_LTN120_2020_07/reindex
-        Then: Returns 202 with job_id
+        Then: Returns 202 and enqueues reindex job
         """
         from src.api.schemas.policy import PolicyRevisionRecord
 
@@ -1074,12 +1088,14 @@ class TestReindexRevision:
                 effective_to=None,
                 status=RevisionStatus.ACTIVE,
                 chunk_count=200,
+                file_path="/data/policy/LTN_1_20/rev_LTN120_2020_07/ltn.pdf",
                 created_at=datetime.now(UTC),
             )
         )
         mock_registry.update_revision = AsyncMock()
 
         app.dependency_overrides[get_policy_registry] = lambda: mock_registry
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq_pool
 
         response = client.post("/api/v1/policies/LTN_1_20/revisions/rev_LTN120_2020_07/reindex")
 
@@ -1090,13 +1106,19 @@ class TestReindexRevision:
         assert data["revision_id"] == "rev_LTN120_2020_07"
         assert data["status"] == "processing"
 
-    def test_cannot_reindex_processing_revision(self, client, mock_registry):
-        """
-        Verifies cannot reindex already processing revision.
+        # Verify arq job was enqueued with reindex=True
+        mock_arq_pool.enqueue_job.assert_called_once()
+        call_args = mock_arq_pool.enqueue_job.call_args
+        assert call_args[0][0] == "ingest_policy_revision"
+        assert call_args[0][1] == "LTN_1_20"
+        assert call_args[0][2] == "rev_LTN120_2020_07"
+        assert call_args[0][4] is True  # reindex=True
 
-        Given: Revision already processing
+    def test_reindex_allows_stuck_processing_revision(self, client, mock_registry, mock_arq_pool):
+        """
+        Given: Revision stuck in processing status with file_path
         When: POST /policies/LTN_1_20/revisions/rev_LTN120_2020_07/reindex
-        Then: Returns 409 cannot_reindex
+        Then: Returns 202 and enqueues reindex job (not 409)
         """
         from src.api.schemas.policy import PolicyRevisionRecord
 
@@ -1108,16 +1130,50 @@ class TestReindexRevision:
                 effective_from=date(2020, 7, 27),
                 effective_to=None,
                 status=RevisionStatus.PROCESSING,
+                file_path="/data/policy/LTN_1_20/rev_LTN120_2020_07/ltn.pdf",
                 created_at=datetime.now(UTC),
             )
         )
+        mock_registry.update_revision = AsyncMock()
 
         app.dependency_overrides[get_policy_registry] = lambda: mock_registry
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq_pool
 
         response = client.post("/api/v1/policies/LTN_1_20/revisions/rev_LTN120_2020_07/reindex")
 
         app.dependency_overrides.clear()
 
-        assert response.status_code == 409
+        assert response.status_code == 202
+        mock_arq_pool.enqueue_job.assert_called_once()
+
+    def test_reindex_fails_without_file_path(self, client, mock_registry, mock_arq_pool):
+        """
+        Given: Revision with no file_path recorded
+        When: POST /policies/LTN_1_20/revisions/rev_LTN120_2020_07/reindex
+        Then: Returns 422 no_file_path
+        """
+        from src.api.schemas.policy import PolicyRevisionRecord
+
+        mock_registry.get_revision = AsyncMock(
+            return_value=PolicyRevisionRecord(
+                revision_id="rev_LTN120_2020_07",
+                source="LTN_1_20",
+                version_label="July 2020",
+                effective_from=date(2020, 7, 27),
+                effective_to=None,
+                status=RevisionStatus.ACTIVE,
+                file_path=None,
+                created_at=datetime.now(UTC),
+            )
+        )
+
+        app.dependency_overrides[get_policy_registry] = lambda: mock_registry
+        app.dependency_overrides[get_arq_pool] = lambda: mock_arq_pool
+
+        response = client.post("/api/v1/policies/LTN_1_20/revisions/rev_LTN120_2020_07/reindex")
+
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 422
         data = response.json()
-        assert data["error"]["code"] == "cannot_reindex"
+        assert data["error"]["code"] == "no_file_path"

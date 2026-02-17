@@ -13,7 +13,6 @@ Implements [policy-knowledge-base:FR-012] - Re-index revision
 
 import contextlib
 import os
-import uuid
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -21,7 +20,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
-from src.api.dependencies import EffectiveDateResolverDep, PolicyRegistryDep
+from src.api.dependencies import ArqPoolDep, EffectiveDateResolverDep, PolicyRegistryDep
 from src.api.schemas import (
     CreatePolicyRequest,
     EffectivePolicySnapshot,
@@ -297,6 +296,7 @@ def _get_policy_data_dir() -> Path:
 async def upload_revision(
     source: str,
     registry: PolicyRegistryDep,
+    arq_pool: ArqPoolDep,
     file: UploadFile = File(..., description="PDF file to upload"),
     version_label: str = Form(..., description="Human-readable version (e.g., 'December 2024')"),
     effective_from: date = Form(..., description="Date from which revision is in force"),
@@ -400,8 +400,14 @@ async def upload_revision(
             ),
         )
 
-    # Generate a job ID for tracking (ingestion will be implemented in Phase 3)
-    ingestion_job_id = f"job_{uuid.uuid4().hex[:12]}"
+    # Enqueue ingestion job
+    job = await arq_pool.enqueue_job(
+        "ingest_policy_revision",
+        source,
+        revision_id,
+        str(file_path),
+    )
+    ingestion_job_id = job.job_id
 
     logger.info(
         "Revision created, ingestion queued",
@@ -742,13 +748,14 @@ async def delete_revision(
     status_code=202,
     responses={
         404: {"model": ErrorResponse, "description": "Policy or revision not found"},
-        409: {"model": ErrorResponse, "description": "Cannot reindex"},
+        422: {"model": ErrorResponse, "description": "No file path to reindex"},
     },
 )
 async def reindex_revision(
     source: str,
     revision_id: str,
     registry: PolicyRegistryDep,
+    arq_pool: ArqPoolDep,
 ) -> RevisionStatusResponse:
     """
     Re-run ingestion pipeline for existing revision.
@@ -778,14 +785,14 @@ async def reindex_revision(
             ),
         )
 
-    # Can't reindex if already processing
-    if revision.status == RevisionStatus.PROCESSING:
+    # Validate file_path exists for reindex
+    if not revision.file_path:
         raise HTTPException(
-            status_code=409,
+            status_code=422,
             detail=make_error_response(
-                code="cannot_reindex",
-                message="Revision is already processing",
-                details={"source": source, "revision_id": revision_id, "status": revision.status},
+                code="no_file_path",
+                message="Revision has no file path recorded. Re-upload the PDF to reindex.",
+                details={"source": source, "revision_id": revision_id},
             ),
         )
 
@@ -796,12 +803,20 @@ async def reindex_revision(
         status=RevisionStatus.PROCESSING,
     )
 
-    # TODO: Enqueue reindex job (Phase 3)
+    # Enqueue reindex job
+    job = await arq_pool.enqueue_job(
+        "ingest_policy_revision",
+        source,
+        revision_id,
+        revision.file_path,
+        True,  # reindex=True
+    )
 
     logger.info(
         "Reindex requested",
         source=source,
         revision_id=revision_id,
+        job_id=job.job_id,
     )
 
     return RevisionStatusResponse(

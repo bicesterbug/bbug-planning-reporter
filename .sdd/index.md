@@ -10,6 +10,9 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-17 | [policy-authority-model](policy-authority-model/) | [spec](policy-authority-model/specification.md) | — | Draft | Enhancement |
+| 2026-02-17 | [policy-s3-storage](policy-s3-storage/) | [spec](policy-s3-storage/specification.md) | — | Draft | Enhancement |
+| 2026-02-17 | [policy-ingestion-fix](policy-ingestion-fix/) | [spec](policy-ingestion-fix/specification.md) | [design](policy-ingestion-fix/design.md) | Implemented | Bugfix |
 | 2026-02-16 | [review-quality-improvements](review-quality-improvements/) | [spec](review-quality-improvements/specification.md) | [design](review-quality-improvements/design.md) | Implemented | Enhancement |
 | 2026-02-16 | [local-dev-setup](local-dev-setup/) | [spec](local-dev-setup/specification.md) | [design](local-dev-setup/design.md) | Implemented | Documentation |
 | 2026-02-15 | [review-resubmission](review-resubmission/) | [spec](review-resubmission/specification.md) | [design](review-resubmission/design.md) | Implemented | Enhancement |
