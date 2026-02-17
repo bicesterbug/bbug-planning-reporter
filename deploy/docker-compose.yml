@@ -29,6 +29,8 @@ services:
       - "traefik.http.routers.bbug-api.entrypoints=websecure"
       - "traefik.http.routers.bbug-api.tls.certresolver=myresolver"
       - "traefik.http.services.bbug-api.loadbalancer.server.port=8080"
+    volumes:
+      - ${DATA_DIR:-./data}/policy:/data/policy
     depends_on:
       redis:
         condition: service_healthy
