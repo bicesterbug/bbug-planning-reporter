@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from src.agent.review_schema import (
     ComplianceItem,
+    KeyDocumentItem,
     RouteAssessmentSection,
     RouteDestinationItem,
     RouteDestinationSummary,
@@ -273,19 +274,17 @@ class TestReviewStructureRatingValidation:
         assert structure.overall_rating == "red"
         assert structure.aspects[0].rating == "amber"
 
-    def test_invalid_category(self):
+    def test_invalid_category_coerced(self):
         """
-        Verifies [reliable-structure-extraction:ReviewStructure/TS-06] - Category via Literal
-
-        Given: A key document with invalid category
+        Given: A key document with non-standard category
         When: ReviewStructure.model_validate() called
-        Then: ValidationError raised
+        Then: Category is coerced to a valid value (Application Core fallback)
         """
         data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
-        data["key_documents"][0]["category"] = "Other"
+        data["key_documents"][0]["category"] = "Officer/Committee Consideration"
 
-        with pytest.raises(ValidationError):
-            ReviewStructure.model_validate(data)
+        structure = ReviewStructure.model_validate(data)
+        assert structure.key_documents[0].category == "Application Core"
 
 
 class TestComplianceBooleanCoercion:
@@ -399,6 +398,31 @@ class TestLiteralEnumInSchema:
             "Design & Layout",
             "Application Core",
         }
+
+
+class TestKeyDocumentCategoryCoercion:
+    """Tests that unknown key_documents categories are coerced to valid values."""
+
+    @pytest.mark.parametrize("input_cat,expected", [
+        ("Transport & Access", "Transport & Access"),
+        ("Design & Layout", "Design & Layout"),
+        ("Application Core", "Application Core"),
+        ("Officer/Committee Consideration", "Application Core"),
+        ("Decision and Legal Agreements", "Application Core"),
+        ("Transport Statement", "Transport & Access"),
+        ("Highway Assessment", "Transport & Access"),
+        ("Travel Plan", "Transport & Access"),
+        ("Landscape Design", "Design & Layout"),
+        ("Site Layout Plan", "Design & Layout"),
+        ("Environmental", "Application Core"),
+    ])
+    def test_category_coercion(self, input_cat, expected):
+        doc = KeyDocumentItem(
+            title="Test Doc",
+            category=input_cat,
+            summary="Test summary",
+        )
+        assert doc.category == expected
 
 
 class TestFlexibleAspects:

@@ -83,6 +83,19 @@ class KeyDocumentItem(BaseModel):
     summary: str
     url: str | None = None
 
+    @field_validator("category", mode="before")
+    @classmethod
+    def coerce_category(cls, v: str) -> str:
+        valid = {"Transport & Access", "Design & Layout", "Application Core"}
+        if v in valid:
+            return v
+        low = v.lower()
+        if any(kw in low for kw in ("transport", "travel", "route", "highway", "parking", "traffic")):
+            return "Transport & Access"
+        if any(kw in low for kw in ("design", "layout", "landscape", "elevation", "plan")):
+            return "Design & Layout"
+        return "Application Core"
+
 
 class RouteDestinationSummary(BaseModel):
     """Summary metrics for a single route variant (shortest or safest)."""
