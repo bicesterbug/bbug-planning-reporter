@@ -504,6 +504,45 @@ class TestReviewOutputUpload:
         assert result["output_urls"]["routes_json"] is not None
 
     @pytest.mark.asyncio
+    async def test_route_assessments_stripped_from_stored_result(
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
+    ):
+        """
+        Given: A successful review with route_assessments in the review dict
+        When: _handle_success stores the result
+        Then: The data passed to store_result has no route_assessments in review
+        """
+        sample_success_result.review["route_assessments"] = [{"route": "A"}]
+
+        await _handle_success(sample_success_result, mock_redis_wrapper)
+
+        stored_data = mock_redis_wrapper.store_result.call_args[0][1]
+        assert "route_assessments" not in stored_data["review"]
+
+    @pytest.mark.asyncio
+    async def test_route_assessments_stripped_from_webhook(
+        self,
+        mock_redis_wrapper,
+        sample_success_result,
+    ):
+        """
+        Given: A successful review with route_assessments in the review dict
+        When: _handle_success fires the webhook
+        Then: The webhook review data has no route_assessments
+        """
+        sample_success_result.review["route_assessments"] = [{"route": "A"}]
+
+        with patch("src.worker.review_jobs.fire_webhook") as mock_fire:
+            await _handle_success(sample_success_result, mock_redis_wrapper)
+
+            completed_calls = [c for c in mock_fire.call_args_list if c.args[0] == "review.completed"]
+            assert len(completed_calls) == 1
+            webhook_review = completed_calls[0].args[2]["review"]
+            assert "route_assessments" not in webhook_review
+
+    @pytest.mark.asyncio
     async def test_output_upload_failure_non_fatal(
         self,
         mock_redis_wrapper,
@@ -545,7 +584,7 @@ class TestReviewOutputUpload:
 
     def test_upload_returns_url_dict(self):
         """
-        Given: A ReviewResult with full_markdown and route_assessments
+        Given: A ReviewResult with full_markdown, route_assessments passed separately
         When: _upload_review_output is called
         Then: Returns a dict with three non-null URLs
         """
@@ -558,7 +597,6 @@ class TestReviewOutputUpload:
             review={
                 "overall_rating": "amber",
                 "full_markdown": "# Test Review\n\nContent here.",
-                "route_assessments": [{"route": "A"}],
             },
         )
         review_data = {
@@ -570,7 +608,7 @@ class TestReviewOutputUpload:
 
         backend = _make_s3_backend_mock()
 
-        urls = _upload_review_output(result, review_data, backend)
+        urls = _upload_review_output(result, review_data, backend, [{"route": "A"}])
 
         assert urls["review_json"] is not None
         assert "rev_upload_test_review.json" in urls["review_json"]
@@ -581,7 +619,7 @@ class TestReviewOutputUpload:
 
     def test_routes_json_contains_route_assessments(self):
         """
-        Given: A review_data with route_assessments = [{"route": "A"}]
+        Given: Route assessments passed as separate parameter
         When: _upload_review_output is called
         Then: The routes.json file contains the route_assessments array
         """
@@ -591,17 +629,14 @@ class TestReviewOutputUpload:
             review_id="rev_routes_test",
             application_ref="25/00284/F",
             success=True,
-            review={
-                "overall_rating": "green",
-                "route_assessments": [{"route": "A", "score": 85}],
-            },
+            review={"overall_rating": "green"},
         )
         review_data = {"review": result.review}
 
         from src.shared.storage import InMemoryStorageBackend
         backend = InMemoryStorageBackend()
 
-        _upload_review_output(result, review_data, backend)
+        _upload_review_output(result, review_data, backend, [{"route": "A", "score": 85}])
 
         routes_key = "25_00284_F/output/rev_routes_test_routes.json"
         assert routes_key in backend.uploads
@@ -609,9 +644,36 @@ class TestReviewOutputUpload:
         routes_data = json.loads(backend.uploads[routes_key])
         assert routes_data == [{"route": "A", "score": 85}]
 
+    def test_review_json_does_not_contain_route_assessments(self):
+        """
+        Given: review_data with no route_assessments, route data passed separately
+        When: _upload_review_output is called
+        Then: The review.json file has no route_assessments in the review object
+        """
+        from src.agent.orchestrator import ReviewResult
+
+        result = ReviewResult(
+            review_id="rev_strip_test",
+            application_ref="25/00284/F",
+            success=True,
+            review={"overall_rating": "green"},
+        )
+        review_data = {"review": result.review}
+
+        from src.shared.storage import InMemoryStorageBackend
+        backend = InMemoryStorageBackend()
+
+        _upload_review_output(result, review_data, backend, [{"route": "A"}])
+
+        review_key = "25_00284_F/output/rev_strip_test_review.json"
+        assert review_key in backend.uploads
+        import json
+        review_content = json.loads(backend.uploads[review_key])
+        assert "route_assessments" not in review_content.get("review", {})
+
     def test_routes_json_empty_array_when_no_assessments(self):
         """
-        Given: A review_data with no route_assessments key
+        Given: No route_assessments (None)
         When: _upload_review_output is called
         Then: The routes.json file contains []
         """

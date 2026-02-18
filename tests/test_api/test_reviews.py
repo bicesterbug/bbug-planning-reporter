@@ -732,20 +732,14 @@ class TestSiteBoundaryEndpoint:
         assert data["error"]["code"] == "review_not_found"
 
 
-class TestReviewContentRouteAssessments:
-    """
-    Tests for route_assessments in ReviewContent schema.
+class TestRouteAssessmentsStrippedFromResponse:
+    """Tests that route_assessments is NOT in the API review response."""
 
-    Verifies [cycle-route-assessment:ReviewContent/TS-01] and TS-02.
-    """
-
-    def test_review_with_route_assessments(self, client, mock_redis):
+    def test_old_data_with_route_assessments_excluded(self, client, mock_redis):
         """
-        Verifies [cycle-route-assessment:ReviewContent/TS-01]
-
-        Given: Completed review with route_assessments array
+        Given: Completed review with route_assessments in Redis (old data)
         When: GET /api/v1/reviews/{id}
-        Then: route_assessments populated in response
+        Then: route_assessments is NOT in the response review object
         """
         job = ReviewJob(
             review_id="rev_routes",
@@ -759,25 +753,7 @@ class TestReviewContentRouteAssessments:
             "review": {
                 "overall_rating": "amber",
                 "summary": "Needs cycle improvements",
-                "route_assessments": [
-                    {
-                        "destination": "Bicester North",
-                        "destination_id": "dest_001",
-                        "shortest_route": {
-                            "distance_m": 2500,
-                            "duration_minutes": 10.0,
-                            "provision_breakdown": {"segregated": 1500, "none": 1000},
-                            "score": {"score": 55, "rating": "amber"},
-                            "issues": [{"severity": "high", "problem": "No cycle lane"}],
-                            "s106_suggestions": [{"suggestion": "Fund cycleway"}],
-                        },
-                        "safest_route": {
-                            "distance_m": 3000,
-                            "score": {"score": 68, "rating": "amber"},
-                        },
-                        "same_route": False,
-                    }
-                ],
+                "route_assessments": [{"destination": "Bicester North"}],
             },
             "application": {"reference": "21/03267/OUT"},
             "metadata": {"model": "claude-3-sonnet"},
@@ -791,48 +767,8 @@ class TestReviewContentRouteAssessments:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["review"]["route_assessments"] is not None
-        assert len(data["review"]["route_assessments"]) == 1
-        route = data["review"]["route_assessments"][0]
-        assert route["destination"] == "Bicester North"
-        assert route["destination_id"] == "dest_001"
-        assert route["shortest_route"]["distance_m"] == 2500
-        assert route["shortest_route"]["score"]["rating"] == "amber"
-        assert route["same_route"] is False
-
-    def test_review_without_route_assessments(self, client, mock_redis):
-        """
-        Verifies [cycle-route-assessment:ReviewContent/TS-02]
-
-        Given: Completed review without route_assessments
-        When: GET /api/v1/reviews/{id}
-        Then: route_assessments is None, no error
-        """
-        job = ReviewJob(
-            review_id="rev_no_routes",
-            application_ref="25/01178/REM",
-            status=ReviewStatus.COMPLETED,
-            created_at=datetime.now(UTC),
-            completed_at=datetime.now(UTC),
-        )
-        mock_redis.get_job = AsyncMock(return_value=job)
-        mock_redis.get_result = AsyncMock(return_value={
-            "review": {"overall_rating": "green", "summary": "Good provision"},
-            "application": {"reference": "25/01178/REM"},
-            "metadata": {"model": "claude-3-sonnet"},
-        })
-
-        app.dependency_overrides[get_redis_client] = lambda: mock_redis
-
-        response = client.get("/api/v1/reviews/rev_no_routes")
-
-        app.dependency_overrides.clear()
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["review"]["overall_rating"] == "green"
-        # route_assessments should be None/absent - not cause an error
-        assert data["review"].get("route_assessments") is None
+        assert "route_assessments" not in data["review"]
+        assert data["review"]["overall_rating"] == "amber"
 
 
 class TestSiteBoundaryIntegration:

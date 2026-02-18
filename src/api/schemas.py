@@ -187,31 +187,6 @@ class KeyDocument(BaseModel):
     )
 
 
-class RouteData(BaseModel):
-    """Per-route assessment data (shortest or safest)."""
-
-    distance_m: float | None = None
-    duration_minutes: float | None = None
-    provision_breakdown: dict[str, float] | None = None
-    score: dict[str, Any] | None = None
-    issues: list[dict[str, Any]] | None = None
-    s106_suggestions: list[dict[str, Any]] | None = None
-
-
-class RouteAssessment(BaseModel):
-    """
-    Cycling route assessment result with dual-route structure.
-
-    Implements [cycle-route-assessment:FR-008] - Route assessments in structured output
-    """
-
-    destination: str | None = None
-    destination_id: str | None = None
-    shortest_route: RouteData | None = None
-    safest_route: RouteData | None = None
-    same_route: bool | None = None
-
-
 class ReviewContent(BaseModel):
     """Review content in response."""
 
@@ -223,8 +198,6 @@ class ReviewContent(BaseModel):
     recommendations: list[str] | None = None
     suggested_conditions: list[str] | None = None
     full_markdown: str | None = None
-    # Implements [cycle-route-assessment:FR-008] - Route assessments in review output
-    route_assessments: list[RouteAssessment] | None = None
     # Implements [route-narrative-report:FR-001] - Route narrative section
     route_narrative: dict[str, Any] | None = None
 

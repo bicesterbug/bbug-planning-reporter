@@ -159,12 +159,15 @@ async def _handle_success(
         "metadata": result.metadata,
     }
 
+    # Extract route_assessments from review — stored separately in routes JSON file
+    route_assessments = (review_data.get("review") or {}).pop("route_assessments", None)
+
     # Upload output files and record URLs (both local and S3)
     output_urls: dict[str, str | None] = {
         "review_json": None, "review_md": None, "routes_json": None,
     }
     if storage:
-        output_urls = _upload_review_output(result, review_data, storage)
+        output_urls = _upload_review_output(result, review_data, storage, route_assessments)
     review_data["output_urls"] = output_urls
 
     # Store result in Redis (includes output_urls)
@@ -196,8 +199,13 @@ def _upload_review_output(
     result: ReviewResult,
     review_data: dict[str, Any],
     storage: StorageBackend,
+    route_assessments: list[dict[str, Any]] | None = None,
 ) -> dict[str, str | None]:
     """Upload review JSON, markdown, and routes JSON. Non-fatal on failure.
+
+    Args:
+        route_assessments: Route data to write to the separate routes JSON file.
+            Passed explicitly because it has been stripped from review_data.
 
     Returns a dict of public URLs for each output artefact.
     """
@@ -226,9 +234,6 @@ def _upload_review_output(
                 urls["review_md"] = storage.public_url(key)
 
             # Routes JSON
-            route_assessments = (review_data.get("review") or {}).get(
-                "route_assessments", []
-            )
             key = f"{prefix}/{result.review_id}_routes.json"
             routes_path = Path(tmpdir) / f"{result.review_id}_routes.json"
             routes_path.write_text(

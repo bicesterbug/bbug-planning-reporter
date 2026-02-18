@@ -415,62 +415,6 @@ Returns the full review, including results when completed.
       "Prior to occupation, a revised Cycle Parking Strategy shall be submitted and approved.",
       "A 3m-wide segregated cycle track shall be constructed along Gavray Drive from the site entrance to the junction with Buckingham Road."
     ],
-    "route_assessments": [
-      {
-        "destination": "Bicester North Station",
-        "destination_id": "dest_bicester_north",
-        "shortest_route": {
-          "distance_m": 2200,
-          "duration_minutes": 8.5,
-          "provision_breakdown": {
-            "protected_lane": 0.1,
-            "shared_use": 0.3,
-            "on_road": 0.6
-          },
-          "score": {
-            "overall": 35,
-            "safety": 28,
-            "directness": 92
-          },
-          "issues": [
-            {
-              "location": "A4095 junction",
-              "severity": "high",
-              "description": "No cycle phase at signals"
-            }
-          ],
-          "s106_suggestions": [
-            {
-              "item": "Toucan crossing at A4095",
-              "estimated_cost": 150000
-            }
-          ]
-        },
-        "safest_route": {
-          "distance_m": 2800,
-          "duration_minutes": 11.0,
-          "provision_breakdown": {
-            "protected_lane": 0.3,
-            "shared_use": 0.5,
-            "on_road": 0.2
-          },
-          "score": {
-            "overall": 62,
-            "safety": 55,
-            "directness": 78
-          },
-          "issues": [
-            {
-              "location": "Buckingham Road crossing",
-              "severity": "medium",
-              "description": "Uncontrolled crossing on 30mph road"
-            }
-          ],
-          "s106_suggestions": []
-        },
-        "same_route": false
-      }
-    ],
     "route_narrative": {
       "destinations": [
         {
@@ -1824,7 +1768,6 @@ All webhook payloads share a common envelope structure:
       "policy_compliance": [],
       "recommendations": [],
       "suggested_conditions": [],
-      "route_assessments": [],
       "route_narrative": null,
       "key_documents": []
     },

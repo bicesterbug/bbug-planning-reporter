@@ -14,8 +14,6 @@ from src.api.schemas import (
     ReviewContent,
     ReviewOptionsRequest,
     ReviewRequest,
-    RouteAssessment,
-    RouteData,
 )
 from src.shared.models import ReviewOptions
 
@@ -355,55 +353,21 @@ class TestReviewContentRouteNarrative:
         assert content.route_narrative is None
 
 
-class TestRouteAssessmentDualRoute:
-    """Tests for dual-route RouteAssessment API model."""
+class TestReviewContentRouteAssessmentsRemoved:
+    """Tests that route_assessments is no longer on ReviewContent."""
 
-    def test_dual_route_structure(self) -> None:
-        """RouteAssessment accepts shortest_route and safest_route sub-objects."""
-        assessment = RouteAssessment(
-            destination="Bicester North Station",
-            destination_id="dest_bicester_north",
-            shortest_route=RouteData(
-                distance_m=2200,
-                score={"overall": 35},
-                issues=[{"location": "A4095", "severity": "high", "description": "No cycle phase"}],
-            ),
-            safest_route=RouteData(
-                distance_m=2800,
-                score={"overall": 62},
-            ),
-            same_route=False,
-        )
-        data = assessment.model_dump()
-        assert data["shortest_route"]["distance_m"] == 2200
-        assert data["safest_route"]["score"]["overall"] == 62
-        assert data["same_route"] is False
-
-    def test_no_route_assessments_backward_compat(self) -> None:
-        """ReviewContent with no route_assessments defaults to None."""
+    def test_review_content_has_no_route_assessments_field(self) -> None:
+        """ReviewContent should not have a route_assessments attribute."""
         content = ReviewContent(overall_rating="green")
-        assert content.route_assessments is None
+        assert not hasattr(content, "route_assessments")
 
-    def test_same_route_true(self) -> None:
-        """RouteAssessment accepts same_route=true."""
-        assessment = RouteAssessment(
-            destination="Town Centre",
-            same_route=True,
-            shortest_route=RouteData(distance_m=1500, score={"overall": 70}),
-            safest_route=RouteData(distance_m=1500, score={"overall": 70}),
+    def test_old_data_with_route_assessments_parses(self) -> None:
+        """ReviewContent ignores extra route_assessments field from old data."""
+        content = ReviewContent.model_validate(
+            {"overall_rating": "green", "route_assessments": [{"route": "A"}]}
         )
-        assert assessment.same_route is True
-
-    def test_old_flat_data_still_parses(self) -> None:
-        """RouteAssessment with only destination/destination_id still parses (all optional)."""
-        assessment = RouteAssessment(
-            destination="Bicester North Station",
-            destination_id="dest_bicester_north",
-        )
-        assert assessment.destination == "Bicester North Station"
-        assert assessment.shortest_route is None
-        assert assessment.safest_route is None
-        assert assessment.same_route is None
+        assert content.overall_rating == "green"
+        assert not hasattr(content, "route_assessments")
 
 
 class TestReviewOptionsToggles:
