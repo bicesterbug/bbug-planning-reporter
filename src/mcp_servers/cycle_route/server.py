@@ -37,6 +37,7 @@ from src.mcp_servers.cycle_route.infrastructure import (
     build_overpass_query,
     detect_parallel_provision,
     parse_overpass_ways,
+    segments_to_feature_collection,
     summarise_provision,
 )
 from src.mcp_servers.cycle_route.issues import (
@@ -262,7 +263,7 @@ class CycleRouteMCP:
             "distance_m": round(cycling_distance_m),
             "duration_minutes": round(cycling_duration_s / 60, 1),
             "provision_breakdown": provision,
-            "segments": [s.to_dict() for s in segments],
+            "segments": segments_to_feature_collection(segments),
             "score": route_score,
             "issues": route_issues,
             "s106_suggestions": s106,

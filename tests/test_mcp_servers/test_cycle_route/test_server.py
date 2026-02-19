@@ -256,6 +256,15 @@ class TestAssessCycleRoute:
         assert "route_geometry" in shortest
         assert shortest["score"]["rating"] in ("green", "amber", "red")
 
+        # Segments should be a GeoJSON FeatureCollection
+        segments = shortest["segments"]
+        assert segments["type"] == "FeatureCollection"
+        assert len(segments["features"]) > 0
+        feature = segments["features"][0]
+        assert feature["type"] == "Feature"
+        assert feature["geometry"]["type"] == "LineString"
+        assert "provision" in feature["properties"]
+
     @pytest.mark.anyio
     async def test_osrm_called_with_alternatives(self):
         """OSRM request includes alternatives=true."""

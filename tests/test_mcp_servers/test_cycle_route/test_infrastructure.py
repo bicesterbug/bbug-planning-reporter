@@ -27,6 +27,7 @@ from src.mcp_servers.cycle_route.infrastructure import (
     extract_speed_limit,
     extract_surface,
     parse_overpass_ways,
+    segments_to_feature_collection,
     summarise_provision,
 )
 
@@ -380,6 +381,137 @@ class TestRouteSegmentOriginalProvision:
         seg = RouteSegment(1, "none", "secondary", 30, "asphalt", True, 500, "Banbury Rd")
         d = seg.to_dict()
         assert "original_provision" not in d
+
+
+# =============================================================================
+# RouteSegment.geometry
+# =============================================================================
+
+
+class TestRouteSegmentGeometry:
+    def test_stores_geometry(self):
+        """RouteSegment stores geometry as list of [lon, lat] pairs."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        seg = RouteSegment(1, "segregated", "cycleway", 0, "asphalt", True, 500, "Route",
+                          geometry=coords)
+        assert seg.geometry == [[-1.15, 51.9], [-1.14, 51.91]]
+
+    def test_geometry_defaults_to_none(self):
+        """RouteSegment without geometry defaults to None."""
+        seg = RouteSegment(1, "segregated", "cycleway", 0, "asphalt", True, 500, "Route")
+        assert seg.geometry is None
+
+
+class TestParseOverpassWaysGeometry:
+    def test_geometry_extracted_from_overpass_way(self):
+        """Overpass way geometry converted from {lat,lon} to [lon,lat]."""
+        response = {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 12345,
+                    "tags": {"highway": "cycleway", "surface": "asphalt"},
+                    "geometry": [
+                        {"lat": 51.9, "lon": -1.15},
+                        {"lat": 51.91, "lon": -1.14},
+                    ],
+                },
+            ]
+        }
+        segments = parse_overpass_ways(response, 500)
+        assert segments[0].geometry == [[-1.15, 51.9], [-1.14, 51.91]]
+
+    def test_way_without_geometry_gets_none(self):
+        """Way without geometry key gets geometry=None."""
+        response = {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 12345,
+                    "tags": {"highway": "cycleway"},
+                },
+            ]
+        }
+        segments = parse_overpass_ways(response, 500)
+        assert segments[0].geometry is None
+
+    def test_single_node_way_gets_none(self):
+        """Way with only 1 geometry point gets geometry=None."""
+        response = {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 12345,
+                    "tags": {"highway": "cycleway"},
+                    "geometry": [{"lat": 51.9, "lon": -1.15}],
+                },
+            ]
+        }
+        segments = parse_overpass_ways(response, 500)
+        assert segments[0].geometry is None
+
+
+# =============================================================================
+# segments_to_feature_collection
+# =============================================================================
+
+
+class TestSegmentsToFeatureCollection:
+    def test_feature_collection_structure(self):
+        """Produces a FeatureCollection with Features for each segment."""
+        segments = [
+            RouteSegment(1, "segregated", "cycleway", 0, "asphalt", True, 500, "Path A",
+                        geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            RouteSegment(2, "none", "secondary", 30, "asphalt", True, 300, "Road B",
+                        geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+        ]
+        result = segments_to_feature_collection(segments)
+        assert result["type"] == "FeatureCollection"
+        assert len(result["features"]) == 2
+        for f in result["features"]:
+            assert f["type"] == "Feature"
+            assert f["geometry"]["type"] == "LineString"
+            assert "provision" in f["properties"]
+            assert "highway" in f["properties"]
+            assert "speed_limit" in f["properties"]
+            assert "surface" in f["properties"]
+            assert "lit" in f["properties"]
+            assert "distance_m" in f["properties"]
+            assert "name" in f["properties"]
+            assert "way_id" in f["properties"]
+
+    def test_null_geometry_feature(self):
+        """Segment with no geometry produces Feature with geometry: null."""
+        segments = [
+            RouteSegment(1, "none", "residential", 30, "asphalt", True, 100, "Road"),
+        ]
+        result = segments_to_feature_collection(segments)
+        assert result["features"][0]["geometry"] is None
+
+    def test_includes_original_provision_when_present(self):
+        """Feature properties include original_provision when set."""
+        segments = [
+            RouteSegment(1, "segregated", "secondary", 30, "asphalt", True, 500, "Rd",
+                        original_provision="none",
+                        geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+        ]
+        result = segments_to_feature_collection(segments)
+        assert result["features"][0]["properties"]["original_provision"] == "none"
+
+    def test_excludes_original_provision_when_absent(self):
+        """Feature properties exclude original_provision when None."""
+        segments = [
+            RouteSegment(1, "none", "secondary", 30, "asphalt", True, 500, "Rd",
+                        geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+        ]
+        result = segments_to_feature_collection(segments)
+        assert "original_provision" not in result["features"][0]["properties"]
+
+    def test_empty_segments_list(self):
+        """Empty segments list produces empty FeatureCollection."""
+        result = segments_to_feature_collection([])
+        assert result["type"] == "FeatureCollection"
+        assert result["features"] == []
 
 
 # =============================================================================

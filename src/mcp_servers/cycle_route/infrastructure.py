@@ -57,6 +57,7 @@ class RouteSegment:
     distance_m: float  # approximate segment length in metres
     name: str  # road/path name if available
     original_provision: str | None = field(default=None)
+    geometry: list[list[float]] | None = field(default=None)
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -225,6 +226,11 @@ def parse_overpass_ways(
         if highway in ("proposed", "construction", "abandoned", "razed", "platform"):
             continue
 
+        # Extract geometry: convert Overpass {lat, lon} to GeoJSON [lon, lat]
+        raw_geom = way.get("geometry", [])
+        geom_coords = [[pt["lon"], pt["lat"]] for pt in raw_geom if "lat" in pt and "lon" in pt]
+        segment_geometry = geom_coords if len(geom_coords) >= 2 else None
+
         segment = RouteSegment(
             way_id=way.get("id", 0),
             provision=classify_provision(tags),
@@ -234,10 +240,53 @@ def parse_overpass_ways(
             lit=extract_lit(tags),
             distance_m=per_way_distance,
             name=tags.get("name", "Unnamed"),
+            geometry=segment_geometry,
         )
         segments.append(segment)
 
     return segments
+
+
+def segments_to_feature_collection(segments: list[RouteSegment]) -> dict[str, Any]:
+    """
+    Convert route segments to a GeoJSON FeatureCollection.
+
+    Each segment becomes a Feature with LineString geometry (or null)
+    and properties containing all segment fields.
+    """
+    features = []
+    for seg in segments:
+        if seg.geometry is not None:
+            geometry: dict[str, Any] | None = {
+                "type": "LineString",
+                "coordinates": seg.geometry,
+            }
+        else:
+            geometry = None
+
+        properties: dict[str, Any] = {
+            "way_id": seg.way_id,
+            "provision": seg.provision,
+            "highway": seg.highway,
+            "speed_limit": seg.speed_limit,
+            "surface": seg.surface,
+            "lit": seg.lit,
+            "distance_m": round(seg.distance_m, 1),
+            "name": seg.name,
+        }
+        if seg.original_provision is not None:
+            properties["original_provision"] = seg.original_provision
+
+        features.append({
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": properties,
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
 
 
 def summarise_provision(segments: list[RouteSegment]) -> dict[str, float]:
