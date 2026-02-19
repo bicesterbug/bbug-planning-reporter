@@ -1552,8 +1552,9 @@ class AgentOrchestrator:
                             route_lines.append(f"- Provision: {', '.join(prov_parts)}")
 
                     # Count parallel detection upgrades
-                    segments = route_data.get("segments", [])
-                    upgraded = sum(1 for s in segments if s.get("original_provision"))
+                    segments_data = route_data.get("segments", {})
+                    features = segments_data.get("features", []) if isinstance(segments_data, dict) else segments_data
+                    upgraded = sum(1 for f in features if (f.get("properties") or f).get("original_provision"))
                     if upgraded:
                         route_lines.append(f"- Parallel detection: {upgraded} segment(s) upgraded via adjacent cycleway")
 
@@ -1639,8 +1640,9 @@ class AgentOrchestrator:
                             summary_lines.append(f"- Provision: {', '.join(prov_parts)}")
 
                 # Parallel detection upgrades
-                segments = route_data.get("segments", [])
-                upgraded = sum(1 for s in segments if s.get("original_provision"))
+                segments_data = route_data.get("segments", {})
+                features = segments_data.get("features", []) if isinstance(segments_data, dict) else segments_data
+                upgraded = sum(1 for f in features if (f.get("properties") or f).get("original_provision"))
                 if upgraded:
                     summary_lines.append(f"- Parallel detection: {upgraded} segment(s) upgraded")
 

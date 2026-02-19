@@ -180,11 +180,20 @@ def _make_dual_route_result(destination="Bicester North"):
         distance=2800, score=72, rating="amber",
         provision={"segregated": 2000, "none": 800},
         issues=[{"severity": "medium", "problem": "Short gap in provision"}],
-        segments=[
-            {"way_id": 100, "provision": "segregated", "original_provision": "none",
-             "highway": "secondary", "speed_limit": 30, "surface": "asphalt",
-             "lit": True, "distance_m": 500, "name": "Banbury Rd"},
-        ],
+        segments={
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": [[-1.15, 51.9], [-1.14, 51.91]]},
+                    "properties": {
+                        "way_id": 100, "provision": "segregated", "original_provision": "none",
+                        "highway": "secondary", "speed_limit": 30, "surface": "asphalt",
+                        "lit": True, "distance_m": 500, "name": "Banbury Rd",
+                    },
+                },
+            ],
+        },
     )
     return {
         "status": "success",
