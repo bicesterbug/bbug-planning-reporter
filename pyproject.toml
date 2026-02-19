@@ -36,6 +36,7 @@ dependencies = [
 
     # MCP SDK
     "mcp>=1.0.0",
+    "starlette<0.52",
 
     # Document processing (Phase 2)
     "pymupdf>=1.23.0",
