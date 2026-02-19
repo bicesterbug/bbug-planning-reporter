@@ -389,43 +389,15 @@ class TestStructurePromptEvidenceAwareCompliance:
         assert "notes" in system.lower()
 
 
-class TestStructurePromptRouteAssessment:
-    """Verifies [route-narrative-report:FR-001] - route_assessment guidance in structure prompt."""
+class TestStructurePromptRouteAssessmentRemoved:
+    """Verifies route_assessment guidance removed from structure prompt."""
 
-    def test_route_assessment_guidance_present(self):
-        """System prompt contains route_assessment field guidance."""
+    def test_route_assessment_not_in_system_prompt(self):
+        """System prompt does not contain route_assessment guidance."""
         system, _ = build_structure_prompt(
             APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
         )
-        assert "route_assessment" in system
-
-    def test_route_assessment_marked_required_when_data_present(self):
-        """System prompt marks route_assessment as REQUIRED when data is present."""
-        system, _ = build_structure_prompt(
-            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
-        )
-        assert "MUST populate route_assessment" in system
-
-    def test_route_assessment_omit_when_no_data(self):
-        """System prompt instructs to omit route_assessment when no data provided."""
-        system, _ = build_structure_prompt(
-            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
-        )
-        assert "Do NOT include route_assessment" in system
-
-    def test_narrative_sentence_guidance(self):
-        """System prompt specifies 3-8 sentences for narrative."""
-        system, _ = build_structure_prompt(
-            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
-        )
-        assert "3-8 sentences" in system
-
-    def test_must_not_invent_data(self):
-        """System prompt contains 'Must not invent data' guidance."""
-        system, _ = build_structure_prompt(
-            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
-        )
-        assert "Must not invent data" in system
+        assert "route_assessment" not in system
 
 
 PLANS_SUBMITTED = (

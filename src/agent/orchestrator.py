@@ -1854,19 +1854,26 @@ class AgentOrchestrator:
                     for d in structure.key_documents
                 ]
 
-                # Implements [route-narrative-report:FR-001] - Extract route narrative
+                # Build route_narrative deterministically from MCP data
                 route_narrative = None
-                if structure.route_assessment is not None:
+                if self._route_assessments:
                     route_narrative = {
                         "destinations": [
                             {
-                                "destination_name": d.destination_name,
-                                "shortest_route_summary": d.shortest_route_summary.model_dump(),
-                                "safest_route_summary": d.safest_route_summary.model_dump(),
-                                "narrative": d.narrative,
-                                "same_route": d.same_route,
+                                "destination_name": ra.get("destination", "Unknown"),
+                                "shortest_route_summary": {
+                                    "distance_m": ra["shortest_route"]["distance_m"],
+                                    "ltn_score": ra["shortest_route"]["score"]["score"],
+                                    "rating": ra["shortest_route"]["score"]["rating"],
+                                },
+                                "safest_route_summary": {
+                                    "distance_m": ra["safest_route"]["distance_m"],
+                                    "ltn_score": ra["safest_route"]["score"]["score"],
+                                    "rating": ra["safest_route"]["score"]["rating"],
+                                },
+                                "same_route": ra.get("same_route", True),
                             }
-                            for d in structure.route_assessment.destinations
+                            for ra in self._route_assessments
                         ]
                     }
 

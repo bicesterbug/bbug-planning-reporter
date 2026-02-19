@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-19 | [deterministic-route-narrative](deterministic-route-narrative/) | [spec](deterministic-route-narrative/specification.md) | [design](deterministic-route-narrative/design.md) | Design Complete | Bugfix |
 | 2026-02-18 | [route-segment-geometry](route-segment-geometry/) | [spec](route-segment-geometry/specification.md) | [design](route-segment-geometry/design.md) | Implemented | Enhancement |
 | 2026-02-18 | [strip-route-assessments](strip-route-assessments/) | [spec](strip-route-assessments/specification.md) | [design](strip-route-assessments/design.md) | Implemented | Bugfix |
 | 2026-02-17 | [route-narrative-report](route-narrative-report/) | [spec](route-narrative-report/specification.md) | [design](route-narrative-report/design.md) | Implemented | Enhancement |

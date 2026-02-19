@@ -13,9 +13,6 @@ from pydantic import ValidationError
 from src.agent.review_schema import (
     ComplianceItem,
     KeyDocumentItem,
-    RouteAssessmentSection,
-    RouteDestinationItem,
-    RouteDestinationSummary,
     ReviewStructure,
 )
 
@@ -486,129 +483,28 @@ class TestFlexibleAspects:
 
 
 # =============================================================================
-# Route Assessment Section
+# Route Assessment Removed
 # =============================================================================
 
-VALID_ROUTE_ASSESSMENT = {
-    "destinations": [
-        {
-            "destination_name": "Bicester North Station",
-            "shortest_route_summary": {
-                "distance_m": 2200,
-                "ltn_score": 35,
-                "rating": "red",
-            },
-            "safest_route_summary": {
-                "distance_m": 2800,
-                "ltn_score": 72,
-                "rating": "amber",
-            },
-            "narrative": (
-                "The shortest route to Bicester North Station is 2200m via the A41 "
-                "but scores only 35/100 due to complete absence of cycling provision. "
-                "The safest route is 600m longer at 2800m but achieves 72/100 with "
-                "segregated provision along most of the route. Key issues include "
-                "two barriers and one non-priority crossing on the safest route."
-            ),
-            "same_route": False,
-        }
-    ]
-}
 
+class TestRouteAssessmentRemoved:
+    """Verifies route_assessment field removed from ReviewStructure."""
 
-class TestRouteAssessmentSection:
-    """
-    Verifies [route-narrative-report:FR-001] - Route assessment in review structure
-    """
-
-    def test_valid_route_assessment_parses(self):
-        """
-        Given: Valid structure JSON with route_assessment
-        When: ReviewStructure.model_validate() called
-        Then: Model instance includes route_assessment with destinations
-        """
-        data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
-        data["route_assessment"] = VALID_ROUTE_ASSESSMENT
-
-        structure = ReviewStructure.model_validate(data)
-        assert structure.route_assessment is not None
-        assert len(structure.route_assessment.destinations) == 1
-        dest = structure.route_assessment.destinations[0]
-        assert dest.destination_name == "Bicester North Station"
-        assert dest.shortest_route_summary.distance_m == 2200
-        assert dest.shortest_route_summary.ltn_score == 35
-        assert dest.shortest_route_summary.rating == "red"
-        assert dest.safest_route_summary.ltn_score == 72
-        assert dest.same_route is False
-
-    def test_none_when_field_absent(self):
-        """
-        Given: Valid structure JSON without route_assessment
-        When: ReviewStructure.model_validate() called
-        Then: route_assessment is None
-        """
+    def test_no_route_assessment_attribute(self):
+        """ReviewStructure has no route_assessment attribute."""
         structure = ReviewStructure.model_validate(VALID_STRUCTURE_JSON)
-        assert structure.route_assessment is None
+        assert not hasattr(structure, "route_assessment")
 
-    def test_null_accepted_as_none(self):
-        """
-        Given: Structure JSON with route_assessment: null
-        When: ReviewStructure.model_validate() called
-        Then: route_assessment is None
-        """
+    def test_extra_route_assessment_ignored(self):
+        """ReviewStructure ignores extra route_assessment in input."""
         data = json.loads(json.dumps(VALID_STRUCTURE_JSON))
-        data["route_assessment"] = None
+        data["route_assessment"] = {"destinations": []}
 
         structure = ReviewStructure.model_validate(data)
-        assert structure.route_assessment is None
+        assert not hasattr(structure, "route_assessment")
 
-    def test_empty_destinations_rejected(self):
-        """
-        Given: route_assessment with empty destinations array
-        When: RouteAssessmentSection.model_validate() called
-        Then: ValidationError raised (min_length=1)
-        """
-        with pytest.raises(ValidationError):
-            RouteAssessmentSection.model_validate({"destinations": []})
-
-    def test_rating_case_normalised(self):
-        """
-        Given: Route summary with uppercase rating "RED"
-        When: RouteDestinationSummary.model_validate() called
-        Then: Rating normalised to "red"
-        """
-        summary = RouteDestinationSummary.model_validate({
-            "distance_m": 2200,
-            "ltn_score": 35,
-            "rating": "RED",
-        })
-        assert summary.rating == "red"
-
-    def test_missing_narrative_raises_error(self):
-        """
-        Given: RouteDestinationItem without narrative field
-        When: model_validate() called
-        Then: ValidationError raised
-        """
-        data = {
-            "destination_name": "Test",
-            "shortest_route_summary": {"distance_m": 1000, "ltn_score": 50, "rating": "amber"},
-            "safest_route_summary": {"distance_m": 1000, "ltn_score": 50, "rating": "amber"},
-            "same_route": True,
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RouteDestinationItem.model_validate(data)
-        assert "narrative" in str(exc_info.value)
-
-    def test_schema_includes_route_assessment_optional(self):
-        """
-        Given: ReviewStructure model
-        When: model_json_schema() called
-        Then: route_assessment appears as optional (anyOf with null)
-        """
+    def test_schema_excludes_route_assessment(self):
+        """model_json_schema() does not include route_assessment."""
         schema = ReviewStructure.model_json_schema()
         props = schema["properties"]
-        assert "route_assessment" in props
-        ra_prop = props["route_assessment"]
-        # Optional fields use anyOf with null type
-        assert "anyOf" in ra_prop or "default" in ra_prop or "$ref" in ra_prop
+        assert "route_assessment" not in props

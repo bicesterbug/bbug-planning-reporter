@@ -641,83 +641,94 @@ class TestTransitionEvidence:
 # =============================================================================
 
 
-class TestRouteNarrativeExtraction:
-    """Verifies [route-narrative-report:FR-001] - Route narrative from structure."""
+class TestDeterministicRouteNarrative:
+    """Verifies deterministic route_narrative build from MCP data."""
 
-    def test_route_narrative_extracted_when_present(self):
-        """route_narrative is extracted when structure has route_assessment."""
-        from src.agent.review_schema import ReviewStructure
-
-        structure_data = {
-            "overall_rating": "amber",
-            "summary": "Test summary.",
-            "aspects": [{"name": "Cycle Routes", "rating": "amber",
-                         "key_issue": "Test", "analysis": "Test analysis."}],
-            "policy_compliance": [],
-            "recommendations": [],
-            "suggested_conditions": [],
-            "key_documents": [],
-            "route_assessment": {
-                "destinations": [
-                    {
-                        "destination_name": "Bicester North",
-                        "shortest_route_summary": {"distance_m": 2200, "ltn_score": 35, "rating": "red"},
-                        "safest_route_summary": {"distance_m": 2800, "ltn_score": 72, "rating": "amber"},
-                        "narrative": "The shortest route scores 35/100. The safest scores 72/100.",
-                        "same_route": False,
-                    }
-                ]
-            },
+    def _build_route_narrative(self, route_assessments):
+        """Simulate the orchestrator's deterministic build logic."""
+        if not route_assessments:
+            return None
+        return {
+            "destinations": [
+                {
+                    "destination_name": ra.get("destination", "Unknown"),
+                    "shortest_route_summary": {
+                        "distance_m": ra["shortest_route"]["distance_m"],
+                        "ltn_score": ra["shortest_route"]["score"]["score"],
+                        "rating": ra["shortest_route"]["score"]["rating"],
+                    },
+                    "safest_route_summary": {
+                        "distance_m": ra["safest_route"]["distance_m"],
+                        "ltn_score": ra["safest_route"]["score"]["score"],
+                        "rating": ra["safest_route"]["score"]["rating"],
+                    },
+                    "same_route": ra.get("same_route", True),
+                }
+                for ra in route_assessments
+            ]
         }
-        structure = ReviewStructure.model_validate(structure_data)
 
-        # Simulate the orchestrator extraction logic
-        route_narrative = None
-        if structure.route_assessment is not None:
-            route_narrative = {
-                "destinations": [
-                    {
-                        "destination_name": d.destination_name,
-                        "shortest_route_summary": d.shortest_route_summary.model_dump(),
-                        "safest_route_summary": d.safest_route_summary.model_dump(),
-                        "narrative": d.narrative,
-                        "same_route": d.same_route,
-                    }
-                    for d in structure.route_assessment.destinations
-                ]
+    def test_route_narrative_populated_from_assessments(self):
+        """route_narrative built from MCP route assessment data."""
+        route_assessments = [
+            {
+                "status": "success",
+                "destination": "Bicester North",
+                "destination_id": "dest_001",
+                "shortest_route": {
+                    "distance_m": 2200,
+                    "score": {"score": 35, "rating": "red"},
+                },
+                "safest_route": {
+                    "distance_m": 2800,
+                    "score": {"score": 72, "rating": "amber"},
+                },
+                "same_route": False,
             }
+        ]
 
-        assert route_narrative is not None
-        assert len(route_narrative["destinations"]) == 1
-        dest = route_narrative["destinations"][0]
+        narrative = self._build_route_narrative(route_assessments)
+
+        assert narrative is not None
+        assert len(narrative["destinations"]) == 1
+        dest = narrative["destinations"][0]
         assert dest["destination_name"] == "Bicester North"
         assert dest["shortest_route_summary"]["distance_m"] == 2200
         assert dest["shortest_route_summary"]["ltn_score"] == 35
+        assert dest["shortest_route_summary"]["rating"] == "red"
+        assert dest["safest_route_summary"]["distance_m"] == 2800
+        assert dest["safest_route_summary"]["ltn_score"] == 72
         assert dest["safest_route_summary"]["rating"] == "amber"
-        assert dest["narrative"] == "The shortest route scores 35/100. The safest scores 72/100."
         assert dest["same_route"] is False
+        assert "narrative" not in dest
 
-    def test_route_narrative_none_when_no_assessment(self):
-        """route_narrative is None when structure has no route_assessment."""
-        from src.agent.review_schema import ReviewStructure
+    def test_route_narrative_none_when_empty(self):
+        """route_narrative is None when no route assessments exist."""
+        narrative = self._build_route_narrative([])
+        assert narrative is None
 
-        structure_data = {
-            "overall_rating": "amber",
-            "summary": "Test summary.",
-            "aspects": [{"name": "Cycle Routes", "rating": "amber",
-                         "key_issue": "Test", "analysis": "Test analysis."}],
-            "policy_compliance": [],
-            "recommendations": [],
-            "suggested_conditions": [],
-            "key_documents": [],
-        }
-        structure = ReviewStructure.model_validate(structure_data)
+    def test_route_narrative_same_route(self):
+        """route_narrative handles same_route=True with identical summaries."""
+        route_assessments = [
+            {
+                "destination": "Town Centre",
+                "shortest_route": {
+                    "distance_m": 1500,
+                    "score": {"score": 70, "rating": "amber"},
+                },
+                "safest_route": {
+                    "distance_m": 1500,
+                    "score": {"score": 70, "rating": "amber"},
+                },
+                "same_route": True,
+            }
+        ]
 
-        route_narrative = None
-        if structure.route_assessment is not None:
-            route_narrative = {"destinations": []}
+        narrative = self._build_route_narrative(route_assessments)
 
-        assert route_narrative is None
+        dest = narrative["destinations"][0]
+        assert dest["same_route"] is True
+        assert dest["shortest_route_summary"] == dest["safest_route_summary"]
 
 
 class TestTransitionSummary:
