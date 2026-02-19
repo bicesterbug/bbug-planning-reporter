@@ -73,18 +73,20 @@ def create_mcp_app(
     # Streamable HTTP transport (current MCP standard)
     session_manager = StreamableHTTPSessionManager(mcp_server)
 
-    async def handle_sse(request: Request) -> None:
+    async def handle_sse(request: Request) -> Response:
         async with sse.connect_sse(
             request.scope, request.receive, request._send
         ) as streams:
             await mcp_server.run(
                 streams[0], streams[1], mcp_server.create_initialization_options()
             )
+        return Response()
 
-    async def handle_streamable_http(request: Request) -> None:
+    async def handle_streamable_http(request: Request) -> Response:
         await session_manager.handle_request(
             request.scope, request.receive, request._send
         )
+        return Response()
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:  # noqa: ARG001
