@@ -78,9 +78,11 @@ dmypy.json
 data/raw/*
 data/chroma/*
 data/policy/*
+data/valhalla/*
 !data/raw/.gitkeep
 !data/chroma/.gitkeep
 !data/policy/.gitkeep
+!data/valhalla/.gitkeep
 
 # Output files (generated reports and letters)
 output/

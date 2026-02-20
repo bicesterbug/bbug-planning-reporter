@@ -44,6 +44,7 @@ from src.mcp_servers.cycle_route.issues import (
     generate_s106_suggestions,
     identify_issues,
 )
+from src.mcp_servers.cycle_route.polyline import decode_polyline
 from src.mcp_servers.cycle_route.scoring import score_route
 
 logger = structlog.get_logger(__name__)
@@ -56,8 +57,8 @@ DEFAULT_ARCGIS_URL = (
     "MapServer/0/query"
 )
 
-# OSRM cycling profile endpoint
-DEFAULT_OSRM_URL = "https://router.project-osrm.org/route/v1/bike"
+# Valhalla routing engine endpoint
+DEFAULT_VALHALLA_URL = "http://valhalla:8002"
 
 # User-Agent for external API calls
 USER_AGENT = "BBUGCycleRouteAssessment/1.0 (cycling-advocacy-tool)"
@@ -99,11 +100,11 @@ class CycleRouteMCP:
     def __init__(
         self,
         arcgis_url: str | None = None,
-        osrm_url: str | None = None,
+        valhalla_url: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.arcgis_url = arcgis_url or os.getenv("ARCGIS_PLANNING_URL", DEFAULT_ARCGIS_URL)
-        self.osrm_url = osrm_url or os.getenv("OSRM_URL", DEFAULT_OSRM_URL)
+        self.valhalla_url = valhalla_url or os.getenv("VALHALLA_URL", DEFAULT_VALHALLA_URL)
         self._http = http_client
         self.server = Server("cycle-route-mcp")
         self._setup_handlers()
@@ -134,7 +135,7 @@ class CycleRouteMCP:
                     name="assess_cycle_route",
                     description=(
                         "Assess the cycling route quality between two points. "
-                        "Calculates route via OSRM, analyses infrastructure via "
+                        "Calculates route via Valhalla, analyses infrastructure via "
                         "Overpass, scores against LTN 1/20, and identifies issues. "
                         "Returns distance, provision breakdown, score, issues, and "
                         "S106 funding suggestions."
@@ -210,19 +211,18 @@ class CycleRouteMCP:
 
     async def _assess_single_route(
         self,
-        route: dict[str, Any],
+        route_coords: list[list[float]],
+        cycling_distance_m: float,
+        cycling_duration_s: float,
         dest_name: str,
+        driving_distance_m: float | None = None,
     ) -> dict[str, Any] | None:
         """
-        Assess a single OSRM route: query Overpass, parse segments,
+        Assess a single route: query Overpass, parse segments,
         run parallel detection, score, and identify issues.
 
         Returns route assessment dict or None if no infrastructure data.
         """
-        cycling_distance_m = route["distance"]
-        cycling_duration_s = route["duration"]
-        route_coords = route["geometry"]["coordinates"]
-
         # Rate limit before Overpass call
         await asyncio.sleep(EXTERNAL_API_DELAY)
 
@@ -255,7 +255,11 @@ class CycleRouteMCP:
             }
 
         provision = summarise_provision(segments)
-        route_score = score_route(segments, cycling_distance_m, transitions=transitions)
+        route_score = score_route(
+            segments, cycling_distance_m,
+            driving_distance_m=driving_distance_m,
+            transitions=transitions,
+        )
         route_issues = identify_issues(segments)
         s106 = generate_s106_suggestions(route_issues)
 
@@ -271,8 +275,43 @@ class CycleRouteMCP:
             "route_geometry": route_coords,
         }
 
+    async def _request_valhalla_route(
+        self,
+        origin_lon: float,
+        origin_lat: float,
+        dest_lon: float,
+        dest_lat: float,
+        costing: str,
+        costing_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Make a single Valhalla route request. Returns parsed response or None on failure."""
+        body: dict[str, Any] = {
+            "locations": [
+                {"lon": origin_lon, "lat": origin_lat},
+                {"lon": dest_lon, "lat": dest_lat},
+            ],
+            "costing": costing,
+            "units": "kilometers",
+        }
+        if costing_options:
+            body["costing_options"] = costing_options
+
+        try:
+            response = await self.http.post(
+                f"{self.valhalla_url}/route",
+                json=body,
+            )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            if "trip" not in data:
+                return None
+            return data
+        except Exception:
+            return None
+
     async def _assess_cycle_route(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Assess cycling route between two points with dual routing."""
+        """Assess cycling route between two points with dual Valhalla routing."""
         origin_lon = arguments["origin_lon"]
         origin_lat = arguments["origin_lat"]
         dest_lon = arguments["destination_lon"]
@@ -286,89 +325,120 @@ class CycleRouteMCP:
             destination_coords=f"{dest_lat:.4f},{dest_lon:.4f}",
         )
 
-        # Step 1: Get cycling routes from OSRM (with alternatives)
-        osrm_url = (
-            f"{self.osrm_url}/{origin_lon},{origin_lat};"
-            f"{dest_lon},{dest_lat}"
+        # Step 1: Request three routes from Valhalla
+        shortest_data = await self._request_valhalla_route(
+            origin_lon, origin_lat, dest_lon, dest_lat,
+            costing="bicycle",
+            costing_options={"bicycle": {"shortest": True}},
         )
-        osrm_params = {
-            "overview": "full",
-            "geometries": "geojson",
-            "steps": "false",
-            "alternatives": "true",
-        }
 
-        response = await self.http.get(osrm_url, params=osrm_params)
-        response.raise_for_status()
-        osrm_data = response.json()
+        await asyncio.sleep(EXTERNAL_API_DELAY)
 
-        if osrm_data.get("code") != "Ok" or not osrm_data.get("routes"):
+        safest_data = await self._request_valhalla_route(
+            origin_lon, origin_lat, dest_lon, dest_lat,
+            costing="bicycle",
+            costing_options={"bicycle": {
+                "use_roads": 0.1,
+                "avoid_bad_surfaces": 0.6,
+                "use_hills": 0.3,
+            }},
+        )
+
+        await asyncio.sleep(EXTERNAL_API_DELAY)
+
+        driving_data = await self._request_valhalla_route(
+            origin_lon, origin_lat, dest_lon, dest_lat,
+            costing="auto",
+        )
+
+        # Extract driving distance (km → m) for directness scoring
+        driving_distance_m: float | None = None
+        if driving_data:
+            driving_distance_m = driving_data["trip"]["summary"]["length"] * 1000
+
+        # Fallback logic: if one bicycle route fails, use the other for both
+        if shortest_data is None and safest_data is None:
             return {
                 "status": "error",
                 "error_type": "no_route",
                 "message": f"No cycling route found to {dest_name}",
             }
 
-        # Step 2: Assess each alternative route
-        assessed_routes = []
-        for route in osrm_data["routes"]:
-            assessment = await self._assess_single_route(route, dest_name)
-            if assessment:
-                assessed_routes.append(assessment)
+        if shortest_data is None:
+            shortest_data = safest_data
+        elif safest_data is None:
+            safest_data = shortest_data
 
-        if not assessed_routes:
-            route = osrm_data["routes"][0]
+        # Step 2: Decode routes
+        def _extract_route(data: dict[str, Any]) -> tuple[list[list[float]], float, float]:
+            leg = data["trip"]["legs"][0]
+            coords = decode_polyline(leg["shape"])
+            summary = data["trip"]["summary"]
+            distance_m = summary["length"] * 1000  # km → m
+            duration_s = summary["time"]
+            return coords, distance_m, duration_s
+
+        shortest_coords, shortest_dist, shortest_dur = _extract_route(shortest_data)
+        safest_coords, safest_dist, safest_dur = _extract_route(safest_data)
+
+        # Determine if same route (distance difference < 1%)
+        same_route = (
+            shortest_data is safest_data
+            or abs(shortest_dist - safest_dist) / max(shortest_dist, 1) < 0.01
+        )
+
+        # Step 3: Assess each route via Overpass + scoring
+        shortest_assessment = await self._assess_single_route(
+            shortest_coords, shortest_dist, shortest_dur,
+            dest_name, driving_distance_m=driving_distance_m,
+        )
+        safest_assessment = await self._assess_single_route(
+            safest_coords, safest_dist, safest_dur,
+            dest_name, driving_distance_m=driving_distance_m,
+        )
+
+        # Build fallback stub for routes with no infrastructure data
+        def _empty_assessment(coords: list, dist: float, dur: float) -> dict[str, Any]:
+            return {
+                "distance_m": round(dist),
+                "duration_minutes": round(dur / 60, 1),
+                "provision_breakdown": {},
+                "score": {"score": 0, "rating": "red", "breakdown": {}},
+                "issues": [],
+                "s106_suggestions": [],
+                "route_geometry": coords,
+            }
+
+        if shortest_assessment is None and safest_assessment is None:
             return {
                 "status": "success",
                 "destination": dest_name,
-                "shortest_route": {
-                    "distance_m": round(route["distance"]),
-                    "duration_minutes": round(route["duration"] / 60, 1),
-                    "provision_breakdown": {},
-                    "score": {"score": 0, "rating": "red", "breakdown": {}},
-                    "issues": [],
-                    "s106_suggestions": [],
-                    "route_geometry": route["geometry"]["coordinates"],
-                },
-                "safest_route": {
-                    "distance_m": round(route["distance"]),
-                    "duration_minutes": round(route["duration"] / 60, 1),
-                    "provision_breakdown": {},
-                    "score": {"score": 0, "rating": "red", "breakdown": {}},
-                    "issues": [],
-                    "s106_suggestions": [],
-                    "route_geometry": route["geometry"]["coordinates"],
-                },
-                "same_route": True,
+                "shortest_route": _empty_assessment(shortest_coords, shortest_dist, shortest_dur),
+                "safest_route": _empty_assessment(safest_coords, safest_dist, safest_dur),
+                "same_route": same_route,
                 "note": "No infrastructure data available along route",
             }
 
-        # Step 3: Select shortest (min distance) and safest (max score, tie-break shorter)
-        shortest = min(assessed_routes, key=lambda r: r["distance_m"])
-        safest = max(
-            assessed_routes,
-            key=lambda r: (r["score"]["score"], -r["distance_m"]),
-        )
-
-        same_route = shortest is safest
+        if shortest_assessment is None:
+            shortest_assessment = _empty_assessment(shortest_coords, shortest_dist, shortest_dur)
+        if safest_assessment is None:
+            safest_assessment = _empty_assessment(safest_coords, safest_dist, safest_dur)
 
         logger.info(
             "Dual route assessed",
             destination=dest_name,
-            alternatives=len(osrm_data["routes"]),
-            assessed=len(assessed_routes),
-            shortest_distance=shortest["distance_m"],
-            shortest_score=shortest["score"]["score"],
-            safest_distance=safest["distance_m"],
-            safest_score=safest["score"]["score"],
+            shortest_distance=shortest_assessment["distance_m"],
+            shortest_score=shortest_assessment["score"]["score"],
+            safest_distance=safest_assessment["distance_m"],
+            safest_score=safest_assessment["score"]["score"],
             same_route=same_route,
         )
 
         return {
             "status": "success",
             "destination": dest_name,
-            "shortest_route": shortest,
-            "safest_route": safest,
+            "shortest_route": shortest_assessment,
+            "safest_route": safest_assessment,
             "same_route": same_route,
         }
 

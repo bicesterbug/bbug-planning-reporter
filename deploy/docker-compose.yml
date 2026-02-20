@@ -213,14 +213,43 @@ services:
           memory: 2G
 
   # ==========================================================================
+  # Valhalla Routing Engine (self-hosted)
+  # ==========================================================================
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    environment:
+      - tile_urls=https://download.geofabrik.de/europe/united-kingdom/england/oxfordshire-latest.osm.pbf
+      - build_elevation=True
+      - server_threads=2
+    volumes:
+      - ${DATA_DIR:-./data}/valhalla:/custom_files
+    networks:
+      - agent-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ==========================================================================
   # Cycle Route MCP Server
   # ==========================================================================
   cycle-route-mcp:
     image: ghcr.io/bicesterbug/bbug-planning-reporter/cycle-route-mcp:${IMAGE_TAG:-latest}
     environment:
       - CYCLE_ROUTE_PORT=3004
+      - VALHALLA_URL=http://valhalla:8002
       - MCP_API_KEY=${MCP_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      valhalla:
+        condition: service_healthy
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.mcp-cycleroute.rule=Host(`bbug-planning.mmsio.com`) && PathPrefix(`/mcp/cycle-route/`)"

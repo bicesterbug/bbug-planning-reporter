@@ -8,13 +8,6 @@ Verifies [cycle-route-assessment:FR-004] - Key issues identification
 Verifies [cycle-route-assessment:FR-007] - Site boundary lookup from ArcGIS
 Verifies [cycle-route-assessment:NFR-001] - Complete within 30s for 3 destinations
 Verifies [cycle-route-assessment:NFR-002] - Graceful failure handling
-
-Verifies test scenarios:
-- [cycle-route-assessment:CycleRouteMCP/TS-01] get_site_boundary returns GeoJSON
-- [cycle-route-assessment:CycleRouteMCP/TS-02] get_site_boundary handles not found
-- [cycle-route-assessment:CycleRouteMCP/TS-03] assess_cycle_route returns full assessment
-- [cycle-route-assessment:CycleRouteMCP/TS-04] assess_cycle_route handles no route
-- [cycle-route-assessment:CycleRouteMCP/TS-05] Large site centroid noted
 """
 
 import json
@@ -26,6 +19,39 @@ import pytest
 from src.mcp_servers.cycle_route.server import CycleRouteMCP
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cycle_route"
+
+# Default test coordinates (Bicester area)
+DEFAULT_COORDS = [
+    [-1.1534, 51.8997],
+    [-1.1510, 51.9010],
+    [-1.1480, 51.9025],
+    [-1.1450, 51.9050],
+]
+
+
+def _encode_polyline(coords: list[list[float]], precision: int = 6) -> str:
+    """Test helper: encode [lon, lat] pairs to polyline string."""
+    encoded = []
+    prev_lat = 0
+    prev_lon = 0
+    factor = 10**precision
+
+    for lon, lat in coords:
+        lat_int = round(lat * factor)
+        lon_int = round(lon * factor)
+        d_lat = lat_int - prev_lat
+        d_lon = lon_int - prev_lon
+        prev_lat = lat_int
+        prev_lon = lon_int
+
+        for val in (d_lat, d_lon):
+            val = ~(val << 1) if val < 0 else val << 1
+            while val >= 0x20:
+                encoded.append(chr((0x20 | (val & 0x1F)) + 63))
+                val >>= 5
+            encoded.append(chr(val + 63))
+
+    return "".join(encoded)
 
 
 def _make_mock_transport(responses: dict[str, httpx.Response]) -> httpx.MockTransport:
@@ -47,42 +73,35 @@ def _load_arcgis_fixture() -> dict:
         return json.load(f)
 
 
-def _make_osrm_route(
-    distance: float = 2500,
-    duration: float = 600,
-    coordinates: list | None = None,
+def _make_valhalla_response(
+    distance_km: float = 2.5,
+    duration_s: float = 600,
+    coords: list[list[float]] | None = None,
 ) -> dict:
-    """Create a single OSRM route object."""
-    if coordinates is None:
-        coordinates = [
-            [-1.1534, 51.8997],
-            [-1.1510, 51.9010],
-            [-1.1480, 51.9025],
-            [-1.1450, 51.9050],
-        ]
+    """Create a mock Valhalla route response."""
+    if coords is None:
+        coords = DEFAULT_COORDS
+    shape = _encode_polyline(coords)
     return {
-        "distance": distance,
-        "duration": duration,
-        "geometry": {
-            "type": "LineString",
-            "coordinates": coordinates,
+        "trip": {
+            "legs": [{
+                "shape": shape,
+                "summary": {"length": distance_km, "time": duration_s},
+            }],
+            "summary": {"length": distance_km, "time": duration_s},
+            "units": "kilometers",
+            "status": 0,
         },
     }
 
 
-def _make_osrm_response(
-    distance: float = 2500,
-    duration: float = 600,
-    coordinates: list | None = None,
-    alternatives: list[dict] | None = None,
-) -> dict:
-    """Create a mock OSRM response with optional alternatives."""
-    routes = [_make_osrm_route(distance, duration, coordinates)]
-    if alternatives:
-        routes.extend(alternatives)
+def _make_valhalla_error(error_code: int = 171, message: str = "No path could be found") -> dict:
+    """Create a mock Valhalla error response."""
     return {
-        "code": "Ok",
-        "routes": routes,
+        "error_code": error_code,
+        "error": message,
+        "status_code": 400,
+        "status": "Bad Request",
     }
 
 
@@ -141,17 +160,68 @@ def _make_overpass_response(
     return {"elements": elements}
 
 
+def _make_valhalla_handler(
+    shortest_response: dict | None = None,
+    safest_response: dict | None = None,
+    driving_response: dict | None = None,
+    overpass_response: dict | None = None,
+    captured_bodies: list | None = None,
+    shortest_status: int = 200,
+    safest_status: int = 200,
+    driving_status: int = 200,
+) -> httpx.MockTransport:
+    """Create a mock transport that differentiates Valhalla requests by costing."""
+    if shortest_response is None:
+        shortest_response = _make_valhalla_response()
+    if safest_response is None:
+        safest_response = _make_valhalla_response()
+    if driving_response is None:
+        driving_response = _make_valhalla_response(distance_km=2.0, duration_s=300)
+    if overpass_response is None:
+        overpass_response = _make_overpass_response()
+
+    valhalla_call_count = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "overpass-api.de" in url:
+            return httpx.Response(200, json=overpass_response)
+        if "arcgis.com" in url:
+            return httpx.Response(404, json={"error": "not found"})
+        if "valhalla" in url and "/route" in url:
+            body = json.loads(request.content)
+            if captured_bodies is not None:
+                captured_bodies.append(body)
+            costing = body.get("costing", "")
+            costing_opts = body.get("costing_options", {})
+
+            if costing == "auto":
+                return httpx.Response(driving_status, json=driving_response)
+            elif costing == "bicycle":
+                bicycle_opts = costing_opts.get("bicycle", {})
+                if bicycle_opts.get("shortest") is True:
+                    valhalla_call_count[0] += 1
+                    return httpx.Response(shortest_status, json=shortest_response)
+                else:
+                    valhalla_call_count[0] += 1
+                    return httpx.Response(safest_status, json=safest_response)
+
+            return httpx.Response(400, json=_make_valhalla_error())
+        return httpx.Response(404, json={"error": "not found"})
+
+    return httpx.MockTransport(handler)
+
+
 # =============================================================================
 # get_site_boundary
 # =============================================================================
 
 
 class TestGetSiteBoundary:
-    """Verifies [cycle-route-assessment:CycleRouteMCP/TS-01], TS-02, TS-05."""
 
     @pytest.mark.anyio
     async def test_returns_geojson(self):
-        """[CycleRouteMCP/TS-01] get_site_boundary returns GeoJSON FeatureCollection."""
+        """get_site_boundary returns GeoJSON FeatureCollection."""
         arcgis_data = _load_arcgis_fixture()
         transport = _make_mock_transport({
             "arcgis.com": httpx.Response(200, json=arcgis_data),
@@ -176,7 +246,7 @@ class TestGetSiteBoundary:
 
     @pytest.mark.anyio
     async def test_not_found(self):
-        """[CycleRouteMCP/TS-02] get_site_boundary handles not found."""
+        """get_site_boundary handles not found."""
         empty_response = {"features": []}
         transport = _make_mock_transport({
             "arcgis.com": httpx.Response(200, json=empty_response),
@@ -213,18 +283,12 @@ class TestGetSiteBoundary:
 
 
 class TestAssessCycleRoute:
-    """Tests for dual-route cycle assessment."""
+    """Tests for dual-route cycle assessment via Valhalla."""
 
     @pytest.mark.anyio
     async def test_full_assessment_dual_route(self):
-        """assess_cycle_route returns dual route assessment."""
-        osrm_data = _make_osrm_response(distance=2500, duration=600)
-        overpass_data = _make_overpass_response()
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-            "overpass-api.de": httpx.Response(200, json=overpass_data),
-        })
+        """assess_cycle_route returns dual route assessment via Valhalla."""
+        transport = _make_valhalla_handler()
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
@@ -242,9 +306,6 @@ class TestAssessCycleRoute:
         assert "safest_route" in result
         assert "same_route" in result
 
-        # With single OSRM route, same_route should be true
-        assert result["same_route"] is True
-
         shortest = result["shortest_route"]
         assert shortest["distance_m"] == 2500
         assert shortest["duration_minutes"] == 10.0
@@ -256,7 +317,6 @@ class TestAssessCycleRoute:
         assert "route_geometry" in shortest
         assert shortest["score"]["rating"] in ("green", "amber", "red")
 
-        # Segments should be a GeoJSON FeatureCollection
         segments = shortest["segments"]
         assert segments["type"] == "FeatureCollection"
         assert len(segments["features"]) > 0
@@ -266,20 +326,11 @@ class TestAssessCycleRoute:
         assert "provision" in feature["properties"]
 
     @pytest.mark.anyio
-    async def test_osrm_called_with_alternatives(self):
-        """OSRM request includes alternatives=true."""
-        captured_params = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            if "router.project-osrm.org" in url:
-                captured_params.update(dict(request.url.params))
-                return httpx.Response(200, json=_make_osrm_response())
-            if "overpass-api.de" in url:
-                return httpx.Response(200, json=_make_overpass_response())
-            return httpx.Response(404)
-
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    async def test_valhalla_called_with_shortest_costing(self):
+        """Valhalla request includes bicycle costing with shortest=true."""
+        captured_bodies: list[dict] = []
+        transport = _make_valhalla_handler(captured_bodies=captured_bodies)
+        client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
         await mcp._assess_cycle_route({
@@ -289,128 +340,66 @@ class TestAssessCycleRoute:
             "destination_lat": 51.91,
         })
 
-        assert captured_params.get("alternatives") == "true"
+        bicycle_bodies = [b for b in captured_bodies if b.get("costing") == "bicycle"]
+        shortest_bodies = [
+            b for b in bicycle_bodies
+            if b.get("costing_options", {}).get("bicycle", {}).get("shortest") is True
+        ]
+        assert len(shortest_bodies) == 1
 
     @pytest.mark.anyio
-    async def test_shortest_selected_by_min_distance(self):
-        """Shortest route is the one with minimum distance."""
-        alt1 = _make_osrm_route(distance=2100, duration=500)
-        alt2 = _make_osrm_route(distance=2800, duration=700)
-        osrm_data = _make_osrm_response(
-            distance=2400, duration=600,
-            alternatives=[alt1, alt2],
-        )
-        overpass_data = _make_overpass_response()
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-            "overpass-api.de": httpx.Response(200, json=overpass_data),
-        })
+    async def test_valhalla_called_with_safest_costing(self):
+        """Valhalla request includes bicycle costing with use_roads=0.1."""
+        captured_bodies: list[dict] = []
+        transport = _make_valhalla_handler(captured_bodies=captured_bodies)
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
-        result = await mcp._assess_cycle_route({
+        await mcp._assess_cycle_route({
             "origin_lon": -1.15,
             "origin_lat": 51.9,
             "destination_lon": -1.14,
             "destination_lat": 51.91,
         })
 
-        assert result["shortest_route"]["distance_m"] == 2100
+        bicycle_bodies = [b for b in captured_bodies if b.get("costing") == "bicycle"]
+        safest_bodies = [
+            b for b in bicycle_bodies
+            if b.get("costing_options", {}).get("bicycle", {}).get("use_roads") == 0.1
+        ]
+        assert len(safest_bodies) == 1
+        safest = safest_bodies[0]
+        assert safest["costing_options"]["bicycle"]["avoid_bad_surfaces"] == 0.6
+        assert safest["costing_options"]["bicycle"]["use_hills"] == 0.3
 
     @pytest.mark.anyio
-    async def test_safest_selected_by_max_score(self):
-        """Safest route is the one with maximum score."""
-        # Route 1 (shorter, 2200m): all roads (lower score)
-        bad_ways = [
-            {
-                "type": "way", "id": 300,
-                "tags": {"highway": "primary", "maxspeed": "40 mph", "surface": "asphalt", "name": "Main Road"},
-                "geometry": [{"lat": 51.90, "lon": -1.16}, {"lat": 51.91, "lon": -1.13}],
-            },
-        ]
-        # Route 2 (longer, 2800m): all cycleways (higher score)
-        good_ways = [
-            {
-                "type": "way", "id": 200,
-                "tags": {"highway": "cycleway", "surface": "asphalt", "name": "Cycleway A"},
-                "geometry": [{"lat": 51.90, "lon": -1.16}, {"lat": 51.90, "lon": -1.14}],
-            },
-            {
-                "type": "way", "id": 201,
-                "tags": {"highway": "cycleway", "surface": "asphalt", "name": "Cycleway B"},
-                "geometry": [{"lat": 51.90, "lon": -1.14}, {"lat": 51.91, "lon": -1.13}],
-            },
-        ]
-
-        overpass_call_count = [0]
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            if "router.project-osrm.org" in url:
-                # First route is shorter (2200m), second is longer (2800m)
-                alt = _make_osrm_route(distance=2800, duration=700)
-                return httpx.Response(200, json=_make_osrm_response(
-                    distance=2200, duration=550,
-                    alternatives=[alt],
-                ))
-            if "overpass-api.de" in url:
-                # First call (shorter route) gets bad data, second (longer) gets good
-                overpass_call_count[0] += 1
-                if overpass_call_count[0] == 1:
-                    return httpx.Response(200, json={"elements": bad_ways})
-                else:
-                    return httpx.Response(200, json={"elements": good_ways})
-            return httpx.Response(404)
-
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        mcp = CycleRouteMCP(http_client=client)
-
-        result = await mcp._assess_cycle_route({
-            "origin_lon": -1.16,
-            "origin_lat": 51.90,
-            "destination_lon": -1.13,
-            "destination_lat": 51.91,
-        })
-
-        assert result["same_route"] is False
-        # Shortest route is the 2200m one
-        assert result["shortest_route"]["distance_m"] == 2200
-        # Safest route is the 2800m one with cycleways
-        assert result["safest_route"]["distance_m"] == 2800
-        assert result["safest_route"]["score"]["score"] > result["shortest_route"]["score"]["score"]
-
-    @pytest.mark.anyio
-    async def test_same_route_when_single_alternative(self):
-        """Single OSRM route produces same_route=true."""
-        osrm_data = _make_osrm_response(distance=1500, duration=400)
-        overpass_data = _make_overpass_response()
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-            "overpass-api.de": httpx.Response(200, json=overpass_data),
-        })
+    async def test_driving_distance_request_uses_auto(self):
+        """Valhalla driving distance request uses auto costing."""
+        captured_bodies: list[dict] = []
+        transport = _make_valhalla_handler(captured_bodies=captured_bodies)
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
-        result = await mcp._assess_cycle_route({
+        await mcp._assess_cycle_route({
             "origin_lon": -1.15,
             "origin_lat": 51.9,
             "destination_lon": -1.14,
             "destination_lat": 51.91,
         })
 
-        assert result["same_route"] is True
-        assert result["shortest_route"]["distance_m"] == result["safest_route"]["distance_m"]
+        auto_bodies = [b for b in captured_bodies if b.get("costing") == "auto"]
+        assert len(auto_bodies) == 1
 
     @pytest.mark.anyio
     async def test_no_route_found(self):
-        """No route from OSRM returns error."""
-        osrm_data = {"code": "NoRoute", "routes": []}
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-        })
+        """No route from Valhalla returns error."""
+        error = _make_valhalla_error(171, "No path could be found")
+        transport = _make_valhalla_handler(
+            shortest_response=error,
+            safest_response=error,
+            shortest_status=400,
+            safest_status=400,
+        )
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
@@ -427,15 +416,83 @@ class TestAssessCycleRoute:
         assert "Faraway Place" in result["message"]
 
     @pytest.mark.anyio
+    async def test_safest_failure_falls_back_to_shortest(self):
+        """Safest route failure falls back to shortest for both."""
+        shortest = _make_valhalla_response(distance_km=2.2, duration_s=550)
+        error = _make_valhalla_error(171, "No path")
+        transport = _make_valhalla_handler(
+            shortest_response=shortest,
+            safest_response=error,
+            safest_status=400,
+        )
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert result["status"] == "success"
+        assert result["same_route"] is True
+        assert result["shortest_route"]["distance_m"] == result["safest_route"]["distance_m"]
+
+    @pytest.mark.anyio
+    async def test_driving_failure_gives_half_points_directness(self):
+        """Driving route failure results in half-points directness score."""
+        error = _make_valhalla_error(171, "No path")
+        transport = _make_valhalla_handler(
+            driving_response=error,
+            driving_status=400,
+        )
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert result["status"] == "success"
+        shortest = result["shortest_route"]
+        assert shortest["score"]["breakdown"]["directness"] == 4.5
+
+    @pytest.mark.anyio
+    async def test_driving_distance_passed_to_scorer(self):
+        """Driving distance is used for directness scoring."""
+        # Driving distance 2.0 km, shortest bicycle distance 2.2 km (ratio 1.1 → full points)
+        shortest = _make_valhalla_response(distance_km=2.2, duration_s=550)
+        safest = _make_valhalla_response(distance_km=2.2, duration_s=550)
+        driving = _make_valhalla_response(distance_km=2.0, duration_s=300)
+        transport = _make_valhalla_handler(
+            shortest_response=shortest,
+            safest_response=safest,
+            driving_response=driving,
+        )
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert result["status"] == "success"
+        shortest_route = result["shortest_route"]
+        # With ratio 2200/2000 = 1.1, should get full directness points (9.0)
+        assert shortest_route["score"]["breakdown"]["directness"] == 9.0
+
+    @pytest.mark.anyio
     async def test_no_infrastructure_data(self):
         """Route with no infrastructure data returns dual structure with note."""
-        osrm_data = _make_osrm_response(distance=1000, duration=300)
         overpass_data = {"elements": []}
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-            "overpass-api.de": httpx.Response(200, json=overpass_data),
-        })
+        transport = _make_valhalla_handler(overpass_response=overpass_data)
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
@@ -454,13 +511,7 @@ class TestAssessCycleRoute:
     @pytest.mark.anyio
     async def test_default_destination_name(self):
         """Missing destination_name defaults to 'Destination'."""
-        osrm_data = _make_osrm_response()
-        overpass_data = _make_overpass_response()
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-            "overpass-api.de": httpx.Response(200, json=overpass_data),
-        })
+        transport = _make_valhalla_handler()
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
@@ -475,18 +526,13 @@ class TestAssessCycleRoute:
 
     @pytest.mark.anyio
     async def test_assessment_includes_transitions(self):
-        """[route-transition-analysis:_assess_single_route/TS-11] Assessment includes transitions."""
+        """Assessment includes transitions data."""
         barrier_node = {
             "type": "node", "id": 9001, "lat": 51.9010, "lon": -1.1510,
             "tags": {"barrier": "bollard"},
         }
-        osrm_data = _make_osrm_response(distance=2500, duration=600)
         overpass_data = _make_overpass_response(nodes=[barrier_node])
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-            "overpass-api.de": httpx.Response(200, json=overpass_data),
-        })
+        transport = _make_valhalla_handler(overpass_response=overpass_data)
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
@@ -509,15 +555,14 @@ class TestAssessCycleRoute:
 
     @pytest.mark.anyio
     async def test_transitions_in_both_routes(self):
-        """[route-transition-analysis:_assess_single_route/TS-13] Transitions in both routes."""
-        alt = _make_osrm_route(distance=2800, duration=700)
-        osrm_data = _make_osrm_response(distance=2200, duration=550, alternatives=[alt])
-        overpass_data = _make_overpass_response()
-
-        transport = _make_mock_transport({
-            "router.project-osrm.org": httpx.Response(200, json=osrm_data),
-            "overpass-api.de": httpx.Response(200, json=overpass_data),
-        })
+        """Transitions present in both routes."""
+        # Use different distances so routes are distinguishable
+        shortest = _make_valhalla_response(distance_km=2.2, duration_s=550)
+        safest = _make_valhalla_response(distance_km=2.8, duration_s=700)
+        transport = _make_valhalla_handler(
+            shortest_response=shortest,
+            safest_response=safest,
+        )
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
 
@@ -530,6 +575,81 @@ class TestAssessCycleRoute:
 
         assert "transitions" in result["shortest_route"]
         assert "transitions" in result["safest_route"]
+
+    @pytest.mark.anyio
+    async def test_different_shortest_and_safest_routes(self):
+        """Different shortest and safest routes produce same_route=false."""
+        # Shortest: 2.2km via roads
+        shortest_coords = [
+            [-1.16, 51.90],
+            [-1.13, 51.91],
+        ]
+        # Safest: 2.8km via cycleways (different geometry)
+        safest_coords = [
+            [-1.16, 51.90],
+            [-1.15, 51.905],
+            [-1.13, 51.91],
+        ]
+        bad_ways = [
+            {
+                "type": "way", "id": 300,
+                "tags": {"highway": "primary", "maxspeed": "40 mph", "surface": "asphalt", "name": "Main Road"},
+                "geometry": [{"lat": 51.90, "lon": -1.16}, {"lat": 51.91, "lon": -1.13}],
+            },
+        ]
+        good_ways = [
+            {
+                "type": "way", "id": 200,
+                "tags": {"highway": "cycleway", "surface": "asphalt", "name": "Cycleway A"},
+                "geometry": [{"lat": 51.90, "lon": -1.16}, {"lat": 51.905, "lon": -1.15}],
+            },
+            {
+                "type": "way", "id": 201,
+                "tags": {"highway": "cycleway", "surface": "asphalt", "name": "Cycleway B"},
+                "geometry": [{"lat": 51.905, "lon": -1.15}, {"lat": 51.91, "lon": -1.13}],
+            },
+        ]
+
+        shortest_resp = _make_valhalla_response(distance_km=2.2, duration_s=550, coords=shortest_coords)
+        safest_resp = _make_valhalla_response(distance_km=2.8, duration_s=700, coords=safest_coords)
+
+        overpass_call_count = [0]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "overpass-api.de" in url:
+                overpass_call_count[0] += 1
+                # First call is for shortest route (roads), second for safest (cycleways)
+                if overpass_call_count[0] == 1:
+                    return httpx.Response(200, json={"elements": bad_ways})
+                else:
+                    return httpx.Response(200, json={"elements": good_ways})
+            if "valhalla" in url and "/route" in url:
+                body = json.loads(request.content)
+                costing = body.get("costing", "")
+                costing_opts = body.get("costing_options", {})
+                if costing == "auto":
+                    return httpx.Response(200, json=_make_valhalla_response(distance_km=2.0))
+                if costing == "bicycle":
+                    if costing_opts.get("bicycle", {}).get("shortest") is True:
+                        return httpx.Response(200, json=shortest_resp)
+                    return httpx.Response(200, json=safest_resp)
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.16,
+            "origin_lat": 51.90,
+            "destination_lon": -1.13,
+            "destination_lat": 51.91,
+        })
+
+        assert result["same_route"] is False
+        assert result["shortest_route"]["distance_m"] == 2200
+        assert result["safest_route"]["distance_m"] == 2800
+        assert result["safest_route"]["score"]["score"] > result["shortest_route"]["score"]["score"]
 
 
 # =============================================================================
@@ -556,8 +676,4 @@ class TestCallToolDispatch:
         """Unknown tool name returns error via call_tool handler."""
         mcp = CycleRouteMCP()
 
-        # Get the call_tool handler
-        # The server registers handlers internally, so we test via _get/_assess
-        # For unknown tools, we verify the dispatch logic exists in server.py
-        # by checking the handler was registered
         assert mcp.server is not None
