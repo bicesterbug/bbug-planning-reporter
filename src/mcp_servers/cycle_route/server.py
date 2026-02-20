@@ -32,11 +32,11 @@ from starlette.applications import Starlette
 
 from src.mcp_servers.cycle_route.geojson import parse_arcgis_response
 from src.mcp_servers.cycle_route.infrastructure import (
-    OVERPASS_API_URL,
     analyse_transitions,
     build_overpass_query,
     detect_parallel_provision,
     parse_overpass_ways,
+    query_overpass_resilient,
     segments_to_feature_collection,
     summarise_provision,
 )
@@ -227,12 +227,11 @@ class CycleRouteMCP:
         await asyncio.sleep(EXTERNAL_API_DELAY)
 
         overpass_query = build_overpass_query(route_coords)
-        overpass_response = await self.http.post(
-            OVERPASS_API_URL,
-            data={"data": overpass_query},
+        overpass_data = await query_overpass_resilient(
+            self.http, overpass_query, destination=dest_name,
         )
-        overpass_response.raise_for_status()
-        overpass_data = overpass_response.json()
+        if overpass_data is None:
+            return None
 
         segments = parse_overpass_ways(overpass_data, cycling_distance_m)
         if not segments:

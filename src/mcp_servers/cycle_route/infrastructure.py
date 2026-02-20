@@ -13,10 +13,12 @@ Implements test scenarios:
 - [cycle-route-assessment:InfrastructureAnalyser/TS-06] Unknown surface handled
 """
 
+import asyncio
 import math
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -40,8 +42,14 @@ UK_DEFAULT_SPEEDS: dict[str, int] = {
     "pedestrian": 0,
 }
 
-# Overpass API endpoint
+# Overpass API endpoints
 OVERPASS_API_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_FALLBACK_URL = "https://overpass.kumi.systems/api/interpreter"
+
+# Retry configuration
+OVERPASS_MAX_RETRIES = 2
+OVERPASS_BACKOFF_BASE = 2.0
+OVERPASS_TRANSIENT_STATUSES = {429, 500, 502, 504}
 
 
 @dataclass
@@ -601,3 +609,69 @@ def analyse_transitions(
         "non_priority_crossing_count": len(non_priority_crossings),
         "side_change_count": len(side_changes),
     }
+
+
+async def query_overpass_resilient(
+    client: httpx.AsyncClient,
+    query: str,
+    *,
+    destination: str = "",
+) -> dict[str, Any] | None:
+    """
+    Query Overpass API with retry and fallback.
+
+    Retries up to OVERPASS_MAX_RETRIES times on transient errors against the
+    primary endpoint, then makes one attempt against the fallback mirror.
+
+    Returns parsed JSON response on success, or None if all attempts fail.
+    """
+    endpoints = [
+        (OVERPASS_API_URL, 1 + OVERPASS_MAX_RETRIES),
+        (OVERPASS_FALLBACK_URL, 1),
+    ]
+
+    for url, max_attempts in endpoints:
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await client.post(url, data={"data": query})
+
+                if response.status_code < 400:
+                    return response.json()
+
+                if response.status_code not in OVERPASS_TRANSIENT_STATUSES:
+                    logger.warning(
+                        "Overpass non-transient error",
+                        status=response.status_code,
+                        endpoint=url,
+                        destination=destination,
+                    )
+                    return None
+
+                logger.warning(
+                    "Overpass transient error, retrying"
+                    if attempt < max_attempts or url == OVERPASS_API_URL
+                    else "Overpass fallback failed",
+                    status=response.status_code,
+                    endpoint=url,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    destination=destination,
+                )
+
+            except httpx.TransportError as exc:
+                logger.warning(
+                    "Overpass transport error, retrying"
+                    if attempt < max_attempts or url == OVERPASS_API_URL
+                    else "Overpass fallback transport error",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    endpoint=url,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    destination=destination,
+                )
+
+            if attempt < max_attempts:
+                await asyncio.sleep(OVERPASS_BACKOFF_BASE ** attempt)
+
+    return None

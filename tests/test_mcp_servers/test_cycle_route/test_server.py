@@ -12,6 +12,7 @@ Verifies [cycle-route-assessment:NFR-002] - Graceful failure handling
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -650,6 +651,46 @@ class TestAssessCycleRoute:
         assert result["shortest_route"]["distance_m"] == 2200
         assert result["safest_route"]["distance_m"] == 2800
         assert result["safest_route"]["score"]["score"] > result["shortest_route"]["score"]["score"]
+
+    @pytest.mark.anyio
+    @patch(
+        "src.mcp_servers.cycle_route.infrastructure.asyncio.sleep",
+        new_callable=AsyncMock,
+    )
+    async def test_overpass_total_failure_degrades_gracefully(self, mock_sleep):
+        """Overpass 504 on all retries+fallback produces empty assessment stub."""
+        overpass_call_count = [0]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "overpass" in url:
+                overpass_call_count[0] += 1
+                return httpx.Response(504, text="Gateway Timeout")
+            if "valhalla" in url and "/route" in url:
+                body = json.loads(request.content)
+                costing = body.get("costing", "")
+                if costing == "auto":
+                    return httpx.Response(200, json=_make_valhalla_response(distance_km=2.0))
+                return httpx.Response(200, json=_make_valhalla_response())
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+            "destination_name": "Unreachable",
+        })
+
+        assert result["status"] == "success"
+        assert result["destination"] == "Unreachable"
+        assert result["shortest_route"]["score"]["score"] == 0
+        assert "note" in result
+        # Primary (3) + fallback (1) for each of the 2 routes = 8 Overpass calls
+        assert overpass_call_count[0] == 8
 
 
 # =============================================================================

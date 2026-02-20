@@ -13,9 +13,14 @@ Verifies test scenarios:
 - [cycle-route-assessment:InfrastructureAnalyser/TS-06] Unknown surface handled
 """
 
+from unittest.mock import AsyncMock, patch
+
+import httpx
 import pytest
 
 from src.mcp_servers.cycle_route.infrastructure import (
+    OVERPASS_API_URL,
+    OVERPASS_FALLBACK_URL,
     RouteSegment,
     analyse_transitions,
     bearing_difference,
@@ -27,6 +32,7 @@ from src.mcp_servers.cycle_route.infrastructure import (
     extract_speed_limit,
     extract_surface,
     parse_overpass_ways,
+    query_overpass_resilient,
     segments_to_feature_collection,
     summarise_provision,
 )
@@ -891,3 +897,166 @@ class TestAnalyseTransitions:
         assert len(result["non_priority_crossings"]) == 1
         assert result["non_priority_crossings"][0]["road_name"] == "Buckingham Road"
         assert result["non_priority_crossings"][0]["road_speed_limit"] == 30
+
+
+# =============================================================================
+# query_overpass_resilient
+# =============================================================================
+
+OVERPASS_MODULE = "src.mcp_servers.cycle_route.infrastructure"
+SAMPLE_OVERPASS_RESULT = {"elements": [{"type": "way", "id": 1, "tags": {"highway": "cycleway"}}]}
+
+
+def _make_overpass_transport(
+    responses: list[httpx.Response | Exception],
+) -> tuple[httpx.MockTransport, list[str]]:
+    """Create a transport returning responses in order, tracking request URLs."""
+    call_log: list[str] = []
+    index = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_log.append(str(request.url))
+        i = index[0]
+        index[0] += 1
+        if i < len(responses):
+            item = responses[i]
+            if isinstance(item, Exception):
+                raise item
+            return item
+        return httpx.Response(200, json=SAMPLE_OVERPASS_RESULT)
+
+    return httpx.MockTransport(handler), call_log
+
+
+class TestQueryOverpassResilient:
+    """Tests for Overpass retry and fallback logic."""
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_first_attempt_succeeds(self, mock_sleep):
+        """First attempt 200 returns data immediately with no retries."""
+        transport, call_log = _make_overpass_transport([
+            httpx.Response(200, json=SAMPLE_OVERPASS_RESULT),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+        result = await query_overpass_resilient(client, "test query")
+
+        assert result == SAMPLE_OVERPASS_RESULT
+        assert len(call_log) == 1
+        assert OVERPASS_API_URL in call_log[0]
+        mock_sleep.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_succeeds_after_one_retry(self, mock_sleep):
+        """504 then 200 returns data on second attempt."""
+        transport, call_log = _make_overpass_transport([
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(200, json=SAMPLE_OVERPASS_RESULT),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+        result = await query_overpass_resilient(client, "test query")
+
+        assert result == SAMPLE_OVERPASS_RESULT
+        assert len(call_log) == 2
+        assert all(OVERPASS_API_URL in url for url in call_log)
+        mock_sleep.assert_called_once_with(2.0)
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_primary_exhausted_fallback_succeeds(self, mock_sleep):
+        """3x 504 on primary, then fallback 200."""
+        transport, call_log = _make_overpass_transport([
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(200, json=SAMPLE_OVERPASS_RESULT),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+        result = await query_overpass_resilient(client, "test query")
+
+        assert result == SAMPLE_OVERPASS_RESULT
+        assert len(call_log) == 4
+        assert OVERPASS_API_URL in call_log[0]
+        assert OVERPASS_FALLBACK_URL in call_log[3]
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_all_attempts_exhausted_returns_none(self, mock_sleep):
+        """3x 504 primary + 1x 504 fallback returns None."""
+        transport, call_log = _make_overpass_transport([
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(504, text="Gateway Timeout"),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+        result = await query_overpass_resilient(client, "test query")
+
+        assert result is None
+        assert len(call_log) == 4
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_non_transient_error_not_retried(self, mock_sleep):
+        """400 error returns None immediately without retry."""
+        transport, call_log = _make_overpass_transport([
+            httpx.Response(400, text="Bad Request"),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+        result = await query_overpass_resilient(client, "bad query")
+
+        assert result is None
+        assert len(call_log) == 1
+        mock_sleep.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_connection_timeout_retried(self, mock_sleep):
+        """ConnectTimeout on first attempt, 200 on second."""
+        transport, call_log = _make_overpass_transport([
+            httpx.ConnectTimeout("Connection timed out"),
+            httpx.Response(200, json=SAMPLE_OVERPASS_RESULT),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+        result = await query_overpass_resilient(client, "test query")
+
+        assert result == SAMPLE_OVERPASS_RESULT
+        assert len(call_log) == 2
+        mock_sleep.assert_called_once_with(2.0)
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_rate_limit_429_retried(self, mock_sleep):
+        """429 on first attempt, 200 on second."""
+        transport, call_log = _make_overpass_transport([
+            httpx.Response(429, text="Too Many Requests"),
+            httpx.Response(200, json=SAMPLE_OVERPASS_RESULT),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+        result = await query_overpass_resilient(client, "test query")
+
+        assert result == SAMPLE_OVERPASS_RESULT
+        assert len(call_log) == 2
+
+    @pytest.mark.anyio
+    @patch(f"{OVERPASS_MODULE}.asyncio.sleep", new_callable=AsyncMock)
+    async def test_destination_context_in_logs(self, mock_sleep, capsys, caplog):
+        """Warning log includes destination context."""
+        transport, _ = _make_overpass_transport([
+            httpx.Response(504, text="Gateway Timeout"),
+            httpx.Response(200, json=SAMPLE_OVERPASS_RESULT),
+        ])
+        client = httpx.AsyncClient(transport=transport)
+
+        import logging
+        with caplog.at_level(logging.WARNING):
+            result = await query_overpass_resilient(
+                client, "test query", destination="Bicester North",
+            )
+
+        assert result == SAMPLE_OVERPASS_RESULT
+        # structlog may route to stdout or Python logging depending on config
+        captured = capsys.readouterr()
+        all_output = captured.out + " ".join(r.message for r in caplog.records)
+        assert "Bicester North" in all_output
