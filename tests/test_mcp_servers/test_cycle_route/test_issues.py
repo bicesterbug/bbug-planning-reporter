@@ -183,7 +183,7 @@ class TestGenerateS106Suggestions:
     def test_s106_from_high_severity(self):
         """[IssuesIdentifier/TS-04] High severity issue → S106 suggestion."""
         issues = [{
-            "location": "A41 (500m section)",
+            "location": "A41 (500m)",
             "problem": "40mph speed limit with no cycle provision",
             "severity": "high",
             "suggested_improvement": "Segregated cycleway required",
@@ -192,7 +192,7 @@ class TestGenerateS106Suggestions:
         suggestions = generate_s106_suggestions(issues)
 
         assert len(suggestions) == 1
-        assert suggestions[0]["issue_location"] == "A41 (500m section)"
+        assert suggestions[0]["issue_location"] == "A41 (500m)"
         assert "S106" in suggestions[0]["justification"]
         assert "Cherwell Local Plan" in suggestions[0]["justification"]
         assert "NPPF" in suggestions[0]["justification"]
@@ -241,3 +241,67 @@ class TestGenerateS106Suggestions:
         assert len(suggestions) == 2
         assert suggestions[0]["issue_location"] == "A"
         assert suggestions[1]["issue_location"] == "C"
+
+
+# =============================================================================
+# Issue Aggregation by Road
+# =============================================================================
+
+
+class TestIssueAggregation:
+    """Tests for issue aggregation by road name."""
+
+    def test_multiple_segments_same_road_aggregated(self):
+        """Three segments on same road produce one issue with total distance."""
+        segments = [
+            _make_segment(provision="none", highway="primary", speed_limit=40,
+                          distance_m=100, name="A4095"),
+            _make_segment(provision="none", highway="primary", speed_limit=40,
+                          distance_m=150, name="A4095"),
+            _make_segment(provision="none", highway="primary", speed_limit=40,
+                          distance_m=250, name="A4095"),
+        ]
+        issues = identify_issues(segments)
+        high_issues = [i for i in issues if i["severity"] == "high"]
+        assert len(high_issues) == 1
+        assert "500m" in high_issues[0]["location"]
+
+    def test_different_roads_separate_issues(self):
+        """Two roads produce two separate issues."""
+        segments = [
+            _make_segment(provision="none", highway="primary", speed_limit=40,
+                          distance_m=500, name="A4095"),
+            _make_segment(provision="none", highway="primary", speed_limit=40,
+                          distance_m=300, name="B4030"),
+        ]
+        issues = identify_issues(segments)
+        high_issues = [i for i in issues if i["severity"] == "high"]
+        assert len(high_issues) == 2
+        locations = {i["location"] for i in high_issues}
+        assert any("A4095" in loc for loc in locations)
+        assert any("B4030" in loc for loc in locations)
+
+    def test_same_road_different_issue_types(self):
+        """Same road with surface + lighting issues produces separate issues."""
+        segments = [
+            _make_segment(provision="shared_use", highway="path", speed_limit=0,
+                          surface="gravel", lit=False, distance_m=300, name="River Path"),
+        ]
+        issues = identify_issues(segments)
+        assert len(issues) == 2
+        severities = {i["severity"] for i in issues}
+        assert "medium" in severities  # surface
+        assert "low" in severities  # unlit
+
+    def test_highest_speed_limit_used(self):
+        """Issue reports highest speed limit from segment group."""
+        segments = [
+            _make_segment(provision="none", highway="primary", speed_limit=40,
+                          distance_m=200, name="A4095"),
+            _make_segment(provision="none", highway="primary", speed_limit=50,
+                          distance_m=200, name="A4095"),
+        ]
+        issues = identify_issues(segments)
+        high_issues = [i for i in issues if i["severity"] == "high"]
+        assert len(high_issues) == 1
+        assert "50mph" in high_issues[0]["problem"]

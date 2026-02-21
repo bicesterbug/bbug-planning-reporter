@@ -198,6 +198,29 @@ out geom;
     return query.strip()
 
 
+def _way_length_m(geometry: list[dict]) -> float:
+    """
+    Calculate the total length of an OSM way in metres.
+
+    Sums haversine distances between consecutive geometry nodes.
+
+    Args:
+        geometry: List of {lat, lon} dicts from Overpass out geom response.
+
+    Returns:
+        Total length in metres, or 0 if fewer than 2 nodes.
+    """
+    if len(geometry) < 2:
+        return 0.0
+    total = 0.0
+    for i in range(len(geometry) - 1):
+        total += _haversine_distance(
+            geometry[i]["lat"], geometry[i]["lon"],
+            geometry[i + 1]["lat"], geometry[i + 1]["lon"],
+        )
+    return total
+
+
 def parse_overpass_ways(
     overpass_response: dict[str, Any],
     route_distance_m: float,
@@ -205,13 +228,13 @@ def parse_overpass_ways(
     """
     Parse Overpass response into route segments.
 
-    Each OSM way becomes a segment. Distance is estimated by dividing the total
-    route distance proportionally among ways (exact per-way distance would
-    require geometry intersection which is out of scope).
+    Each OSM way becomes a segment. Distance is calculated from the way's
+    actual geometry using haversine sum between consecutive nodes.
 
     Args:
         overpass_response: JSON response from Overpass API.
-        route_distance_m: Total route distance in metres (from OSRM).
+        route_distance_m: Total route distance in metres (retained for
+            backward compatibility but not used for distance calculation).
 
     Returns:
         List of RouteSegment objects.
@@ -221,9 +244,6 @@ def parse_overpass_ways(
 
     if not ways:
         return []
-
-    # Estimate per-way distance (equal division as approximation)
-    per_way_distance = route_distance_m / len(ways) if ways else 0
 
     segments = []
     for way in ways:
@@ -239,6 +259,9 @@ def parse_overpass_ways(
         geom_coords = [[pt["lon"], pt["lat"]] for pt in raw_geom if "lat" in pt and "lon" in pt]
         segment_geometry = geom_coords if len(geom_coords) >= 2 else None
 
+        # Calculate distance from actual way geometry
+        way_distance = _way_length_m(raw_geom)
+
         segment = RouteSegment(
             way_id=way.get("id", 0),
             provision=classify_provision(tags),
@@ -246,7 +269,7 @@ def parse_overpass_ways(
             speed_limit=extract_speed_limit(tags),
             surface=extract_surface(tags),
             lit=extract_lit(tags),
-            distance_m=per_way_distance,
+            distance_m=way_distance,
             name=tags.get("name", "Unnamed"),
             geometry=segment_geometry,
         )
@@ -577,9 +600,19 @@ def analyse_transitions(
                 break
 
         if not has_priority_crossing:
+            # Approximate crossing location from segment geometry
+            crossing_lat: float | None = None
+            crossing_lon: float | None = None
+            if seg_a.geometry:
+                crossing_lon, crossing_lat = seg_a.geometry[-1]
+            elif seg_b.geometry:
+                crossing_lon, crossing_lat = seg_b.geometry[0]
+
             non_priority_crossings.append({
                 "road_name": road_seg.name,
                 "road_speed_limit": road_seg.speed_limit,
+                "lat": crossing_lat,
+                "lon": crossing_lon,
             })
 
     # 3. Side change detection (FR-003)
@@ -609,6 +642,86 @@ def analyse_transitions(
         "non_priority_crossing_count": len(non_priority_crossings),
         "side_change_count": len(side_changes),
     }
+
+
+def route_to_geojson(
+    coords: list[list[float]],
+    distance_m: float,
+    duration_s: float,
+) -> dict[str, Any]:
+    """
+    Build a GeoJSON FeatureCollection with a single LineString from route coordinates.
+
+    Args:
+        coords: List of [lon, lat] pairs from Valhalla decoded polyline.
+        distance_m: Route distance in metres.
+        duration_s: Route duration in seconds.
+
+    Returns:
+        GeoJSON FeatureCollection with one LineString Feature.
+    """
+    if len(coords) < 2:
+        geometry = None
+    else:
+        geometry = {"type": "LineString", "coordinates": coords}
+
+    return {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": {
+                "distance_m": round(distance_m),
+                "duration_minutes": round(duration_s / 60, 1),
+            },
+        }],
+    }
+
+
+def crossings_to_geojson(
+    crossings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Build a GeoJSON FeatureCollection of Point features from crossing data.
+
+    Crossings without lat/lon are skipped.
+    """
+    features = []
+    for c in crossings:
+        lat, lon = c.get("lat"), c.get("lon")
+        if lat is None or lon is None:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {
+                "road_name": c.get("road_name", "Unknown"),
+                "road_speed_limit": c.get("road_speed_limit", 30),
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def barriers_to_geojson(
+    barriers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Build a GeoJSON FeatureCollection of Point features from barrier data.
+    """
+    features = []
+    for b in barriers:
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [b["lon"], b["lat"]],
+            },
+            "properties": {
+                "barrier_type": b.get("type", "unknown"),
+                "node_id": b.get("node_id", 0),
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
 
 
 async def query_overpass_resilient(

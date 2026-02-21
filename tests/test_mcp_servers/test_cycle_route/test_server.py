@@ -164,24 +164,18 @@ def _make_overpass_response(
 def _make_valhalla_handler(
     shortest_response: dict | None = None,
     safest_response: dict | None = None,
-    driving_response: dict | None = None,
     overpass_response: dict | None = None,
     captured_bodies: list | None = None,
     shortest_status: int = 200,
     safest_status: int = 200,
-    driving_status: int = 200,
 ) -> httpx.MockTransport:
     """Create a mock transport that differentiates Valhalla requests by costing."""
     if shortest_response is None:
         shortest_response = _make_valhalla_response()
     if safest_response is None:
         safest_response = _make_valhalla_response()
-    if driving_response is None:
-        driving_response = _make_valhalla_response(distance_km=2.0, duration_s=300)
     if overpass_response is None:
         overpass_response = _make_overpass_response()
-
-    valhalla_call_count = [0]
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -196,15 +190,11 @@ def _make_valhalla_handler(
             costing = body.get("costing", "")
             costing_opts = body.get("costing_options", {})
 
-            if costing == "auto":
-                return httpx.Response(driving_status, json=driving_response)
-            elif costing == "bicycle":
+            if costing == "bicycle":
                 bicycle_opts = costing_opts.get("bicycle", {})
                 if bicycle_opts.get("shortest") is True:
-                    valhalla_call_count[0] += 1
                     return httpx.Response(shortest_status, json=shortest_response)
                 else:
-                    valhalla_call_count[0] += 1
                     return httpx.Response(safest_status, json=safest_response)
 
             return httpx.Response(400, json=_make_valhalla_error())
@@ -284,11 +274,11 @@ class TestGetSiteBoundary:
 
 
 class TestAssessCycleRoute:
-    """Tests for dual-route cycle assessment via Valhalla."""
+    """Tests for cycle assessment via Valhalla with flat output structure."""
 
     @pytest.mark.anyio
-    async def test_full_assessment_dual_route(self):
-        """assess_cycle_route returns dual route assessment via Valhalla."""
+    async def test_full_assessment_flat_structure(self):
+        """assess_cycle_route returns flat assessment for safest route."""
         transport = _make_valhalla_handler()
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
@@ -303,28 +293,30 @@ class TestAssessCycleRoute:
 
         assert result["status"] == "success"
         assert result["destination"] == "Bicester North"
-        assert "shortest_route" in result
-        assert "safest_route" in result
         assert "same_route" in result
+        assert "shortest_route_distance_m" in result
+        assert "shortest_route_geometry" in result
 
-        shortest = result["shortest_route"]
-        assert shortest["distance_m"] == 2500
-        assert shortest["duration_minutes"] == 10.0
-        assert "provision_breakdown" in shortest
-        assert "score" in shortest
-        assert "issues" in shortest
-        assert "s106_suggestions" in shortest
-        assert "segments" in shortest
-        assert "route_geometry" in shortest
-        assert shortest["score"]["rating"] in ("green", "amber", "red")
+        # Flat assessment fields (from safest route)
+        assert result["distance_m"] == 2500
+        assert result["duration_minutes"] == 10.0
+        assert "provision_breakdown" in result
+        assert "score" in result
+        assert "issues" in result
+        assert "s106_suggestions" in result
+        assert result["score"]["rating"] in ("green", "amber", "red")
 
-        segments = shortest["segments"]
-        assert segments["type"] == "FeatureCollection"
-        assert len(segments["features"]) > 0
-        feature = segments["features"][0]
-        assert feature["type"] == "Feature"
-        assert feature["geometry"]["type"] == "LineString"
-        assert "provision" in feature["properties"]
+        # GeoJSON outputs
+        route_geojson = result["route_geojson"]
+        assert route_geojson["type"] == "FeatureCollection"
+        assert len(route_geojson["features"]) == 1
+        assert route_geojson["features"][0]["geometry"]["type"] == "LineString"
+
+        crossings_geojson = result["crossings_geojson"]
+        assert crossings_geojson["type"] == "FeatureCollection"
+
+        barriers_geojson = result["barriers_geojson"]
+        assert barriers_geojson["type"] == "FeatureCollection"
 
     @pytest.mark.anyio
     async def test_valhalla_called_with_shortest_costing(self):
@@ -374,8 +366,8 @@ class TestAssessCycleRoute:
         assert safest["costing_options"]["bicycle"]["use_hills"] == 0.3
 
     @pytest.mark.anyio
-    async def test_driving_distance_request_uses_auto(self):
-        """Valhalla driving distance request uses auto costing."""
+    async def test_no_driving_route_requested(self):
+        """No driving route is requested (only bicycle costings)."""
         captured_bodies: list[dict] = []
         transport = _make_valhalla_handler(captured_bodies=captured_bodies)
         client = httpx.AsyncClient(transport=transport)
@@ -389,7 +381,7 @@ class TestAssessCycleRoute:
         })
 
         auto_bodies = [b for b in captured_bodies if b.get("costing") == "auto"]
-        assert len(auto_bodies) == 1
+        assert len(auto_bodies) == 0
 
     @pytest.mark.anyio
     async def test_no_route_found(self):
@@ -438,41 +430,18 @@ class TestAssessCycleRoute:
 
         assert result["status"] == "success"
         assert result["same_route"] is True
-        assert result["shortest_route"]["distance_m"] == result["safest_route"]["distance_m"]
+        assert result["distance_m"] == 2200
+        assert result["shortest_route_distance_m"] == 2200
 
     @pytest.mark.anyio
-    async def test_driving_failure_gives_half_points_directness(self):
-        """Driving route failure results in half-points directness score."""
-        error = _make_valhalla_error(171, "No path")
-        transport = _make_valhalla_handler(
-            driving_response=error,
-            driving_status=400,
-        )
-        client = httpx.AsyncClient(transport=transport)
-        mcp = CycleRouteMCP(http_client=client)
-
-        result = await mcp._assess_cycle_route({
-            "origin_lon": -1.15,
-            "origin_lat": 51.9,
-            "destination_lon": -1.14,
-            "destination_lat": 51.91,
-        })
-
-        assert result["status"] == "success"
-        shortest = result["shortest_route"]
-        assert shortest["score"]["breakdown"]["directness"] == 4.5
-
-    @pytest.mark.anyio
-    async def test_driving_distance_passed_to_scorer(self):
-        """Driving distance is used for directness scoring."""
-        # Driving distance 2.0 km, shortest bicycle distance 2.2 km (ratio 1.1 → full points)
+    async def test_shortest_distance_used_for_directness(self):
+        """Shortest bicycle distance is used for directness scoring."""
+        # Shortest 2.2 km, safest 2.4 km → ratio 2400/2200 ≈ 1.09 → full directness points
         shortest = _make_valhalla_response(distance_km=2.2, duration_s=550)
-        safest = _make_valhalla_response(distance_km=2.2, duration_s=550)
-        driving = _make_valhalla_response(distance_km=2.0, duration_s=300)
+        safest = _make_valhalla_response(distance_km=2.4, duration_s=600)
         transport = _make_valhalla_handler(
             shortest_response=shortest,
             safest_response=safest,
-            driving_response=driving,
         )
         client = httpx.AsyncClient(transport=transport)
         mcp = CycleRouteMCP(http_client=client)
@@ -485,13 +454,11 @@ class TestAssessCycleRoute:
         })
 
         assert result["status"] == "success"
-        shortest_route = result["shortest_route"]
-        # With ratio 2200/2000 = 1.1, should get full directness points (9.0)
-        assert shortest_route["score"]["breakdown"]["directness"] == 9.0
+        assert result["score"]["breakdown"]["directness"] == 9.0
 
     @pytest.mark.anyio
     async def test_no_infrastructure_data(self):
-        """Route with no infrastructure data returns dual structure with note."""
+        """Route with no infrastructure data returns empty assessment stub."""
         overpass_data = {"elements": []}
         transport = _make_valhalla_handler(overpass_response=overpass_data)
         client = httpx.AsyncClient(transport=transport)
@@ -505,9 +472,11 @@ class TestAssessCycleRoute:
         })
 
         assert result["status"] == "success"
-        assert "note" in result
         assert result["same_route"] is True
-        assert result["shortest_route"]["score"]["score"] == 0
+        assert result["score"]["score"] == 0
+        assert result["route_geojson"]["type"] == "FeatureCollection"
+        assert result["crossings_geojson"]["type"] == "FeatureCollection"
+        assert result["barriers_geojson"]["type"] == "FeatureCollection"
 
     @pytest.mark.anyio
     async def test_default_destination_name(self):
@@ -527,7 +496,7 @@ class TestAssessCycleRoute:
 
     @pytest.mark.anyio
     async def test_assessment_includes_transitions(self):
-        """Assessment includes transitions data."""
+        """Assessment includes transitions data at top level."""
         barrier_node = {
             "type": "node", "id": 9001, "lat": 51.9010, "lon": -1.1510,
             "tags": {"barrier": "bollard"},
@@ -546,36 +515,12 @@ class TestAssessCycleRoute:
         })
 
         assert result["status"] == "success"
-        shortest = result["shortest_route"]
-        assert "transitions" in shortest
-        transitions = shortest["transitions"]
+        assert "transitions" in result
+        transitions = result["transitions"]
         assert "barriers" in transitions
         assert "non_priority_crossings" in transitions
         assert "side_changes" in transitions
         assert "directness_differential" in transitions
-
-    @pytest.mark.anyio
-    async def test_transitions_in_both_routes(self):
-        """Transitions present in both routes."""
-        # Use different distances so routes are distinguishable
-        shortest = _make_valhalla_response(distance_km=2.2, duration_s=550)
-        safest = _make_valhalla_response(distance_km=2.8, duration_s=700)
-        transport = _make_valhalla_handler(
-            shortest_response=shortest,
-            safest_response=safest,
-        )
-        client = httpx.AsyncClient(transport=transport)
-        mcp = CycleRouteMCP(http_client=client)
-
-        result = await mcp._assess_cycle_route({
-            "origin_lon": -1.15,
-            "origin_lat": 51.9,
-            "destination_lon": -1.14,
-            "destination_lat": 51.91,
-        })
-
-        assert "transitions" in result["shortest_route"]
-        assert "transitions" in result["safest_route"]
 
     @pytest.mark.anyio
     async def test_different_shortest_and_safest_routes(self):
@@ -590,13 +535,6 @@ class TestAssessCycleRoute:
             [-1.16, 51.90],
             [-1.15, 51.905],
             [-1.13, 51.91],
-        ]
-        bad_ways = [
-            {
-                "type": "way", "id": 300,
-                "tags": {"highway": "primary", "maxspeed": "40 mph", "surface": "asphalt", "name": "Main Road"},
-                "geometry": [{"lat": 51.90, "lon": -1.16}, {"lat": 51.91, "lon": -1.13}],
-            },
         ]
         good_ways = [
             {
@@ -614,23 +552,15 @@ class TestAssessCycleRoute:
         shortest_resp = _make_valhalla_response(distance_km=2.2, duration_s=550, coords=shortest_coords)
         safest_resp = _make_valhalla_response(distance_km=2.8, duration_s=700, coords=safest_coords)
 
-        overpass_call_count = [0]
-
         def handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
             if "overpass-api.de" in url:
-                overpass_call_count[0] += 1
-                # First call is for shortest route (roads), second for safest (cycleways)
-                if overpass_call_count[0] == 1:
-                    return httpx.Response(200, json={"elements": bad_ways})
-                else:
-                    return httpx.Response(200, json={"elements": good_ways})
+                # Only safest route is assessed via Overpass
+                return httpx.Response(200, json={"elements": good_ways})
             if "valhalla" in url and "/route" in url:
                 body = json.loads(request.content)
                 costing = body.get("costing", "")
                 costing_opts = body.get("costing_options", {})
-                if costing == "auto":
-                    return httpx.Response(200, json=_make_valhalla_response(distance_km=2.0))
                 if costing == "bicycle":
                     if costing_opts.get("bicycle", {}).get("shortest") is True:
                         return httpx.Response(200, json=shortest_resp)
@@ -648,9 +578,10 @@ class TestAssessCycleRoute:
         })
 
         assert result["same_route"] is False
-        assert result["shortest_route"]["distance_m"] == 2200
-        assert result["safest_route"]["distance_m"] == 2800
-        assert result["safest_route"]["score"]["score"] > result["shortest_route"]["score"]["score"]
+        # Flat structure: assessment is for the safest route
+        assert result["distance_m"] == 2800
+        assert result["shortest_route_distance_m"] == 2200
+        assert result["score"]["score"] > 0
 
     @pytest.mark.anyio
     @patch(
@@ -667,10 +598,6 @@ class TestAssessCycleRoute:
                 overpass_call_count[0] += 1
                 return httpx.Response(504, text="Gateway Timeout")
             if "valhalla" in url and "/route" in url:
-                body = json.loads(request.content)
-                costing = body.get("costing", "")
-                if costing == "auto":
-                    return httpx.Response(200, json=_make_valhalla_response(distance_km=2.0))
                 return httpx.Response(200, json=_make_valhalla_response())
             return httpx.Response(404)
 
@@ -687,10 +614,9 @@ class TestAssessCycleRoute:
 
         assert result["status"] == "success"
         assert result["destination"] == "Unreachable"
-        assert result["shortest_route"]["score"]["score"] == 0
-        assert "note" in result
-        # Primary (3) + fallback (1) for each of the 2 routes = 8 Overpass calls
-        assert overpass_call_count[0] == 8
+        assert result["score"]["score"] == 0
+        # Primary (3) + fallback (1) for the safest route only = 4 Overpass calls
+        assert overpass_call_count[0] == 4
 
 
 # =============================================================================

@@ -60,7 +60,7 @@ class TestScoreRouteGreen:
             _make_segment(provision="segregated", highway="cycleway",
                           speed_limit=0, surface="asphalt", distance_m=2000),
         ]
-        result = score_route(segments, 2000, driving_distance_m=2100)
+        result = score_route(segments, 2000, shortest_distance_m=2100)
 
         assert result["score"] >= GREEN_THRESHOLD
         assert result["rating"] == "green"
@@ -73,7 +73,7 @@ class TestScoreRouteGreen:
             _make_segment(provision="none", highway="residential",
                           speed_limit=20, surface="asphalt", distance_m=200),
         ]
-        result = score_route(segments, 2000, driving_distance_m=2100)
+        result = score_route(segments, 2000, shortest_distance_m=2100)
 
         assert result["score"] >= GREEN_THRESHOLD
         assert result["rating"] == "green"
@@ -217,7 +217,7 @@ class TestScoreFactors:
     def test_direct_route_full_points(self):
         """Cycling distance close to driving distance → full directness points."""
         segments = [_make_segment(distance_m=1000)]
-        result = score_route(segments, 1000, driving_distance_m=1050)
+        result = score_route(segments, 1000, shortest_distance_m=1050)
         assert result["breakdown"]["directness"] == MAX_DIRECTNESS_POINTS
 
     def test_no_driving_distance_half_points(self):

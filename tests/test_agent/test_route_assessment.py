@@ -124,9 +124,16 @@ def _make_boundary_result():
     }
 
 
-def _make_route_data(distance=2500, score=55, rating="amber", provision=None,
-                     issues=None, s106=None, segments=None, transitions=None):
-    """Create a single route data object."""
+def _make_route_result(destination="Bicester North", same_route=True,
+                       distance=2500, score=55, rating="amber",
+                       provision=None, issues=None, s106=None,
+                       transitions=None, parallel_upgrades=0,
+                       shortest_distance=None):
+    """Create a mock flat route assessment result.
+
+    Flat structure: assessment data (safest route) at top level,
+    with shortest_route_distance_m for reference.
+    """
     if provision is None:
         provision = {"segregated": 1500, "none": 1000}
     if issues is None:
@@ -139,69 +146,41 @@ def _make_route_data(distance=2500, score=55, rating="amber", provision=None,
         ]
     if s106 is None:
         s106 = [{"suggestion": "Contribute to cycleway along Buckingham Road"}]
-    if segments is None:
-        segments = []
     result = {
+        "status": "success",
+        "destination": destination,
         "distance_m": distance,
         "duration_minutes": round(distance / 250, 1),
         "provision_breakdown": provision,
+        "route_geojson": {"type": "FeatureCollection", "features": []},
+        "crossings_geojson": {"type": "FeatureCollection", "features": []},
+        "barriers_geojson": {"type": "FeatureCollection", "features": []},
         "score": {"score": score, "rating": rating, "breakdown": {}},
         "issues": issues,
         "s106_suggestions": s106,
-        "segments": segments,
-        "route_geometry": [],
+        "parallel_upgrades": parallel_upgrades,
+        "shortest_route_distance_m": shortest_distance if shortest_distance is not None else distance,
+        "shortest_route_geometry": [],
+        "same_route": same_route,
     }
     if transitions is not None:
         result["transitions"] = transitions
     return result
 
 
-def _make_route_result(destination="Bicester North", same_route=True):
-    """Create a mock dual-route assessment result."""
-    route = _make_route_data()
-    result = {
-        "status": "success",
-        "destination": destination,
-        "shortest_route": route,
-        "safest_route": route,
-        "same_route": same_route,
-    }
-    return result
-
-
 def _make_dual_route_result(destination="Bicester North"):
-    """Create a mock dual-route result where shortest != safest."""
-    shortest = _make_route_data(
-        distance=2200, score=35, rating="red",
-        provision={"none": 2200},
-        issues=[{"severity": "high", "problem": "No cycling provision"}],
-    )
-    safest = _make_route_data(
-        distance=2800, score=72, rating="amber",
+    """Create a mock flat result where shortest != safest."""
+    return _make_route_result(
+        destination=destination,
+        same_route=False,
+        distance=2800,
+        score=72,
+        rating="amber",
         provision={"segregated": 2000, "none": 800},
         issues=[{"severity": "medium", "problem": "Short gap in provision"}],
-        segments={
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "LineString", "coordinates": [[-1.15, 51.9], [-1.14, 51.91]]},
-                    "properties": {
-                        "way_id": 100, "provision": "segregated", "original_provision": "none",
-                        "highway": "secondary", "speed_limit": 30, "surface": "asphalt",
-                        "lit": True, "distance_m": 500, "name": "Banbury Rd",
-                    },
-                },
-            ],
-        },
+        parallel_upgrades=1,
+        shortest_distance=2200,
     )
-    return {
-        "status": "success",
-        "destination": destination,
-        "shortest_route": shortest,
-        "safest_route": safest,
-        "same_route": False,
-    }
 
 
 class TestPhaseAssessRoutes:
@@ -462,7 +441,7 @@ class TestBuildEvidenceContext:
         assert "S106" in route_text
 
     def test_dual_route_in_evidence(self):
-        """Dual-route assessment shows both routes with labels."""
+        """Dual-route assessment shows safest route details and shortest distance."""
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
@@ -473,10 +452,9 @@ class TestBuildEvidenceContext:
         route_text = result[5]
         assert "Shortest route" in route_text
         assert "Safest route" in route_text
-        assert "2200m" in route_text
-        assert "2800m" in route_text
-        assert "35/100" in route_text
-        assert "72/100" in route_text
+        assert "2200m" in route_text  # shortest distance noted
+        assert "2800m" in route_text  # safest distance in detail
+        assert "72/100" in route_text  # safest route score
 
     def test_parallel_detection_noted_in_evidence(self):
         """Parallel detection upgrades are noted in evidence text."""
@@ -522,7 +500,7 @@ class TestBuildRouteEvidenceSummary:
         assert "55/100" in summary
 
     def test_dual_route_both_shown(self):
-        """Different routes show both blocks."""
+        """Different routes show safest details and shortest distance."""
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
@@ -532,8 +510,8 @@ class TestBuildRouteEvidenceSummary:
         summary = orch._build_route_evidence_summary()
         assert "Shortest route" in summary
         assert "Safest route" in summary
-        assert "35/100" in summary
-        assert "72/100" in summary
+        assert "2200m" in summary  # shortest distance noted
+        assert "72/100" in summary  # safest route score
 
     def test_parallel_detection_in_summary(self):
         """Parallel detection upgrades noted in summary."""
@@ -576,18 +554,13 @@ class TestTransitionEvidence:
             barriers=[{"type": "bollard"}, {"type": "gate"}],
             crossings=[{"road_speed_limit": 30}],
         )
-        route = _make_route_data(transitions=transitions)
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
         )
-        orch._route_assessments = [{
-            "status": "success",
-            "destination": "Test",
-            "shortest_route": route,
-            "safest_route": route,
-            "same_route": True,
-        }]
+        orch._route_assessments = [
+            _make_route_result("Test", transitions=transitions)
+        ]
 
         result = orch._build_evidence_context()
         route_text = result[5]
@@ -598,18 +571,13 @@ class TestTransitionEvidence:
     def test_evidence_includes_directness_differential(self):
         """[TS-15] Evidence text includes directness differential."""
         transitions = _make_transitions_data(directness=1.15)
-        route = _make_route_data(transitions=transitions)
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
         )
-        orch._route_assessments = [{
-            "status": "success",
-            "destination": "Test",
-            "shortest_route": route,
-            "safest_route": route,
-            "same_route": True,
-        }]
+        orch._route_assessments = [
+            _make_route_result("Test", transitions=transitions)
+        ]
 
         result = orch._build_evidence_context()
         route_text = result[5]
@@ -618,18 +586,13 @@ class TestTransitionEvidence:
     def test_evidence_omits_unavailable_transitions(self):
         """[TS-16] Evidence text omits transitions when unavailable."""
         transitions = _make_transitions_data(unavailable=True)
-        route = _make_route_data(transitions=transitions)
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
         )
-        orch._route_assessments = [{
-            "status": "success",
-            "destination": "Test",
-            "shortest_route": route,
-            "safest_route": route,
-            "same_route": True,
-        }]
+        orch._route_assessments = [
+            _make_route_result("Test", transitions=transitions)
+        ]
 
         result = orch._build_evidence_context()
         route_text = result[5]
@@ -642,10 +605,10 @@ class TestTransitionEvidence:
 
 
 class TestDeterministicRouteNarrative:
-    """Verifies deterministic route_narrative build from MCP data."""
+    """Verifies deterministic route_narrative build from flat MCP data."""
 
     def _build_route_narrative(self, route_assessments):
-        """Simulate the orchestrator's deterministic build logic."""
+        """Simulate the orchestrator's deterministic build logic (flat structure)."""
         if not route_assessments:
             return None
         return {
@@ -653,14 +616,14 @@ class TestDeterministicRouteNarrative:
                 {
                     "destination_name": ra.get("destination", "Unknown"),
                     "shortest_route_summary": {
-                        "distance_m": ra["shortest_route"]["distance_m"],
-                        "ltn_score": ra["shortest_route"]["score"]["score"],
-                        "rating": ra["shortest_route"]["score"]["rating"],
+                        "distance_m": ra.get("shortest_route_distance_m", ra.get("distance_m", 0)),
+                        "ltn_score": ra.get("score", {}).get("score", 0) if ra.get("same_route", True) else None,
+                        "rating": ra.get("score", {}).get("rating") if ra.get("same_route", True) else None,
                     },
                     "safest_route_summary": {
-                        "distance_m": ra["safest_route"]["distance_m"],
-                        "ltn_score": ra["safest_route"]["score"]["score"],
-                        "rating": ra["safest_route"]["score"]["rating"],
+                        "distance_m": ra.get("distance_m", 0),
+                        "ltn_score": ra.get("score", {}).get("score", 0),
+                        "rating": ra.get("score", {}).get("rating"),
                     },
                     "same_route": ra.get("same_route", True),
                 }
@@ -669,22 +632,13 @@ class TestDeterministicRouteNarrative:
         }
 
     def test_route_narrative_populated_from_assessments(self):
-        """route_narrative built from MCP route assessment data."""
+        """route_narrative built from flat MCP route assessment data."""
         route_assessments = [
-            {
-                "status": "success",
-                "destination": "Bicester North",
-                "destination_id": "dest_001",
-                "shortest_route": {
-                    "distance_m": 2200,
-                    "score": {"score": 35, "rating": "red"},
-                },
-                "safest_route": {
-                    "distance_m": 2800,
-                    "score": {"score": 72, "rating": "amber"},
-                },
-                "same_route": False,
-            }
+            _make_route_result(
+                "Bicester North", same_route=False,
+                distance=2800, score=72, rating="amber",
+                shortest_distance=2200,
+            ),
         ]
 
         narrative = self._build_route_narrative(route_assessments)
@@ -693,9 +647,11 @@ class TestDeterministicRouteNarrative:
         assert len(narrative["destinations"]) == 1
         dest = narrative["destinations"][0]
         assert dest["destination_name"] == "Bicester North"
+        # Shortest route: only distance (not assessed when same_route=False)
         assert dest["shortest_route_summary"]["distance_m"] == 2200
-        assert dest["shortest_route_summary"]["ltn_score"] == 35
-        assert dest["shortest_route_summary"]["rating"] == "red"
+        assert dest["shortest_route_summary"]["ltn_score"] is None
+        assert dest["shortest_route_summary"]["rating"] is None
+        # Safest route: full data
         assert dest["safest_route_summary"]["distance_m"] == 2800
         assert dest["safest_route_summary"]["ltn_score"] == 72
         assert dest["safest_route_summary"]["rating"] == "amber"
@@ -710,18 +666,10 @@ class TestDeterministicRouteNarrative:
     def test_route_narrative_same_route(self):
         """route_narrative handles same_route=True with identical summaries."""
         route_assessments = [
-            {
-                "destination": "Town Centre",
-                "shortest_route": {
-                    "distance_m": 1500,
-                    "score": {"score": 70, "rating": "amber"},
-                },
-                "safest_route": {
-                    "distance_m": 1500,
-                    "score": {"score": 70, "rating": "amber"},
-                },
-                "same_route": True,
-            }
+            _make_route_result(
+                "Town Centre", same_route=True,
+                distance=1500, score=70, rating="amber",
+            ),
         ]
 
         narrative = self._build_route_narrative(route_assessments)
@@ -741,18 +689,13 @@ class TestTransitionSummary:
             crossings=[{"road_speed_limit": 30}, {"road_speed_limit": 20}],
             side_changes=[{"road_name": "Cross St"}],
         )
-        route = _make_route_data(transitions=transitions)
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
         )
-        orch._route_assessments = [{
-            "status": "success",
-            "destination": "Test",
-            "shortest_route": route,
-            "safest_route": route,
-            "same_route": True,
-        }]
+        orch._route_assessments = [
+            _make_route_result("Test", transitions=transitions)
+        ]
 
         summary = orch._build_route_evidence_summary()
         assert "1 barriers" in summary
@@ -762,18 +705,13 @@ class TestTransitionSummary:
     def test_summary_omits_unavailable_transitions(self):
         """[TS-18] Summary omits transitions when unavailable."""
         transitions = _make_transitions_data(unavailable=True)
-        route = _make_route_data(transitions=transitions)
         orch = AgentOrchestrator(
             review_id="rev_test",
             application_ref="21/03267/OUT",
         )
-        orch._route_assessments = [{
-            "status": "success",
-            "destination": "Test",
-            "shortest_route": route,
-            "safest_route": route,
-            "same_route": True,
-        }]
+        orch._route_assessments = [
+            _make_route_result("Test", transitions=transitions)
+        ]
 
         summary = orch._build_route_evidence_summary()
         assert "Transitions:" not in summary

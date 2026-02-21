@@ -33,11 +33,13 @@ from starlette.applications import Starlette
 from src.mcp_servers.cycle_route.geojson import parse_arcgis_response
 from src.mcp_servers.cycle_route.infrastructure import (
     analyse_transitions,
+    barriers_to_geojson,
     build_overpass_query,
+    crossings_to_geojson,
     detect_parallel_provision,
     parse_overpass_ways,
     query_overpass_resilient,
-    segments_to_feature_collection,
+    route_to_geojson,
     summarise_provision,
 )
 from src.mcp_servers.cycle_route.issues import (
@@ -215,7 +217,7 @@ class CycleRouteMCP:
         cycling_distance_m: float,
         cycling_duration_s: float,
         dest_name: str,
-        driving_distance_m: float | None = None,
+        shortest_distance_m: float | None = None,
     ) -> dict[str, Any] | None:
         """
         Assess a single route: query Overpass, parse segments,
@@ -253,10 +255,11 @@ class CycleRouteMCP:
                 "directness_differential": None,
             }
 
+        parallel_upgrades = sum(1 for s in segments if s.original_provision is not None)
         provision = summarise_provision(segments)
         route_score = score_route(
             segments, cycling_distance_m,
-            driving_distance_m=driving_distance_m,
+            shortest_distance_m=shortest_distance_m,
             transitions=transitions,
         )
         route_issues = identify_issues(segments)
@@ -266,12 +269,14 @@ class CycleRouteMCP:
             "distance_m": round(cycling_distance_m),
             "duration_minutes": round(cycling_duration_s / 60, 1),
             "provision_breakdown": provision,
-            "segments": segments_to_feature_collection(segments),
+            "route_geojson": route_to_geojson(route_coords, cycling_distance_m, cycling_duration_s),
+            "crossings_geojson": crossings_to_geojson(transitions.get("non_priority_crossings", [])),
+            "barriers_geojson": barriers_to_geojson(transitions.get("barriers", [])),
             "score": route_score,
             "issues": route_issues,
             "s106_suggestions": s106,
             "transitions": transitions,
-            "route_geometry": route_coords,
+            "parallel_upgrades": parallel_upgrades,
         }
 
     async def _request_valhalla_route(
@@ -324,7 +329,7 @@ class CycleRouteMCP:
             destination_coords=f"{dest_lat:.4f},{dest_lon:.4f}",
         )
 
-        # Step 1: Request three routes from Valhalla
+        # Step 1: Request two bicycle routes from Valhalla (no driving route)
         shortest_data = await self._request_valhalla_route(
             origin_lon, origin_lat, dest_lon, dest_lat,
             costing="bicycle",
@@ -342,18 +347,6 @@ class CycleRouteMCP:
                 "use_hills": 0.3,
             }},
         )
-
-        await asyncio.sleep(EXTERNAL_API_DELAY)
-
-        driving_data = await self._request_valhalla_route(
-            origin_lon, origin_lat, dest_lon, dest_lat,
-            costing="auto",
-        )
-
-        # Extract driving distance (km → m) for directness scoring
-        driving_distance_m: float | None = None
-        if driving_data:
-            driving_distance_m = driving_data["trip"]["summary"]["length"] * 1000
 
         # Fallback logic: if one bicycle route fails, use the other for both
         if shortest_data is None and safest_data is None:
@@ -386,14 +379,11 @@ class CycleRouteMCP:
             or abs(shortest_dist - safest_dist) / max(shortest_dist, 1) < 0.01
         )
 
-        # Step 3: Assess each route via Overpass + scoring
-        shortest_assessment = await self._assess_single_route(
-            shortest_coords, shortest_dist, shortest_dur,
-            dest_name, driving_distance_m=driving_distance_m,
-        )
-        safest_assessment = await self._assess_single_route(
+        # Step 3: Assess ONLY the safest route via Overpass + scoring
+        # Shortest route provides distance only for directness comparison
+        assessment = await self._assess_single_route(
             safest_coords, safest_dist, safest_dur,
-            dest_name, driving_distance_m=driving_distance_m,
+            dest_name, shortest_distance_m=shortest_dist,
         )
 
         # Build fallback stub for routes with no infrastructure data
@@ -402,42 +392,33 @@ class CycleRouteMCP:
                 "distance_m": round(dist),
                 "duration_minutes": round(dur / 60, 1),
                 "provision_breakdown": {},
+                "route_geojson": route_to_geojson(coords, dist, dur),
+                "crossings_geojson": {"type": "FeatureCollection", "features": []},
+                "barriers_geojson": {"type": "FeatureCollection", "features": []},
                 "score": {"score": 0, "rating": "red", "breakdown": {}},
                 "issues": [],
                 "s106_suggestions": [],
-                "route_geometry": coords,
+                "parallel_upgrades": 0,
             }
 
-        if shortest_assessment is None and safest_assessment is None:
-            return {
-                "status": "success",
-                "destination": dest_name,
-                "shortest_route": _empty_assessment(shortest_coords, shortest_dist, shortest_dur),
-                "safest_route": _empty_assessment(safest_coords, safest_dist, safest_dur),
-                "same_route": same_route,
-                "note": "No infrastructure data available along route",
-            }
-
-        if shortest_assessment is None:
-            shortest_assessment = _empty_assessment(shortest_coords, shortest_dist, shortest_dur)
-        if safest_assessment is None:
-            safest_assessment = _empty_assessment(safest_coords, safest_dist, safest_dur)
+        if assessment is None:
+            assessment = _empty_assessment(safest_coords, safest_dist, safest_dur)
 
         logger.info(
-            "Dual route assessed",
+            "Route assessed",
             destination=dest_name,
-            shortest_distance=shortest_assessment["distance_m"],
-            shortest_score=shortest_assessment["score"]["score"],
-            safest_distance=safest_assessment["distance_m"],
-            safest_score=safest_assessment["score"]["score"],
+            distance=assessment["distance_m"],
+            score=assessment["score"]["score"],
+            shortest_distance=round(shortest_dist),
             same_route=same_route,
         )
 
         return {
             "status": "success",
             "destination": dest_name,
-            "shortest_route": shortest_assessment,
-            "safest_route": safest_assessment,
+            **assessment,
+            "shortest_route_distance_m": round(shortest_dist),
+            "shortest_route_geometry": shortest_coords,
             "same_route": same_route,
         }
 

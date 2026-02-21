@@ -22,17 +22,21 @@ from src.mcp_servers.cycle_route.infrastructure import (
     OVERPASS_API_URL,
     OVERPASS_FALLBACK_URL,
     RouteSegment,
+    _way_length_m,
     analyse_transitions,
+    barriers_to_geojson,
     bearing_difference,
     build_overpass_query,
     calculate_way_bearing,
     classify_provision,
+    crossings_to_geojson,
     detect_parallel_provision,
     extract_lit,
     extract_speed_limit,
     extract_surface,
     parse_overpass_ways,
     query_overpass_resilient,
+    route_to_geojson,
     segments_to_feature_collection,
     summarise_provision,
 )
@@ -260,7 +264,7 @@ class TestBuildOverpassQuery:
 
 class TestParseOverpassWays:
     def test_basic_parsing(self):
-        """Ways are parsed into RouteSegments."""
+        """Ways are parsed into RouteSegments with geometry-based distances."""
         response = {
             "elements": [
                 {
@@ -272,6 +276,11 @@ class TestParseOverpassWays:
                         "lit": "yes",
                         "name": "NCN Route 51",
                     },
+                    "geometry": [
+                        {"lat": 51.900, "lon": -1.150},
+                        {"lat": 51.901, "lon": -1.150},
+                        {"lat": 51.902, "lon": -1.150},
+                    ],
                 },
                 {
                     "type": "way",
@@ -282,6 +291,10 @@ class TestParseOverpassWays:
                         "surface": "asphalt",
                         "name": "Buckingham Road",
                     },
+                    "geometry": [
+                        {"lat": 51.902, "lon": -1.150},
+                        {"lat": 51.903, "lon": -1.150},
+                    ],
                 },
             ]
         }
@@ -291,7 +304,12 @@ class TestParseOverpassWays:
         assert len(segments) == 2
         assert segments[0].provision == "segregated"
         assert segments[0].name == "NCN Route 51"
-        assert segments[0].distance_m == pytest.approx(500)
+        # Distance from geometry: ~222m (2 x ~111m per 0.001 deg lat)
+        assert segments[0].distance_m > 200
+        assert segments[0].distance_m < 250
+        # Second segment is shorter (~111m)
+        assert segments[1].distance_m > 100
+        assert segments[1].distance_m < 130
         assert segments[1].provision == "none"
         assert segments[1].speed_limit == 30
 
@@ -455,6 +473,118 @@ class TestParseOverpassWaysGeometry:
         }
         segments = parse_overpass_ways(response, 500)
         assert segments[0].geometry is None
+
+
+# =============================================================================
+# _way_length_m
+# =============================================================================
+
+
+class TestWayLengthM:
+    def test_known_distance(self):
+        """Two points approximately 111m apart (0.001 deg latitude)."""
+        geometry = [
+            {"lat": 51.900, "lon": -1.150},
+            {"lat": 51.901, "lon": -1.150},
+        ]
+        length = _way_length_m(geometry)
+        assert length == pytest.approx(111, rel=0.02)
+
+    def test_multi_node_sum(self):
+        """Three nodes: total is sum of two segments."""
+        geometry = [
+            {"lat": 51.900, "lon": -1.150},
+            {"lat": 51.901, "lon": -1.150},
+            {"lat": 51.902, "lon": -1.150},
+        ]
+        length = _way_length_m(geometry)
+        assert length == pytest.approx(222, rel=0.02)
+
+    def test_empty_geometry(self):
+        """Empty geometry returns 0."""
+        assert _way_length_m([]) == 0.0
+
+    def test_single_node(self):
+        """Single node returns 0."""
+        assert _way_length_m([{"lat": 51.9, "lon": -1.15}]) == 0.0
+
+
+class TestParseOverpassWaysGeometryDistances:
+    def test_distance_from_geometry(self):
+        """Segment distance calculated from way geometry, not equal division."""
+        response = {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 1,
+                    "tags": {"highway": "secondary", "name": "Long Road"},
+                    "geometry": [
+                        {"lat": 51.900, "lon": -1.150},
+                        {"lat": 51.901, "lon": -1.150},
+                        {"lat": 51.902, "lon": -1.150},
+                        {"lat": 51.903, "lon": -1.150},
+                    ],
+                },
+                {
+                    "type": "way",
+                    "id": 2,
+                    "tags": {"highway": "service", "name": "Short Side Road"},
+                    "geometry": [
+                        {"lat": 51.900, "lon": -1.150},
+                        {"lat": 51.9005, "lon": -1.150},
+                    ],
+                },
+            ]
+        }
+        segments = parse_overpass_ways(response, 1000)
+        assert len(segments) == 2
+        # Long road: ~333m (3 x ~111m)
+        assert segments[0].distance_m == pytest.approx(333, rel=0.05)
+        # Short side road: ~55m
+        assert segments[1].distance_m == pytest.approx(55, rel=0.05)
+
+    def test_way_without_geometry_gets_zero_distance(self):
+        """Way with no geometry gets distance_m = 0."""
+        response = {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 1,
+                    "tags": {"highway": "cycleway"},
+                },
+            ]
+        }
+        segments = parse_overpass_ways(response, 500)
+        assert segments[0].distance_m == 0.0
+
+    def test_multiple_ways_independent_distances(self):
+        """Each way gets its own distance regardless of total route distance."""
+        response = {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 1,
+                    "tags": {"highway": "secondary", "name": "Road A"},
+                    "geometry": [
+                        {"lat": 51.900, "lon": -1.150},
+                        {"lat": 51.901, "lon": -1.150},
+                    ],
+                },
+                {
+                    "type": "way",
+                    "id": 2,
+                    "tags": {"highway": "secondary", "name": "Road B"},
+                    "geometry": [
+                        {"lat": 51.901, "lon": -1.150},
+                        {"lat": 51.902, "lon": -1.150},
+                    ],
+                },
+            ]
+        }
+        # route_distance_m doesn't affect individual segment distances
+        segments = parse_overpass_ways(response, 999999)
+        assert segments[0].distance_m == pytest.approx(111, rel=0.02)
+        assert segments[1].distance_m == pytest.approx(111, rel=0.02)
 
 
 # =============================================================================
@@ -897,6 +1027,138 @@ class TestAnalyseTransitions:
         assert len(result["non_priority_crossings"]) == 1
         assert result["non_priority_crossings"][0]["road_name"] == "Buckingham Road"
         assert result["non_priority_crossings"][0]["road_speed_limit"] == 30
+
+    def test_crossing_has_lat_lon_from_geometry(self):
+        """Crossing has lat/lon from preceding segment geometry."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Cycle Path",
+                         geometry=[[-1.16, 51.90], [-1.15, 51.91]]),
+            RouteSegment(101, "none", "residential", 30, "asphalt", True, 500, "Main St"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        crossing = result["non_priority_crossings"][0]
+        assert crossing["lat"] == 51.91
+        assert crossing["lon"] == -1.15
+
+    def test_crossing_without_geometry_has_none_lat_lon(self):
+        """Crossing without geometry has lat=None, lon=None."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Cycle Path"),
+            RouteSegment(101, "none", "residential", 30, "asphalt", True, 500, "Main St"),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        crossing = result["non_priority_crossings"][0]
+        assert crossing["lat"] is None
+        assert crossing["lon"] is None
+
+    def test_crossing_lat_lon_from_following_segment(self):
+        """Crossing uses following segment geometry when preceding has none."""
+        segments = [
+            RouteSegment(100, "segregated", "cycleway", 0, "asphalt", True, 500, "Cycle Path"),
+            RouteSegment(101, "none", "residential", 30, "asphalt", True, 500, "Main St",
+                         geometry=[[-1.14, 51.92], [-1.13, 51.93]]),
+        ]
+        result = analyse_transitions(segments, {"elements": []})
+        crossing = result["non_priority_crossings"][0]
+        assert crossing["lat"] == 51.92
+        assert crossing["lon"] == -1.14
+
+
+# =============================================================================
+# route_to_geojson
+# =============================================================================
+
+
+class TestRouteToGeoJson:
+    def test_valid_route_linestring(self):
+        """Route with 3+ points produces LineString FeatureCollection."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91], [-1.13, 51.92]]
+        result = route_to_geojson(coords, 2500, 600)
+        assert result["type"] == "FeatureCollection"
+        assert len(result["features"]) == 1
+        feature = result["features"][0]
+        assert feature["type"] == "Feature"
+        assert feature["geometry"]["type"] == "LineString"
+        assert feature["geometry"]["coordinates"] == coords
+
+    def test_short_route_null_geometry(self):
+        """Route with fewer than 2 points produces null geometry."""
+        result = route_to_geojson([[-1.15, 51.9]], 100, 30)
+        assert result["features"][0]["geometry"] is None
+
+    def test_empty_route_null_geometry(self):
+        """Empty route produces null geometry."""
+        result = route_to_geojson([], 0, 0)
+        assert result["features"][0]["geometry"] is None
+
+    def test_properties_distance_and_duration(self):
+        """Feature properties include distance_m and duration_minutes."""
+        result = route_to_geojson([[-1.15, 51.9], [-1.14, 51.91]], 2500, 600)
+        props = result["features"][0]["properties"]
+        assert props["distance_m"] == 2500
+        assert props["duration_minutes"] == 10.0
+
+
+# =============================================================================
+# crossings_to_geojson
+# =============================================================================
+
+
+class TestCrossingsToGeoJson:
+    def test_crossing_point_feature(self):
+        """Crossing with lat/lon becomes Point feature."""
+        crossings = [
+            {"road_name": "Main St", "road_speed_limit": 30, "lat": 51.9, "lon": -1.15},
+        ]
+        result = crossings_to_geojson(crossings)
+        assert result["type"] == "FeatureCollection"
+        assert len(result["features"]) == 1
+        feature = result["features"][0]
+        assert feature["geometry"]["type"] == "Point"
+        assert feature["geometry"]["coordinates"] == [-1.15, 51.9]
+        assert feature["properties"]["road_name"] == "Main St"
+        assert feature["properties"]["road_speed_limit"] == 30
+
+    def test_crossing_without_lat_lon_skipped(self):
+        """Crossing with None lat is skipped."""
+        crossings = [
+            {"road_name": "Main St", "road_speed_limit": 30, "lat": None, "lon": -1.15},
+        ]
+        result = crossings_to_geojson(crossings)
+        assert result["features"] == []
+
+    def test_empty_crossings(self):
+        """Empty crossings list produces empty FeatureCollection."""
+        result = crossings_to_geojson([])
+        assert result["type"] == "FeatureCollection"
+        assert result["features"] == []
+
+
+# =============================================================================
+# barriers_to_geojson
+# =============================================================================
+
+
+class TestBarriersToGeoJson:
+    def test_barrier_point_feature(self):
+        """Barrier becomes Point feature with type and node_id."""
+        barriers = [
+            {"type": "cycle_barrier", "node_id": 1001, "lat": 51.9, "lon": -1.15},
+        ]
+        result = barriers_to_geojson(barriers)
+        assert result["type"] == "FeatureCollection"
+        assert len(result["features"]) == 1
+        feature = result["features"][0]
+        assert feature["geometry"]["type"] == "Point"
+        assert feature["geometry"]["coordinates"] == [-1.15, 51.9]
+        assert feature["properties"]["barrier_type"] == "cycle_barrier"
+        assert feature["properties"]["node_id"] == 1001
+
+    def test_empty_barriers(self):
+        """Empty barriers list produces empty FeatureCollection."""
+        result = barriers_to_geojson([])
+        assert result["type"] == "FeatureCollection"
+        assert result["features"] == []
 
 
 # =============================================================================

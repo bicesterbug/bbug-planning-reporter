@@ -23,7 +23,8 @@ def identify_issues(segments: list[RouteSegment]) -> list[dict[str, Any]]:
     """
     Identify cycling infrastructure issues from route segments.
 
-    Each issue includes location, problem, severity, and suggested improvement.
+    Issues are aggregated by road name and issue type, producing one issue
+    per road per issue type with total affected distance.
 
     Args:
         segments: Route segments from infrastructure analysis.
@@ -31,16 +32,30 @@ def identify_issues(segments: list[RouteSegment]) -> list[dict[str, Any]]:
     Returns:
         List of issue dicts.
     """
+    # Group segments by road name
+    roads: dict[str, list[RouteSegment]] = {}
+    for seg in segments:
+        roads.setdefault(seg.name, []).append(seg)
+
     issues = []
 
-    for seg in segments:
+    for road_name, road_segments in roads.items():
+        total_distance = sum(s.distance_m for s in road_segments)
+
         # High-speed road with no cycle provision
-        if seg.provision == "none" and seg.speed_limit >= 40:
+        high_speed_segs = [
+            s for s in road_segments
+            if s.provision == "none" and s.speed_limit >= 40
+        ]
+        if high_speed_segs:
+            affected_distance = sum(s.distance_m for s in high_speed_segs)
+            max_speed = max(s.speed_limit for s in high_speed_segs)
+            representative = high_speed_segs[0]
             issues.append({
-                "location": f"{seg.name} ({round(seg.distance_m)}m section)",
+                "location": f"{road_name} ({round(affected_distance)}m)",
                 "problem": (
-                    f"{seg.speed_limit}mph speed limit with no cycle provision "
-                    f"on {seg.highway} road"
+                    f"{max_speed}mph speed limit with no cycle provision "
+                    f"on {representative.highway} road"
                 ),
                 "severity": "high",
                 "suggested_improvement": (
@@ -49,30 +64,45 @@ def identify_issues(segments: list[RouteSegment]) -> list[dict[str, Any]]:
                     "motor traffic"
                 ),
             })
-        # Moderate-speed road with no provision
-        elif seg.provision == "none" and seg.speed_limit >= 30 and seg.highway in (
-            "primary", "secondary", "tertiary", "trunk"
-        ):
+
+        # Moderate-speed road with no provision (only if not already caught by high-speed)
+        moderate_segs = [
+            s for s in road_segments
+            if s.provision == "none"
+            and s.speed_limit >= 30
+            and s.speed_limit < 40
+            and s.highway in ("primary", "secondary", "tertiary", "trunk")
+        ]
+        if moderate_segs:
+            affected_distance = sum(s.distance_m for s in moderate_segs)
+            max_speed = max(s.speed_limit for s in moderate_segs)
+            representative = moderate_segs[0]
             issues.append({
-                "location": f"{seg.name} ({round(seg.distance_m)}m section)",
+                "location": f"{road_name} ({round(affected_distance)}m)",
                 "problem": (
-                    f"{seg.speed_limit}mph {seg.highway} road with no cycle provision"
+                    f"{max_speed}mph {representative.highway} road with no cycle provision"
                 ),
                 "severity": "medium",
                 "suggested_improvement": (
                     f"On-road cycle lane or segregated cycleway — "
                     f"LTN 1/20 recommends protection on roads classified "
-                    f"{seg.highway} with speeds at 30mph"
+                    f"{representative.highway} with speeds at 30mph"
                 ),
             })
 
         # Poor surface quality
-        if seg.surface.lower() in ("gravel", "dirt", "grass", "mud", "sand", "ground"):
+        poor_surface_segs = [
+            s for s in road_segments
+            if s.surface.lower() in ("gravel", "dirt", "grass", "mud", "sand", "ground")
+        ]
+        if poor_surface_segs:
+            affected_distance = sum(s.distance_m for s in poor_surface_segs)
+            representative = poor_surface_segs[0]
             issues.append({
-                "location": f"{seg.name} ({round(seg.distance_m)}m section)",
+                "location": f"{road_name} ({round(affected_distance)}m)",
                 "problem": (
-                    f"Poor surface ({seg.surface}) on "
-                    f"{'shared-use path' if seg.provision == 'shared_use' else seg.highway}"
+                    f"Poor surface ({representative.surface}) on "
+                    f"{'shared-use path' if representative.provision == 'shared_use' else representative.highway}"
                 ),
                 "severity": "medium",
                 "suggested_improvement": (
@@ -82,10 +112,16 @@ def identify_issues(segments: list[RouteSegment]) -> list[dict[str, Any]]:
             })
 
         # Unlit shared-use or segregated path
-        if seg.lit is False and seg.provision in ("segregated", "shared_use"):
+        unlit_segs = [
+            s for s in road_segments
+            if s.lit is False and s.provision in ("segregated", "shared_use")
+        ]
+        if unlit_segs:
+            affected_distance = sum(s.distance_m for s in unlit_segs)
+            representative = unlit_segs[0]
             issues.append({
-                "location": f"{seg.name} ({round(seg.distance_m)}m section)",
-                "problem": f"Unlit {seg.provision.replace('_', ' ')} path",
+                "location": f"{road_name} ({round(affected_distance)}m)",
+                "problem": f"Unlit {representative.provision.replace('_', ' ')} path",
                 "severity": "low",
                 "suggested_improvement": (
                     "Install lighting — LTN 1/20 para 10.5 states cycle "

@@ -127,14 +127,14 @@ def _score_surface(segments: list[RouteSegment]) -> float:
 
 def _score_directness(
     cycling_distance_m: float,
-    driving_distance_m: float | None,
+    shortest_distance_m: float | None,
 ) -> float:
-    """Score based on route directness compared to driving distance."""
-    if not driving_distance_m or driving_distance_m == 0:
-        # No driving comparison available — give half points
+    """Score based on route directness compared to shortest cycling distance."""
+    if not shortest_distance_m or shortest_distance_m == 0:
+        # No shortest route comparison available — give half points
         return MAX_DIRECTNESS_POINTS / 2
 
-    ratio = cycling_distance_m / driving_distance_m
+    ratio = cycling_distance_m / shortest_distance_m
     if ratio <= 1.1:
         return MAX_DIRECTNESS_POINTS  # Very direct
     if ratio <= 1.3:
@@ -190,7 +190,7 @@ def _score_transitions(transitions: dict[str, Any]) -> float:
 def score_route(
     segments: list[RouteSegment],
     cycling_distance_m: float,
-    driving_distance_m: float | None = None,
+    shortest_distance_m: float | None = None,
     transitions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
@@ -199,7 +199,7 @@ def score_route(
     Args:
         segments: Route segments from infrastructure analysis.
         cycling_distance_m: Total cycling route distance in metres.
-        driving_distance_m: Optional driving distance for directness comparison.
+        shortest_distance_m: Optional shortest cycling distance for directness comparison.
 
     Returns:
         Dict with score, rating, breakdown, and optional notes.
@@ -207,7 +207,7 @@ def score_route(
     segregation = _score_segregation(segments)
     speed = _score_speed(segments)
     surface = _score_surface(segments)
-    directness = _score_directness(cycling_distance_m, driving_distance_m)
+    directness = _score_directness(cycling_distance_m, shortest_distance_m)
     junctions = _score_junctions(segments)
 
     # Transition scoring: neutral when unavailable or not provided

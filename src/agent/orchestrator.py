@@ -1526,65 +1526,61 @@ class AgentOrchestrator:
 
                 route_lines.append(f"### Route to {dest}")
 
-                routes_to_show = []
+                # Flat structure: assessment data is at top level (safest route)
+                distance = ra.get("distance_m", 0)
+                score = ra.get("score", {})
+                rating = score.get("rating", "unknown")
+                score_val = score.get("score", 0)
+                issues = ra.get("issues", [])
+                s106 = ra.get("s106_suggestions", [])
+                shortest_dist = ra.get("shortest_route_distance_m")
+
                 if same_route:
-                    route_data = ra.get("shortest_route", ra)
-                    routes_to_show.append(("Shortest & safest route (same)", route_data))
+                    route_lines.append("**Shortest & safest route (same):**")
                 else:
-                    routes_to_show.append(("Shortest route", ra.get("shortest_route", {})))
-                    routes_to_show.append(("Safest route", ra.get("safest_route", {})))
+                    route_lines.append(f"**Shortest route:** {shortest_dist}m (not assessed)")
+                    route_lines.append("**Safest route:**")
 
-                for label, route_data in routes_to_show:
-                    distance = route_data.get("distance_m", 0)
-                    score = route_data.get("score", {})
-                    rating = score.get("rating", "unknown")
-                    score_val = score.get("score", 0)
-                    issues = route_data.get("issues", [])
-                    s106 = route_data.get("s106_suggestions", [])
+                route_lines.append(f"- Distance: {distance}m, LTN 1/20 score: {score_val}/100 ({rating})")
 
-                    route_lines.append(f"**{label}:**")
-                    route_lines.append(f"- Distance: {distance}m, LTN 1/20 score: {score_val}/100 ({rating})")
+                provision = ra.get("provision_breakdown", {})
+                if provision:
+                    prov_parts = [f"{k}: {v}m" for k, v in provision.items() if v > 0]
+                    if prov_parts:
+                        route_lines.append(f"- Provision: {', '.join(prov_parts)}")
 
-                    provision = route_data.get("provision_breakdown", {})
-                    if provision:
-                        prov_parts = [f"{k}: {v}m" for k, v in provision.items() if v > 0]
-                        if prov_parts:
-                            route_lines.append(f"- Provision: {', '.join(prov_parts)}")
+                # Parallel detection upgrades (now a top-level count)
+                parallel_upgrades = ra.get("parallel_upgrades", 0)
+                if parallel_upgrades:
+                    route_lines.append(f"- Parallel detection: {parallel_upgrades} segment(s) upgraded via adjacent cycleway")
 
-                    # Count parallel detection upgrades
-                    segments_data = route_data.get("segments", {})
-                    features = segments_data.get("features", []) if isinstance(segments_data, dict) else segments_data
-                    upgraded = sum(1 for f in features if (f.get("properties") or f).get("original_provision"))
-                    if upgraded:
-                        route_lines.append(f"- Parallel detection: {upgraded} segment(s) upgraded via adjacent cycleway")
+                # Transition statistics
+                transitions = ra.get("transitions", {})
+                if transitions and not transitions.get("unavailable"):
+                    barrier_count = len(transitions.get("barriers", []))
+                    crossing_count = len(transitions.get("non_priority_crossings", []))
+                    side_change_count = len(transitions.get("side_changes", []))
+                    directness = transitions.get("directness_differential")
 
-                    # Transition statistics
-                    transitions = route_data.get("transitions", {})
-                    if transitions and not transitions.get("unavailable"):
-                        barrier_count = len(transitions.get("barriers", []))
-                        crossing_count = len(transitions.get("non_priority_crossings", []))
-                        side_change_count = len(transitions.get("side_changes", []))
-                        directness = transitions.get("directness_differential")
+                    route_lines.append(
+                        f"- Transitions: {barrier_count} barriers, "
+                        f"{crossing_count} non-priority crossings, "
+                        f"{side_change_count} side changes"
+                    )
+                    if directness is not None:
+                        route_lines.append(f"- Directness differential: {directness:.2f}")
 
-                        route_lines.append(
-                            f"- Transitions: {barrier_count} barriers, "
-                            f"{crossing_count} non-priority crossings, "
-                            f"{side_change_count} side changes"
-                        )
-                        if directness is not None:
-                            route_lines.append(f"- Directness differential: {directness:.2f}")
+                if issues:
+                    route_lines.append("- Issues:")
+                    for issue in issues:
+                        route_lines.append(f"  - [{issue.get('severity', 'unknown')}] {issue.get('problem', '')}")
+                        if issue.get("suggested_improvement"):
+                            route_lines.append(f"    Suggestion: {issue['suggested_improvement']}")
 
-                    if issues:
-                        route_lines.append("- Issues:")
-                        for issue in issues:
-                            route_lines.append(f"  - [{issue.get('severity', 'unknown')}] {issue.get('problem', '')}")
-                            if issue.get("suggested_improvement"):
-                                route_lines.append(f"    Suggestion: {issue['suggested_improvement']}")
-
-                    if s106:
-                        route_lines.append("- S106 funding suggestions:")
-                        for sug in s106:
-                            route_lines.append(f"  - {sug.get('suggestion', '')}")
+                if s106:
+                    route_lines.append("- S106 funding suggestions:")
+                    for sug in s106:
+                        route_lines.append(f"  - {sug.get('suggestion', '')}")
 
             route_evidence_text = "\n".join(route_lines)
 
@@ -1594,10 +1590,9 @@ class AgentOrchestrator:
         """
         Build a condensed route evidence summary for the structure call.
 
-        Per destination includes both shortest and safest routes with:
-        distance, LTN 1/20 score and rating, provision breakdown as
-        percentages, parallel detection upgrade count, issue counts by
-        severity, and top 5 highest-severity issues.
+        Per destination: distance, LTN 1/20 score and rating, provision
+        breakdown as percentages, parallel detection upgrade count, issue
+        counts by severity, and top 5 highest-severity issues.
         """
         if not self._route_assessments:
             return "No cycling route assessments were performed."
@@ -1609,73 +1604,69 @@ class AgentOrchestrator:
 
             summary_lines.append(f"### Route to {dest}")
 
-            routes_to_show = []
+            # Flat structure: assessment data at top level (safest route)
+            distance = ra.get("distance_m", 0)
+            score = ra.get("score", {})
+            rating = score.get("rating", "unknown")
+            score_val = score.get("score", 0)
+            issues = ra.get("issues", [])
+            shortest_dist = ra.get("shortest_route_distance_m")
+
             if same_route:
-                route_data = ra.get("shortest_route", ra)
-                routes_to_show.append(("Shortest & safest (same route)", route_data))
+                summary_lines.append("**Shortest & safest (same route):**")
             else:
-                routes_to_show.append(("Shortest route", ra.get("shortest_route", {})))
-                routes_to_show.append(("Safest route", ra.get("safest_route", {})))
+                summary_lines.append(f"**Shortest route:** {shortest_dist}m (not assessed)")
+                summary_lines.append("**Safest route:**")
 
-            for label, route_data in routes_to_show:
-                distance = route_data.get("distance_m", 0)
-                score = route_data.get("score", {})
-                rating = score.get("rating", "unknown")
-                score_val = score.get("score", 0)
-                issues = route_data.get("issues", [])
+            summary_lines.append(f"- Distance: {distance}m, LTN 1/20 score: {score_val}/100 ({rating})")
 
-                summary_lines.append(f"**{label}:**")
-                summary_lines.append(f"- Distance: {distance}m, LTN 1/20 score: {score_val}/100 ({rating})")
+            # Provision breakdown as percentages
+            provision = ra.get("provision_breakdown", {})
+            if provision:
+                total = sum(provision.values())
+                if total > 0:
+                    prov_parts = [
+                        f"{k}: {v / total * 100:.0f}%"
+                        for k, v in provision.items() if v > 0
+                    ]
+                    if prov_parts:
+                        summary_lines.append(f"- Provision: {', '.join(prov_parts)}")
 
-                # Provision breakdown as percentages
-                provision = route_data.get("provision_breakdown", {})
-                if provision:
-                    total = sum(provision.values())
-                    if total > 0:
-                        prov_parts = [
-                            f"{k}: {v / total * 100:.0f}%"
-                            for k, v in provision.items() if v > 0
-                        ]
-                        if prov_parts:
-                            summary_lines.append(f"- Provision: {', '.join(prov_parts)}")
+            # Parallel detection upgrades (now a top-level count)
+            parallel_upgrades = ra.get("parallel_upgrades", 0)
+            if parallel_upgrades:
+                summary_lines.append(f"- Parallel detection: {parallel_upgrades} segment(s) upgraded")
 
-                # Parallel detection upgrades
-                segments_data = route_data.get("segments", {})
-                features = segments_data.get("features", []) if isinstance(segments_data, dict) else segments_data
-                upgraded = sum(1 for f in features if (f.get("properties") or f).get("original_provision"))
-                if upgraded:
-                    summary_lines.append(f"- Parallel detection: {upgraded} segment(s) upgraded")
+            # Transition statistics
+            transitions = ra.get("transitions", {})
+            if transitions and not transitions.get("unavailable"):
+                barrier_count = len(transitions.get("barriers", []))
+                crossing_count = len(transitions.get("non_priority_crossings", []))
+                side_change_count = len(transitions.get("side_changes", []))
+                summary_lines.append(
+                    f"- Transitions: {barrier_count} barriers, "
+                    f"{crossing_count} non-priority crossings, "
+                    f"{side_change_count} side changes"
+                )
 
-                # Transition statistics
-                transitions = route_data.get("transitions", {})
-                if transitions and not transitions.get("unavailable"):
-                    barrier_count = len(transitions.get("barriers", []))
-                    crossing_count = len(transitions.get("non_priority_crossings", []))
-                    side_change_count = len(transitions.get("side_changes", []))
+            # Issue counts by severity
+            severity_order = {"high": 0, "medium": 1, "low": 2}
+            high_count = sum(1 for i in issues if i.get("severity") == "high")
+            med_count = sum(1 for i in issues if i.get("severity") == "medium")
+            low_count = sum(1 for i in issues if i.get("severity") == "low")
+            summary_lines.append(f"- Issues: {high_count} high, {med_count} medium, {low_count} low")
+
+            # Top 5 highest-severity issues
+            if issues:
+                sorted_issues = sorted(
+                    issues,
+                    key=lambda i: severity_order.get(i.get("severity", "low"), 3),
+                )
+                top_issues = sorted_issues[:5]
+                for issue in top_issues:
                     summary_lines.append(
-                        f"- Transitions: {barrier_count} barriers, "
-                        f"{crossing_count} non-priority crossings, "
-                        f"{side_change_count} side changes"
+                        f"  - [{issue.get('severity', 'unknown')}] {issue.get('problem', '')}"
                     )
-
-                # Issue counts by severity
-                severity_order = {"high": 0, "medium": 1, "low": 2}
-                high_count = sum(1 for i in issues if i.get("severity") == "high")
-                med_count = sum(1 for i in issues if i.get("severity") == "medium")
-                low_count = sum(1 for i in issues if i.get("severity") == "low")
-                summary_lines.append(f"- Issues: {high_count} high, {med_count} medium, {low_count} low")
-
-                # Top 5 highest-severity issues
-                if issues:
-                    sorted_issues = sorted(
-                        issues,
-                        key=lambda i: severity_order.get(i.get("severity", "low"), 3),
-                    )
-                    top_issues = sorted_issues[:5]
-                    for issue in top_issues:
-                        summary_lines.append(
-                            f"  - [{issue.get('severity', 'unknown')}] {issue.get('problem', '')}"
-                        )
 
         return "\n".join(summary_lines)
 
@@ -1855,6 +1846,8 @@ class AgentOrchestrator:
                 ]
 
                 # Build route_narrative deterministically from MCP data
+                # Flat structure: assessment at top level (safest route),
+                # shortest_route_distance_m for reference
                 route_narrative = None
                 if self._route_assessments:
                     route_narrative = {
@@ -1862,14 +1855,14 @@ class AgentOrchestrator:
                             {
                                 "destination_name": ra.get("destination", "Unknown"),
                                 "shortest_route_summary": {
-                                    "distance_m": ra["shortest_route"]["distance_m"],
-                                    "ltn_score": ra["shortest_route"]["score"]["score"],
-                                    "rating": ra["shortest_route"]["score"]["rating"],
+                                    "distance_m": ra.get("shortest_route_distance_m", ra.get("distance_m", 0)),
+                                    "ltn_score": ra.get("score", {}).get("score", 0) if ra.get("same_route", True) else None,
+                                    "rating": ra.get("score", {}).get("rating") if ra.get("same_route", True) else None,
                                 },
                                 "safest_route_summary": {
-                                    "distance_m": ra["safest_route"]["distance_m"],
-                                    "ltn_score": ra["safest_route"]["score"]["score"],
-                                    "rating": ra["safest_route"]["score"]["rating"],
+                                    "distance_m": ra.get("distance_m", 0),
+                                    "ltn_score": ra.get("score", {}).get("score", 0),
+                                    "rating": ra.get("score", {}).get("rating"),
                                 },
                                 "same_route": ra.get("same_route", True),
                             }
