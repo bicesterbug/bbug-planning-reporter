@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-02-21 | [route-assessment-refinement](route-assessment-refinement/) | [spec](route-assessment-refinement/specification.md) | — | Draft | Enhancement |
 | 2026-02-20 | [overpass-resilience](overpass-resilience/) | [spec](overpass-resilience/specification.md) | [design](overpass-resilience/design.md) | Implemented | Bugfix |
 | 2026-02-20 | [valhalla-routing-engine](valhalla-routing-engine/) | [spec](valhalla-routing-engine/specification.md) | [design](valhalla-routing-engine/design.md) | Implemented | Enhancement |
 | 2026-02-19 | [deterministic-route-narrative](deterministic-route-narrative/) | [spec](deterministic-route-narrative/specification.md) | [design](deterministic-route-narrative/design.md) | Design Complete | Bugfix |
