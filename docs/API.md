@@ -421,15 +421,15 @@ Returns the full review, including results when completed.
           "destination_name": "Bicester North Station",
           "shortest_route_summary": {
             "distance_m": 2200,
-            "ltn_score": 35,
-            "rating": "red"
+            "ltn_score": null,
+            "rating": null
           },
           "safest_route_summary": {
             "distance_m": 2800,
             "ltn_score": 62,
             "rating": "amber"
           },
-          "narrative": "The shortest route to Bicester North Station is 2200m via Gavray Drive and the A4095 but scores only 35/100 due to the absence of cycling provision on the A-road section. The safest route is 600m longer at 2800m, routing via Buckingham Road where a shared-use path provides some protection, achieving 62/100. Two barriers (bollards) and one non-priority crossing were identified on the safest route. The significant score gap between routes highlights the need for S106-funded improvements along the A4095 corridor to provide a direct, safe connection to the station.",
+          "narrative": "The safest route to Bicester North Station is 2800m, routing via Buckingham Road where a shared-use path provides some protection, achieving 62/100 against LTN 1/20 criteria. The shortest route is 600m shorter at 2200m but was not separately assessed. Two barriers (bollards) and one non-priority crossing were identified. The route scoring highlights the need for S106-funded improvements to provide a direct, safe connection to the station.",
           "same_route": false
         }
       ]
@@ -1032,6 +1032,259 @@ When S3 is configured:
 curl http://localhost:8080/api/v1/files/25_01178_REM/output/rev_01JMABCDEF1234567890AB_review.json \
   -H "Authorization: Bearer sk-cycle-dev-key-1"
 ```
+
+---
+
+### Output File Formats
+
+Each completed review produces three output files, accessible via the `urls` object in the review response or via the `/api/v1/files/` endpoint (local storage only).
+
+| File | URL Key | Description |
+|------|---------|-------------|
+| `{review_id}_review.json` | `urls.review_json` | Structured review data (same shape as the API response `review` + `application` + `metadata` fields) |
+| `{review_id}_review.md` | `urls.review_md` | The `full_markdown` field extracted as a standalone Markdown file |
+| `{review_id}_routes.json` | `urls.routes_json` | Cycle route assessments (one entry per destination) |
+
+Files are stored at: `{application_ref}/output/{filename}` where slashes in the reference are replaced with underscores (e.g. `25_01178_REM/output/rev_xxx_routes.json`).
+
+#### Routes JSON (`_routes.json`)
+
+A JSON array of route assessment objects. Each object represents the cycling route analysis for one destination. The assessment analyses the **safest bicycle route** (via Valhalla) and records the **shortest bicycle route** distance for directness comparison.
+
+```json
+[
+  {
+    "status": "success",
+    "destination": "Bicester North Station",
+    "destination_id": "dest_001",
+
+    "distance_m": 6937,
+    "duration_minutes": 23.1,
+
+    "provision_breakdown": {
+      "segregated": 2180,
+      "shared_use": 2865,
+      "none": 18445
+    },
+
+    "route_geojson": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [[-1.1536, 51.8984], ["..."]]
+          },
+          "properties": {
+            "distance_m": 6937,
+            "duration_minutes": 23.1
+          }
+        }
+      ]
+    },
+
+    "crossings_geojson": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "Point", "coordinates": [-1.152, 51.893] },
+          "properties": {
+            "road_name": "Buckingham Road",
+            "road_speed_limit": 30
+          }
+        }
+      ]
+    },
+
+    "barriers_geojson": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "Point", "coordinates": [-1.148, 51.895] },
+          "properties": {
+            "barrier_type": "cycle_barrier",
+            "node_id": 12345678
+          }
+        }
+      ]
+    },
+
+    "segments_geojson": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [[-1.152, 51.893], [-1.150, 51.895]]
+          },
+          "properties": {
+            "provision": "segregated",
+            "speed_limit": 0,
+            "surface": "asphalt",
+            "lit": true,
+            "highway": "cycleway",
+            "distance_m": 1250.3,
+            "names": ["NCN Route 51"],
+            "way_ids": [100234, 100235, 100236],
+            "score_factors": {
+              "segregation": 1.0,
+              "speed_safety": null,
+              "surface_quality": 1.0,
+              "hostile_junction": false
+            }
+          }
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [[-1.150, 51.895], [-1.148, 51.897]]
+          },
+          "properties": {
+            "provision": "none",
+            "speed_limit": 30,
+            "surface": "asphalt",
+            "lit": true,
+            "highway": "secondary",
+            "distance_m": 487.0,
+            "names": ["Buckingham Road"],
+            "way_ids": [200567],
+            "score_factors": {
+              "segregation": 0.0,
+              "speed_safety": 0.6,
+              "surface_quality": 1.0,
+              "hostile_junction": true
+            }
+          }
+        }
+      ]
+    },
+
+    "score": {
+      "score": 36,
+      "rating": "red",
+      "breakdown": {
+        "segregation": 5,
+        "speed_safety": 12,
+        "surface_quality": 8,
+        "directness": 4,
+        "junction_safety": 3,
+        "transition_quality": 4
+      },
+      "max_points": {
+        "segregation": 36,
+        "speed_safety": 23,
+        "surface_quality": 13,
+        "directness": 9,
+        "junction_safety": 9,
+        "transition_quality": 10
+      }
+    },
+
+    "issues": [
+      {
+        "location": "Banbury Road (6237m)",
+        "problem": "No cycling provision on busy A-road",
+        "severity": "high",
+        "suggested_improvement": "Segregated cycleway per LTN 1/20 Table 4-1"
+      }
+    ],
+
+    "s106_suggestions": [
+      {
+        "issue_location": "Banbury Road (6237m)",
+        "improvement": "Segregated cycle track along Banbury Road",
+        "justification": "Cherwell LP Policy SLE4, NPPF para 112",
+        "severity": "high"
+      }
+    ],
+
+    "transitions": {
+      "barriers": [
+        { "type": "cycle_barrier", "node_id": 12345678, "lat": 51.895, "lon": -1.148 }
+      ],
+      "non_priority_crossings": [
+        { "road_name": "Buckingham Road", "road_speed_limit": 30, "lat": 51.893, "lon": -1.152 }
+      ],
+      "side_changes": [
+        { "road_name": "Gavray Drive" }
+      ],
+      "directness_differential": null,
+      "barrier_count": 1,
+      "non_priority_crossing_count": 1,
+      "side_change_count": 1
+    },
+
+    "parallel_upgrades": 0,
+
+    "shortest_route_distance_m": 6937,
+    "shortest_route_geometry": [[-1.1536, 51.8984], ["..."]],
+    "same_route": true
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `"success"` or `"error"` |
+| `destination` | string | Destination name |
+| `destination_id` | string | Destination ID from `/api/v1/destinations` |
+| `distance_m` | number | Safest route distance in metres |
+| `duration_minutes` | number | Estimated cycling time |
+| `provision_breakdown` | object | Metres of each infrastructure type (keys vary per route) |
+| `route_geojson` | FeatureCollection | Route LineString geometry (safest route) |
+| `crossings_geojson` | FeatureCollection | Non-priority crossing Point features |
+| `barriers_geojson` | FeatureCollection | Physical barrier Point features (bollards, gates, stiles, cycle barriers) |
+| `segments_geojson` | FeatureCollection | Aggregated route segments as LineString features with per-segment LTN 1/20 score factors (see below) |
+| `score` | object | LTN 1/20 composite score with category breakdown |
+| `score.score` | number | Overall score 0--100 |
+| `score.rating` | string | `"red"` (&lt;50), `"amber"` (50--69), `"green"` (&ge;70) |
+| `score.breakdown` | object | Points scored per LTN 1/20 category |
+| `score.max_points` | object | Maximum available points per category (varies by route length and features) |
+| `issues` | array | Infrastructure problems found along the route |
+| `s106_suggestions` | array | Developer contribution suggestions linked to issues |
+| `transitions` | object | Route transition analysis (barriers, crossings, side changes) |
+| `parallel_upgrades` | number | Count of road segments where adjacent cycleway was detected |
+| `shortest_route_distance_m` | number | Distance of the shortest bicycle route (for directness comparison) |
+| `shortest_route_geometry` | array | Coordinates of the shortest route `[[lon, lat], ...]` |
+| `same_route` | boolean | `true` if safest and shortest routes are within 1% distance |
+
+**Provision types:** `segregated`, `shared_use`, `on_road_lane`, `advisory_lane`, `none`. Keys are only present when the route includes that type.
+
+**GeoJSON coordinates** use WGS84 `[longitude, latitude]` format throughout.
+
+**`segments_geojson` Feature properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `provision` | string | Cycling infrastructure type (`segregated`, `shared_use`, `on_road_lane`, `advisory_lane`, `none`) |
+| `speed_limit` | number | Speed limit in mph (0 for off-road) |
+| `surface` | string | Surface type (e.g. `asphalt`, `gravel`, `unknown`) |
+| `lit` | boolean/null | Whether the segment is lit |
+| `highway` | string | OSM highway classification |
+| `distance_m` | number | Segment length in metres |
+| `names` | array | Unique road names in this segment (empty array if unnamed) |
+| `way_ids` | array | OSM way IDs covered by this segment |
+| `original_provision` | string | Present only when provision was upgraded by parallel cycleway detection; shows the original provision value |
+| `score_factors` | object | LTN 1/20 quality factors for client-side colour coding |
+| `score_factors.segregation` | number | 0.0--1.0: provision quality (segregated=1.0, shared_use=0.7, on_road_lane=0.4, else=0.0) |
+| `score_factors.speed_safety` | number/null | 0.0--1.0: speed environment safety. `null` for segregated/shared_use/on_road_lane. For unsegregated: &le;20mph=1.0, &le;30mph=0.6, &le;40mph=0.2, &gt;40mph=0.0 |
+| `score_factors.surface_quality` | number | 0.0--1.0: surface condition (good=1.0, fair=0.6, unknown=0.5, poor=0.2) |
+| `score_factors.hostile_junction` | boolean | `true` when no provision on a primary/secondary/trunk/tertiary road at &ge;30mph |
+
+Consecutive segments with identical `provision`, `speed_limit`, `surface`, `lit`, `highway`, and `original_provision` are merged into a single Feature with concatenated geometry. This reduces the number of features while preserving all infrastructure detail needed for colour-coded map rendering.
+
+#### Review JSON (`_review.json`)
+
+The review JSON file contains the same data structure as the API response for a completed review. Route assessments are **not** included in this file -- they are stored separately in the routes JSON. The structure matches the `GET /api/v1/reviews/{id}` response with `review`, `application`, `metadata`, and `output_urls` fields.
+
+#### Review Markdown (`_review.md`)
+
+The `full_markdown` field extracted as a standalone file. This is the human-readable review report formatted as Markdown.
 
 ---
 

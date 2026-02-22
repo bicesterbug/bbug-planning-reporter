@@ -32,6 +32,7 @@ from starlette.applications import Starlette
 
 from src.mcp_servers.cycle_route.geojson import parse_arcgis_response
 from src.mcp_servers.cycle_route.infrastructure import (
+    aggregate_segments_to_geojson,
     analyse_transitions,
     barriers_to_geojson,
     build_overpass_query,
@@ -264,6 +265,7 @@ class CycleRouteMCP:
         )
         route_issues = identify_issues(segments)
         s106 = generate_s106_suggestions(route_issues)
+        segments_geojson = aggregate_segments_to_geojson(segments)
 
         return {
             "distance_m": round(cycling_distance_m),
@@ -272,6 +274,7 @@ class CycleRouteMCP:
             "route_geojson": route_to_geojson(route_coords, cycling_distance_m, cycling_duration_s),
             "crossings_geojson": crossings_to_geojson(transitions.get("non_priority_crossings", [])),
             "barriers_geojson": barriers_to_geojson(transitions.get("barriers", [])),
+            "segments_geojson": segments_geojson,
             "score": route_score,
             "issues": route_issues,
             "s106_suggestions": s106,
@@ -395,6 +398,7 @@ class CycleRouteMCP:
                 "route_geojson": route_to_geojson(coords, dist, dur),
                 "crossings_geojson": {"type": "FeatureCollection", "features": []},
                 "barriers_geojson": {"type": "FeatureCollection", "features": []},
+                "segments_geojson": {"type": "FeatureCollection", "features": []},
                 "score": {"score": 0, "rating": "red", "breakdown": {}},
                 "issues": [],
                 "s106_suggestions": [],

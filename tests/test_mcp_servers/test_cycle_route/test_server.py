@@ -495,6 +495,81 @@ class TestAssessCycleRoute:
         assert result["destination"] == "Destination"
 
     @pytest.mark.anyio
+    async def test_assessment_includes_segments_geojson(self):
+        """Assessment includes segments_geojson FeatureCollection."""
+        transport = _make_valhalla_handler()
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.1534,
+            "origin_lat": 51.8997,
+            "destination_lon": -1.1450,
+            "destination_lat": 51.9050,
+            "destination_name": "Bicester North",
+        })
+
+        assert result["status"] == "success"
+        sg = result["segments_geojson"]
+        assert sg["type"] == "FeatureCollection"
+        assert len(sg["features"]) > 0
+        for f in sg["features"]:
+            props = f["properties"]
+            assert "provision" in props
+            assert "score_factors" in props
+            assert "way_ids" in props
+            assert "names" in props
+
+    @pytest.mark.anyio
+    async def test_empty_assessment_includes_segments_geojson(self):
+        """Empty assessment stub includes empty segments_geojson."""
+        overpass_data = {"elements": []}
+        transport = _make_valhalla_handler(overpass_response=overpass_data)
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.15,
+            "origin_lat": 51.9,
+            "destination_lon": -1.14,
+            "destination_lat": 51.91,
+        })
+
+        assert result["status"] == "success"
+        sg = result["segments_geojson"]
+        assert sg == {"type": "FeatureCollection", "features": []}
+
+    @pytest.mark.anyio
+    async def test_existing_fields_unchanged_with_segments(self):
+        """Adding segments_geojson does not change existing fields."""
+        transport = _make_valhalla_handler()
+        client = httpx.AsyncClient(transport=transport)
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._assess_cycle_route({
+            "origin_lon": -1.1534,
+            "origin_lat": 51.8997,
+            "destination_lon": -1.1450,
+            "destination_lat": 51.9050,
+        })
+
+        assert result["status"] == "success"
+        # All existing fields still present
+        assert "distance_m" in result
+        assert "score" in result
+        assert "provision_breakdown" in result
+        assert "issues" in result
+        assert "s106_suggestions" in result
+        assert "route_geojson" in result
+        assert "crossings_geojson" in result
+        assert "barriers_geojson" in result
+        assert "transitions" in result
+        assert "parallel_upgrades" in result
+        assert "same_route" in result
+        assert "shortest_route_distance_m" in result
+        assert "shortest_route_geometry" in result
+
+    @pytest.mark.anyio
     async def test_assessment_includes_transitions(self):
         """Assessment includes transitions data at top level."""
         barrier_node = {

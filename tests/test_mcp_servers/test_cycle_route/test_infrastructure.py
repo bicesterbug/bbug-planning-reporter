@@ -23,6 +23,7 @@ from src.mcp_servers.cycle_route.infrastructure import (
     OVERPASS_FALLBACK_URL,
     RouteSegment,
     _way_length_m,
+    aggregate_segments_to_geojson,
     analyse_transitions,
     barriers_to_geojson,
     bearing_difference,
@@ -1062,6 +1063,203 @@ class TestAnalyseTransitions:
         crossing = result["non_priority_crossings"][0]
         assert crossing["lat"] == 51.92
         assert crossing["lon"] == -1.14
+
+
+# =============================================================================
+# aggregate_segments_to_geojson
+# =============================================================================
+
+
+def _make_seg(
+    way_id: int = 1,
+    provision: str = "none",
+    highway: str = "residential",
+    speed_limit: int = 30,
+    surface: str = "asphalt",
+    lit: bool | None = True,
+    distance_m: float = 500,
+    name: str = "Test Road",
+    original_provision: str | None = None,
+    geometry: list[list[float]] | None = None,
+) -> RouteSegment:
+    """Create a RouteSegment with defaults for aggregation testing."""
+    return RouteSegment(
+        way_id=way_id,
+        provision=provision,
+        highway=highway,
+        speed_limit=speed_limit,
+        surface=surface,
+        lit=lit,
+        distance_m=distance_m,
+        name=name,
+        original_provision=original_provision,
+        geometry=geometry,
+    )
+
+
+class TestAggregateSegmentsToGeoJson:
+    """Tests for consecutive segment aggregation into GeoJSON."""
+
+    def test_single_segment_produces_single_feature(self):
+        """Single segment with geometry produces a FeatureCollection with 1 Feature."""
+        segments = [_make_seg(geometry=[[-1.15, 51.9], [-1.14, 51.91]])]
+        result = aggregate_segments_to_geojson(segments)
+        assert result["type"] == "FeatureCollection"
+        assert len(result["features"]) == 1
+        f = result["features"][0]
+        assert f["geometry"]["type"] == "LineString"
+        assert f["properties"]["provision"] == "none"
+        assert f["properties"]["speed_limit"] == 30
+        assert f["properties"]["surface"] == "asphalt"
+        assert f["properties"]["lit"] is True
+        assert f["properties"]["distance_m"] == 500
+        assert f["properties"]["names"] == ["Test Road"]
+        assert f["properties"]["way_ids"] == [1]
+        assert "score_factors" in f["properties"]
+
+    def test_consecutive_identical_segments_merged(self):
+        """Two consecutive segments with same properties are merged."""
+        segments = [
+            _make_seg(way_id=1, name="High Street", distance_m=300,
+                      geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            _make_seg(way_id=2, name="High Street", distance_m=200,
+                      geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert len(result["features"]) == 1
+        f = result["features"][0]
+        assert f["properties"]["distance_m"] == 500
+        assert f["properties"]["way_ids"] == [1, 2]
+        # Geometry coordinates concatenated
+        assert len(f["geometry"]["coordinates"]) == 4
+        assert f["properties"]["names"] == ["High Street"]
+
+    def test_different_segments_stay_separate(self):
+        """Segments [segregated, segregated, none] produce 2 Features."""
+        segments = [
+            _make_seg(way_id=1, provision="segregated", highway="cycleway",
+                      speed_limit=0, geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            _make_seg(way_id=2, provision="segregated", highway="cycleway",
+                      speed_limit=0, geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+            _make_seg(way_id=3, provision="none", highway="residential",
+                      geometry=[[-1.13, 51.92], [-1.12, 51.93]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert len(result["features"]) == 2
+        assert result["features"][0]["properties"]["provision"] == "segregated"
+        assert result["features"][0]["properties"]["way_ids"] == [1, 2]
+        assert result["features"][1]["properties"]["provision"] == "none"
+        assert result["features"][1]["properties"]["way_ids"] == [3]
+
+    def test_non_adjacent_identical_not_merged(self):
+        """Identical segments separated by a different one are not merged."""
+        segments = [
+            _make_seg(way_id=1, provision="segregated", highway="cycleway",
+                      speed_limit=0, geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            _make_seg(way_id=2, provision="none", highway="residential",
+                      geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+            _make_seg(way_id=3, provision="segregated", highway="cycleway",
+                      speed_limit=0, geometry=[[-1.13, 51.92], [-1.12, 51.93]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert len(result["features"]) == 3
+
+    def test_names_deduplicated_empty_excluded(self):
+        """Duplicate names are deduplicated; empty names excluded."""
+        segments = [
+            _make_seg(way_id=1, name="High Street", distance_m=300,
+                      geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            _make_seg(way_id=2, name="High Street", distance_m=200,
+                      geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+            _make_seg(way_id=3, name="", distance_m=100,
+                      geometry=[[-1.13, 51.92], [-1.12, 51.93]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        # All same key (same provision/speed/surface/lit/highway/original_provision)
+        assert len(result["features"]) == 1
+        assert result["features"][0]["properties"]["names"] == ["High Street"]
+
+    def test_segment_without_geometry_excluded_from_coords(self):
+        """Segment without geometry contributes to distance but not coordinates."""
+        segments = [
+            _make_seg(way_id=1, distance_m=300, geometry=None),
+            _make_seg(way_id=2, distance_m=200,
+                      geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert len(result["features"]) == 1
+        f = result["features"][0]
+        assert f["properties"]["distance_m"] == 500
+        assert f["properties"]["way_ids"] == [1, 2]
+        # Only segment 2's coordinates
+        assert len(f["geometry"]["coordinates"]) == 2
+
+    def test_original_provision_included_when_set(self):
+        """Feature properties include original_provision when not None."""
+        segments = [
+            _make_seg(way_id=1, provision="segregated",
+                      original_provision="none",
+                      geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert result["features"][0]["properties"]["original_provision"] == "none"
+
+    def test_different_original_provision_prevents_merge(self):
+        """Different original_provision values prevent merging."""
+        segments = [
+            _make_seg(way_id=1, provision="segregated",
+                      original_provision="none",
+                      geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            _make_seg(way_id=2, provision="segregated",
+                      original_provision=None,
+                      geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert len(result["features"]) == 2
+
+    def test_different_highway_prevents_merge(self):
+        """Different highway values prevent merging."""
+        segments = [
+            _make_seg(way_id=1, highway="primary",
+                      geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            _make_seg(way_id=2, highway="secondary",
+                      geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert len(result["features"]) == 2
+
+    def test_empty_segments_list(self):
+        """Empty segments list returns empty FeatureCollection."""
+        result = aggregate_segments_to_geojson([])
+        assert result == {"type": "FeatureCollection", "features": []}
+
+    def test_score_factors_attached(self):
+        """Score factors are attached to each Feature."""
+        segments = [
+            _make_seg(way_id=1, provision="segregated", highway="cycleway",
+                      speed_limit=0, surface="asphalt",
+                      geometry=[[-1.15, 51.9], [-1.14, 51.91]]),
+            _make_seg(way_id=2, provision="none", highway="primary",
+                      speed_limit=30, surface="asphalt",
+                      geometry=[[-1.14, 51.91], [-1.13, 51.92]]),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert len(result["features"]) == 2
+        f1 = result["features"][0]["properties"]["score_factors"]
+        assert f1["segregation"] == 1.0
+        assert f1["speed_safety"] is None
+        f2 = result["features"][1]["properties"]["score_factors"]
+        assert f2["hostile_junction"] is True
+        assert f2["segregation"] == 0.0
+
+    def test_all_segments_lack_geometry(self):
+        """All segments without geometry returns empty FeatureCollection."""
+        segments = [
+            _make_seg(way_id=1, geometry=None),
+            _make_seg(way_id=2, geometry=None),
+        ]
+        result = aggregate_segments_to_geojson(segments)
+        assert result == {"type": "FeatureCollection", "features": []}
 
 
 # =============================================================================

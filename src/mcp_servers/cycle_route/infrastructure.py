@@ -320,6 +320,82 @@ def segments_to_feature_collection(segments: list[RouteSegment]) -> dict[str, An
     }
 
 
+def aggregate_segments_to_geojson(segments: list[RouteSegment]) -> dict[str, Any]:
+    """
+    Merge consecutive segments with matching infrastructure properties into
+    aggregated GeoJSON Features with LTN 1/20 score factors.
+
+    Aggregation key: (provision, speed_limit, surface, lit, original_provision, highway).
+    Only consecutive segments with identical keys are merged.
+    """
+    from src.mcp_servers.cycle_route.scoring import compute_segment_score_factors
+
+    if not segments:
+        return {"type": "FeatureCollection", "features": []}
+
+    def _key(seg: RouteSegment) -> tuple:
+        return (seg.provision, seg.speed_limit, seg.surface, seg.lit,
+                seg.original_provision, seg.highway)
+
+    # Group consecutive segments by key
+    groups: list[list[RouteSegment]] = []
+    current_group: list[RouteSegment] = [segments[0]]
+    for seg in segments[1:]:
+        if _key(seg) == _key(current_group[0]):
+            current_group.append(seg)
+        else:
+            groups.append(current_group)
+            current_group = [seg]
+    groups.append(current_group)
+
+    features = []
+    for group in groups:
+        # Concatenate geometry coordinates
+        coords: list[list[float]] = []
+        for seg in group:
+            if seg.geometry is not None:
+                coords.extend(seg.geometry)
+
+        if not coords:
+            continue
+
+        # Collect unique non-empty names preserving first-seen order
+        names: list[str] = []
+        seen_names: set[str] = set()
+        for seg in group:
+            if seg.name and seg.name not in seen_names:
+                names.append(seg.name)
+                seen_names.add(seg.name)
+
+        way_ids = [seg.way_id for seg in group]
+        total_distance = round(sum(seg.distance_m for seg in group), 1)
+
+        ref = group[0]
+        properties: dict[str, Any] = {
+            "provision": ref.provision,
+            "speed_limit": ref.speed_limit,
+            "surface": ref.surface,
+            "lit": ref.lit,
+            "highway": ref.highway,
+            "distance_m": total_distance,
+            "names": names,
+            "way_ids": way_ids,
+            "score_factors": compute_segment_score_factors(
+                ref.provision, ref.speed_limit, ref.surface, ref.highway,
+            ),
+        }
+        if ref.original_provision is not None:
+            properties["original_provision"] = ref.original_provision
+
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": properties,
+        })
+
+    return {"type": "FeatureCollection", "features": features}
+
+
 def summarise_provision(segments: list[RouteSegment]) -> dict[str, float]:
     """
     Summarise the provision breakdown as distance (metres) per type.

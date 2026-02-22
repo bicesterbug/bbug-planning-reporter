@@ -50,6 +50,61 @@ FAIR_SURFACES = {"compacted", "fine_gravel"}
 # Everything else (gravel, unpaved, dirt, grass, unknown) is poor
 
 
+def compute_segment_score_factors(
+    provision: str,
+    speed_limit: int,
+    surface: str,
+    highway: str,
+) -> dict[str, Any]:
+    """
+    Compute LTN 1/20 quality factors for a single segment.
+
+    Returns dict with segregation (float), speed_safety (float or None),
+    surface_quality (float), and hostile_junction (bool).
+    """
+    # Segregation factor
+    seg_map = {"segregated": 1.0, "shared_use": 0.7, "on_road_lane": 0.4}
+    segregation = seg_map.get(provision, 0.0)
+
+    # Speed safety: only meaningful for unsegregated segments
+    if provision in ("none", "advisory_lane"):
+        if speed_limit <= SPEED_NO_PENALTY:
+            speed_safety: float | None = 1.0
+        elif speed_limit <= SPEED_LOW_PENALTY:
+            speed_safety = 0.6
+        elif speed_limit <= SPEED_HIGH_PENALTY:
+            speed_safety = 0.2
+        else:
+            speed_safety = 0.0
+    else:
+        speed_safety = None
+
+    # Surface quality
+    surface_lower = surface.lower()
+    if surface_lower in GOOD_SURFACES:
+        surface_quality = 1.0
+    elif surface_lower in FAIR_SURFACES:
+        surface_quality = 0.6
+    elif surface_lower == "unknown":
+        surface_quality = 0.5
+    else:
+        surface_quality = 0.2
+
+    # Hostile junction
+    hostile_junction = (
+        provision == "none"
+        and highway in ("primary", "secondary", "trunk", "tertiary")
+        and speed_limit >= 30
+    )
+
+    return {
+        "segregation": segregation,
+        "speed_safety": speed_safety,
+        "surface_quality": surface_quality,
+        "hostile_junction": hostile_junction,
+    }
+
+
 def _score_segregation(segments: list[RouteSegment]) -> float:
     """Score based on proportion of route on segregated or shared-use infrastructure."""
     total_distance = sum(s.distance_m for s in segments)

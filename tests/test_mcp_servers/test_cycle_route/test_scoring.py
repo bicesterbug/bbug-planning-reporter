@@ -25,6 +25,7 @@ from src.mcp_servers.cycle_route.scoring import (
     MAX_SURFACE_POINTS,
     MAX_TRANSITION_POINTS,
     _score_transitions,
+    compute_segment_score_factors,
     score_route,
 )
 
@@ -308,6 +309,100 @@ class TestScoreTransitions:
             barriers=barriers, crossings=crossings, side_changes=side_changes,
         )
         assert _score_transitions(transitions) == 4.0  # 10 - 6
+
+
+class TestComputeSegmentScoreFactors:
+    """Tests for per-segment LTN 1/20 quality factors."""
+
+    def test_segregated_cycleway(self):
+        """Segregated cycleway: full segregation, no speed relevance, good surface."""
+        result = compute_segment_score_factors("segregated", 0, "asphalt", "cycleway")
+        assert result == {
+            "segregation": 1.0,
+            "speed_safety": None,
+            "surface_quality": 1.0,
+            "hostile_junction": False,
+        }
+
+    def test_shared_use_path_compacted(self):
+        """Shared-use path with compacted surface: 0.7 segregation, fair surface."""
+        result = compute_segment_score_factors("shared_use", 0, "compacted", "path")
+        assert result == {
+            "segregation": 0.7,
+            "speed_safety": None,
+            "surface_quality": 0.6,
+            "hostile_junction": False,
+        }
+
+    def test_on_road_lane(self):
+        """On-road lane: 0.4 segregation, no speed relevance."""
+        result = compute_segment_score_factors("on_road_lane", 30, "asphalt", "secondary")
+        assert result == {
+            "segregation": 0.4,
+            "speed_safety": None,
+            "surface_quality": 1.0,
+            "hostile_junction": False,
+        }
+
+    def test_no_provision_20mph_residential(self):
+        """No provision on 20mph residential: full speed safety, not hostile."""
+        result = compute_segment_score_factors("none", 20, "asphalt", "residential")
+        assert result == {
+            "segregation": 0.0,
+            "speed_safety": 1.0,
+            "surface_quality": 1.0,
+            "hostile_junction": False,
+        }
+
+    def test_no_provision_30mph_primary_hostile(self):
+        """No provision on 30mph primary: hostile junction, 0.6 speed safety."""
+        result = compute_segment_score_factors("none", 30, "asphalt", "primary")
+        assert result == {
+            "segregation": 0.0,
+            "speed_safety": 0.6,
+            "surface_quality": 1.0,
+            "hostile_junction": True,
+        }
+
+    def test_no_provision_40mph_trunk_unknown_surface(self):
+        """No provision on 40mph trunk with unknown surface."""
+        result = compute_segment_score_factors("none", 40, "unknown", "trunk")
+        assert result == {
+            "segregation": 0.0,
+            "speed_safety": 0.2,
+            "surface_quality": 0.5,
+            "hostile_junction": True,
+        }
+
+    def test_no_provision_above_40mph(self):
+        """No provision above 40mph: zero speed safety."""
+        result = compute_segment_score_factors("none", 60, "asphalt", "primary")
+        assert result == {
+            "segregation": 0.0,
+            "speed_safety": 0.0,
+            "surface_quality": 1.0,
+            "hostile_junction": True,
+        }
+
+    def test_advisory_lane(self):
+        """Advisory lane: speed safety applies, not hostile."""
+        result = compute_segment_score_factors("advisory_lane", 30, "asphalt", "tertiary")
+        assert result == {
+            "segregation": 0.0,
+            "speed_safety": 0.6,
+            "surface_quality": 1.0,
+            "hostile_junction": False,
+        }
+
+    def test_poor_surface(self):
+        """Segregated with gravel surface: poor surface quality."""
+        result = compute_segment_score_factors("segregated", 0, "gravel", "cycleway")
+        assert result == {
+            "segregation": 1.0,
+            "speed_safety": None,
+            "surface_quality": 0.2,
+            "hostile_junction": False,
+        }
 
 
 class TestScoreRouteWithTransitions:
