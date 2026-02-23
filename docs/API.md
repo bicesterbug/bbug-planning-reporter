@@ -429,7 +429,6 @@ Returns the full review, including results when completed.
             "ltn_score": 62,
             "rating": "amber"
           },
-          "narrative": "The safest route to Bicester North Station is 2800m, routing via Buckingham Road where a shared-use path provides some protection, achieving 62/100 against LTN 1/20 criteria. The shortest route is 600m shorter at 2200m but was not separately assessed. Two barriers (bollards) and one non-priority crossing were identified. The route scoring highlights the need for S106-funded improvements to provide a direct, safe connection to the station.",
           "same_route": false
         }
       ]

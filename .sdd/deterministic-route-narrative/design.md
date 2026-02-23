@@ -1,8 +1,8 @@
 # Design: Deterministic Route Narrative
 
-**Version:** 1.0
-**Date:** 2026-02-19
-**Status:** Draft
+**Version:** 1.1
+**Date:** 2026-02-23
+**Status:** Implemented
 **Linked Specification** `.sdd/deterministic-route-narrative/specification.md`
 
 ---
@@ -17,27 +17,26 @@
 
 The review pipeline has two sources of route data:
 
-1. **`self._route_assessments`** — A list of dicts populated during the route assessment phase by calling the cycle-route MCP tool. Each dict contains `destination`, `destination_id`, `shortest_route`, `safest_route`, and `same_route`. Each route variant has `distance_m`, `score` (with `score` and `rating` fields), and other fields.
+1. **`self._route_assessments`** — A list of dicts populated during the route assessment phase by calling the cycle-route MCP tool. Each dict has a flat structure: `destination` (str), `destination_id` (str), `distance_m` (safest route distance), `shortest_route_distance_m` (shortest route distance), `score` (dict with `score` and `rating` for the safest route), `same_route` (bool), plus geometry and issue fields.
 
-2. **`structure.route_assessment`** — An optional field on the `ReviewStructure` Pydantic model that the LLM is asked to populate during the structure call. This field contains `RouteAssessmentSection` → `RouteDestinationItem` → `RouteDestinationSummary` models.
-
-The orchestrator currently builds `route_narrative` by extracting data from source 2 (LLM output). However, the LLM consistently leaves this field null because the JSON tool schema marks it as `Optional[...] = None` — the schema's `default: null` overrides the prompt's instructions. The data needed already exists in source 1.
+The orchestrator builds `route_narrative` deterministically from this MCP data. The `route_assessment` field and its Pydantic models (`RouteAssessmentSection`, `RouteDestinationItem`, `RouteDestinationSummary`) have been removed from `ReviewStructure`. The structure prompt no longer references `route_assessment`.
 
 ### Proposed Architecture
 
-Replace the LLM-dependent extraction with a deterministic build:
+The deterministic build extracts from the flat MCP data:
 
 ```
-Route MCP → self._route_assessments → deterministic build → route_narrative dict
+Route MCP → self._route_assessments (flat dicts) → deterministic build → route_narrative dict
 ```
 
-The orchestrator builds `route_narrative` directly from `self._route_assessments` after the route assessment phase completes, before the structure call. The `route_assessment` field, its Pydantic models, and the structure prompt guidance are all removed since they are no longer needed.
+The orchestrator builds `route_narrative` directly from `self._route_assessments` after the route assessment phase completes. The `route_assessment` field, its Pydantic models, and the structure prompt guidance have all been removed.
 
 ### Technology Decisions
 
 - No new dependencies — the build is a simple dict comprehension over existing data
-- The `score.rating` field from the MCP result maps directly to the narrative's `rating` field
-- The `score.score` field maps to `ltn_score`
+- The MCP tool returns a flat structure: `score.rating` → narrative `rating`, `score.score` → narrative `ltn_score`
+- When `same_route=False`, the shortest route has only `distance_m` (no separate score); `ltn_score` and `rating` are set to None
+- When `same_route=True`, both summaries share the safest route's score values
 
 ---
 
@@ -45,7 +44,7 @@ The orchestrator builds `route_narrative` directly from `self._route_assessments
 
 ### Modified: Orchestrator review generation (`src/agent/orchestrator.py`)
 
-**Change Description:** Currently builds `route_narrative` from `structure.route_assessment` (LLM output). Must instead build it deterministically from `self._route_assessments` (MCP output). Also remove the `narrative` string field from each destination entry.
+**Change Description:** Builds `route_narrative` deterministically from `self._route_assessments` (flat MCP output). The `narrative` string field is omitted.
 
 **Dependants:** None — the `route_narrative` dict is serialised into the review JSON as-is.
 
@@ -53,7 +52,7 @@ The orchestrator builds `route_narrative` directly from `self._route_assessments
 
 **Details**
 
-Replace lines 1857-1871 (`route_narrative` extraction) with:
+Implementation at lines 1848-1871 builds from the flat MCP data structure:
 
 ```
 route_narrative = None
@@ -63,14 +62,14 @@ if self._route_assessments:
             {
                 "destination_name": ra.get("destination", "Unknown"),
                 "shortest_route_summary": {
-                    "distance_m": ra["shortest_route"]["distance_m"],
-                    "ltn_score": ra["shortest_route"]["score"]["score"],
-                    "rating": ra["shortest_route"]["score"]["rating"],
+                    "distance_m": ra.get("shortest_route_distance_m", ra.get("distance_m", 0)),
+                    "ltn_score": ra.get("score", {}).get("score", 0) if ra.get("same_route", True) else None,
+                    "rating": ra.get("score", {}).get("rating") if ra.get("same_route", True) else None,
                 },
                 "safest_route_summary": {
-                    "distance_m": ra["safest_route"]["distance_m"],
-                    "ltn_score": ra["safest_route"]["score"]["score"],
-                    "rating": ra["safest_route"]["score"]["rating"],
+                    "distance_m": ra.get("distance_m", 0),
+                    "ltn_score": ra.get("score", {}).get("score", 0),
+                    "rating": ra.get("score", {}).get("rating"),
                 },
                 "same_route": ra.get("same_route", True),
             }
@@ -79,7 +78,7 @@ if self._route_assessments:
     }
 ```
 
-This extracts from `self._route_assessments` (source 1) instead of `structure.route_assessment` (source 2). The `narrative` string field is omitted per FR-004.
+The MCP tool returns a flat dict where top-level `distance_m` and `score` are for the safest route, and `shortest_route_distance_m` is the shortest route distance. When `same_route=False`, the shortest route has no separate score — `ltn_score` and `rating` are set to None.
 
 **Requirements References**
 - [deterministic-route-narrative:FR-001]: Build route_narrative deterministically from self._route_assessments
@@ -106,7 +105,7 @@ This extracts from `self._route_assessments` (source 1) instead of `structure.ro
 
 ### Modified: Review schema (`src/agent/review_schema.py`)
 
-**Change Description:** Remove the `RouteAssessmentSection`, `RouteDestinationItem`, and `RouteDestinationSummary` Pydantic models. Remove the `route_assessment` field from `ReviewStructure`. These models were only used by the LLM structure call extraction path which is being replaced.
+**Change Description:** Removed the `RouteAssessmentSection`, `RouteDestinationItem`, and `RouteDestinationSummary` Pydantic models. Removed the `route_assessment` field from `ReviewStructure`.
 
 **Dependants:** `structure_prompt.py` (guidance removal), `orchestrator.py` (extraction removal), test files (model references)
 
@@ -114,11 +113,11 @@ This extracts from `self._route_assessments` (source 1) instead of `structure.ro
 
 **Details**
 
-Remove:
-- `RouteDestinationSummary` class (lines 100-112)
-- `RouteDestinationItem` class (lines 115-125)
-- `RouteAssessmentSection` class (lines 128-131)
-- `route_assessment: RouteAssessmentSection | None = None` from `ReviewStructure` (line 153)
+Removed:
+- `RouteDestinationSummary` class
+- `RouteDestinationItem` class
+- `RouteAssessmentSection` class
+- `route_assessment: RouteAssessmentSection | None = None` from `ReviewStructure`
 
 **Requirements References**
 - [deterministic-route-narrative:FR-002]: Remove route_assessment from ReviewStructure schema
@@ -144,7 +143,7 @@ Remove:
 
 ### Modified: Structure prompt (`src/agent/prompts/structure_prompt.py`)
 
-**Change Description:** Remove the entire `route_assessment` field guidance block. The LLM no longer needs to populate this field since route_narrative is built deterministically.
+**Change Description:** Removed the `route_assessment` field guidance block. Route evidence is now provided via the `route_evidence_text` parameter instead, which gives the LLM route context for analysis without asking it to populate a schema field.
 
 **Dependants:** None
 
@@ -152,7 +151,7 @@ Remove:
 
 **Details**
 
-Remove lines 93-100 (the `**route_assessment** (REQUIRED when ...)` block and the `You MUST populate ...` instruction).
+Removed the `**route_assessment** (REQUIRED when ...)` block and the `You MUST populate ...` instruction.
 
 **Requirements References**
 - [deterministic-route-narrative:FR-003]: Remove route_assessment guidance from structure prompt
@@ -172,7 +171,7 @@ Remove lines 93-100 (the `**route_assessment** (REQUIRED when ...)` block and th
 
 **Location:** `src/agent/orchestrator.py:179`
 
-**Provides:** List of route assessment dicts from the cycle-route MCP tool. Each dict has `destination` (str), `destination_id` (str), `shortest_route` (dict with `distance_m`, `score`, etc.), `safest_route` (same shape), and `same_route` (bool).
+**Provides:** List of flat route assessment dicts from the cycle-route MCP tool. Each dict has `destination` (str), `destination_id` (str), `distance_m` (safest route distance), `shortest_route_distance_m` (shortest route distance), `score` (dict with `score` int and `rating` str for the safest route), `same_route` (bool), plus `route_geojson`, `segments_geojson`, `issues`, `s106_suggestions`, and `transitions`.
 
 **Used By:** Modified orchestrator component — source data for the deterministic route_narrative build
 
@@ -198,7 +197,7 @@ Remove lines 93-100 (the `**route_assessment** (REQUIRED when ...)` block and th
 ### Phase 1: Remove schema models and prompt guidance
 
 **Task 1: Remove route_assessment models from review_schema.py**
-- Status: Backlog
+- Status: Complete
 - Requirements: [deterministic-route-narrative:FR-002]
 - Test Scenarios: [deterministic-route-narrative:ReviewSchema/TS-04], [deterministic-route-narrative:ReviewSchema/TS-05], [deterministic-route-narrative:ReviewSchema/TS-06]
 - Details:
@@ -208,7 +207,7 @@ Remove lines 93-100 (the `**route_assessment** (REQUIRED when ...)` block and th
   - Remove `RouteAssessmentSection`, `RouteDestinationSummary`, `RouteDestinationItem` imports from test file
 
 **Task 2: Remove route_assessment guidance from structure prompt**
-- Status: Backlog
+- Status: Complete
 - Requirements: [deterministic-route-narrative:FR-003]
 - Test Scenarios: [deterministic-route-narrative:StructurePrompt/TS-07]
 - Details:
@@ -216,7 +215,7 @@ Remove lines 93-100 (the `**route_assessment** (REQUIRED when ...)` block and th
   - Replace `TestStructurePromptRouteAssessment` class with a single test asserting `route_assessment` is absent
 
 **Task 3: Build route_narrative deterministically in orchestrator**
-- Status: Backlog
+- Status: Complete
 - Requirements: [deterministic-route-narrative:FR-001], [deterministic-route-narrative:FR-004]
 - Test Scenarios: [deterministic-route-narrative:Orchestrator/TS-01], [deterministic-route-narrative:Orchestrator/TS-02], [deterministic-route-narrative:Orchestrator/TS-03]
 - Details:
@@ -253,3 +252,4 @@ Remove lines 93-100 (the `**route_assessment** (REQUIRED when ...)` block and th
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-02-19 | Claude | Initial design |
+| 1.1 | 2026-02-23 | Claude | Updated to reflect implementation: flat MCP data shape, shortest route score handling when same_route=False, all tasks marked Complete |

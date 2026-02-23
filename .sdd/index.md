@@ -14,7 +14,7 @@ The system is decomposed into the following features, aligned with the developme
 | 2026-02-21 | [route-assessment-refinement](route-assessment-refinement/) | [spec](route-assessment-refinement/specification.md) | [design](route-assessment-refinement/design.md) | Implemented | Enhancement |
 | 2026-02-20 | [overpass-resilience](overpass-resilience/) | [spec](overpass-resilience/specification.md) | [design](overpass-resilience/design.md) | Implemented | Bugfix |
 | 2026-02-20 | [valhalla-routing-engine](valhalla-routing-engine/) | [spec](valhalla-routing-engine/specification.md) | [design](valhalla-routing-engine/design.md) | Implemented | Enhancement |
-| 2026-02-19 | [deterministic-route-narrative](deterministic-route-narrative/) | [spec](deterministic-route-narrative/specification.md) | [design](deterministic-route-narrative/design.md) | Design Complete | Bugfix |
+| 2026-02-19 | [deterministic-route-narrative](deterministic-route-narrative/) | [spec](deterministic-route-narrative/specification.md) | [design](deterministic-route-narrative/design.md) | Implemented | Bugfix |
 | 2026-02-18 | [route-segment-geometry](route-segment-geometry/) | [spec](route-segment-geometry/specification.md) | [design](route-segment-geometry/design.md) | Implemented | Enhancement |
 | 2026-02-18 | [strip-route-assessments](strip-route-assessments/) | [spec](strip-route-assessments/specification.md) | [design](strip-route-assessments/design.md) | Implemented | Bugfix |
 | 2026-02-17 | [route-narrative-report](route-narrative-report/) | [spec](route-narrative-report/specification.md) | [design](route-narrative-report/design.md) | Implemented | Enhancement |
