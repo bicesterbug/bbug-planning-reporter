@@ -27,10 +27,24 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.mcp_servers.shared.auth import MCPAuthMiddleware
 
 logger = structlog.get_logger(__name__)
+
+
+class _SentResponse(Response):
+    """No-op response for endpoints where the MCP transport already sent the HTTP response.
+
+    MCP transports (SSE, Streamable HTTP) write directly to the ASGI send
+    callable. Starlette's Route handler expects the endpoint to return a
+    Response that it then sends — returning a normal Response() would send
+    a duplicate HTTP response. This sentinel does nothing when called.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        pass
 
 
 # Type for optional custom health handler
@@ -80,13 +94,13 @@ def create_mcp_app(
             await mcp_server.run(
                 streams[0], streams[1], mcp_server.create_initialization_options()
             )
-        return Response()
+        return _SentResponse()
 
     async def handle_streamable_http(request: Request) -> Response:
         await session_manager.handle_request(
             request.scope, request.receive, request._send
         )
-        return Response()
+        return _SentResponse()
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:  # noqa: ARG001

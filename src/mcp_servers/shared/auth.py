@@ -15,12 +15,10 @@ Implements test scenarios:
 """
 
 import hmac
+import json
 import os
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
 
 logger = structlog.get_logger(__name__)
 
@@ -28,9 +26,12 @@ logger = structlog.get_logger(__name__)
 EXEMPT_PATHS = {"/health"}
 
 
-class MCPAuthMiddleware(BaseHTTPMiddleware):
+class MCPAuthMiddleware:
     """
-    Starlette middleware that validates bearer tokens on MCP server endpoints.
+    Pure ASGI middleware that validates bearer tokens on MCP server endpoints.
+
+    Uses raw ASGI protocol instead of BaseHTTPMiddleware to avoid
+    incompatibility with streaming transports (SSE, Streamable HTTP).
 
     When MCP_API_KEY is set, requires Authorization: Bearer <token> on all
     requests except /health. When MCP_API_KEY is not set, passes all requests
@@ -38,15 +39,7 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(self, app, api_key: str | None = None) -> None:
-        """
-        Initialize the auth middleware.
-
-        Args:
-            app: The ASGI application.
-            api_key: The expected bearer token. If None, reads from MCP_API_KEY
-                     environment variable. If still None, auth is disabled.
-        """
-        super().__init__(app)
+        self.app = app
         self._api_key = api_key if api_key is not None else os.getenv("MCP_API_KEY")
 
     @property
@@ -54,44 +47,47 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
         """Whether authentication is active."""
         return self._api_key is not None and len(self._api_key) > 0
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
-        """Process request and validate bearer token if auth is enabled."""
-        # [cycle-route-assessment:NFR-005] No-op when key not configured
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         if not self.auth_enabled:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # [cycle-route-assessment:MCPAuthMiddleware/TS-04] Health exempt
-        if request.url.path in EXEMPT_PATHS:
-            return await call_next(request)
+        path = scope.get("path", "")
+        if path in EXEMPT_PATHS:
+            await self.app(scope, receive, send)
+            return
 
-        # Extract Authorization header
-        auth_header = request.headers.get("Authorization")
+        # Extract Authorization header from raw ASGI scope
+        headers = dict(scope.get("headers", []))
+        auth_header = headers.get(b"authorization", b"").decode()
+
         if not auth_header:
-            self._log_auth_failure(request, "Missing Authorization header")
-            return self._unauthorized_response("Missing Authorization header")
+            self._log_auth_failure(scope, "Missing Authorization header")
+            await self._send_unauthorized(send, "Missing Authorization header")
+            return
 
-        # Parse Bearer token
         token = self._extract_bearer_token(auth_header)
         if token is None:
-            self._log_auth_failure(request, "Invalid auth scheme")
-            return self._unauthorized_response(
-                "Invalid Authorization header format. Expected: Bearer <token>"
+            self._log_auth_failure(scope, "Invalid auth scheme")
+            await self._send_unauthorized(
+                send,
+                "Invalid Authorization header format. Expected: Bearer <token>",
             )
+            return
 
-        # [cycle-route-assessment:NFR-006] Constant-time comparison
         if not hmac.compare_digest(token.encode(), self._api_key.encode()):
-            self._log_auth_failure(request, "Invalid token")
-            return self._unauthorized_response("Invalid bearer token")
+            self._log_auth_failure(scope, "Invalid token")
+            await self._send_unauthorized(send, "Invalid bearer token")
+            return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
     def _extract_bearer_token(self, auth_header: str) -> str | None:
-        """Extract bearer token from Authorization header.
-
-        Returns None if header is not in "Bearer <token>" format.
-        """
+        """Extract bearer token from Authorization header."""
         parts = auth_header.split(" ", 1)
         if len(parts) != 2:
             return None
@@ -102,26 +98,37 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
 
         return token.strip()
 
-    def _log_auth_failure(self, request: Request, reason: str) -> None:
+    def _log_auth_failure(self, scope: dict, reason: str) -> None:
         """Log failed auth attempt at WARNING with client IP."""
-        # [cycle-route-assessment:NFR-006] Log failed attempts
-        client_ip = request.client.host if request.client else "unknown"
+        client = scope.get("client")
+        client_ip = client[0] if client else "unknown"
+        method = scope.get("method", "?")
+        path = scope.get("path", "?")
         logger.warning(
             "MCP auth failed",
             reason=reason,
             client_ip=client_ip,
-            endpoint=request.url.path,
-            method=request.method,
+            endpoint=path,
+            method=method,
         )
 
-    def _unauthorized_response(self, message: str) -> JSONResponse:
-        """Create a 401 Unauthorized response."""
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "code": "unauthorized",
-                    "message": message,
-                }
-            },
-        )
+    async def _send_unauthorized(self, send, message: str) -> None:
+        """Send a 401 Unauthorized JSON response via raw ASGI."""
+        body = json.dumps({
+            "error": {
+                "code": "unauthorized",
+                "message": message,
+            }
+        }).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                [b"content-type", b"application/json"],
+                [b"content-length", str(len(body)).encode()],
+            ],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": body,
+        })
