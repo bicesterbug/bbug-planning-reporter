@@ -1426,7 +1426,7 @@ class AgentOrchestrator:
                         "destination_lat": dest["lat"],
                         "destination_name": dest_name,
                     },
-                    timeout=30.0,
+                    timeout=120.0,
                 )
 
                 if route_result.get("status") == "success":
