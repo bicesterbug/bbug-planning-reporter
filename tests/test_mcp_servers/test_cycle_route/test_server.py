@@ -168,6 +168,8 @@ def _make_valhalla_handler(
     captured_bodies: list | None = None,
     shortest_status: int = 200,
     safest_status: int = 200,
+    trace_attributes_response: dict | None = None,
+    trace_attributes_status: int = 200,
 ) -> httpx.MockTransport:
     """Create a mock transport that differentiates Valhalla requests by costing."""
     if shortest_response is None:
@@ -176,6 +178,9 @@ def _make_valhalla_handler(
         safest_response = _make_valhalla_response()
     if overpass_response is None:
         overpass_response = _make_overpass_response()
+    if trace_attributes_response is None:
+        # Default: trace_attributes returns no edges (fallback to proximity)
+        trace_attributes_response = {"edges": []}
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -183,6 +188,8 @@ def _make_valhalla_handler(
             return httpx.Response(200, json=overpass_response)
         if "arcgis.com" in url:
             return httpx.Response(404, json={"error": "not found"})
+        if "valhalla" in url and "/trace_attributes" in url:
+            return httpx.Response(trace_attributes_status, json=trace_attributes_response)
         if "valhalla" in url and "/route" in url:
             body = json.loads(request.content)
             if captured_bodies is not None:
@@ -632,6 +639,8 @@ class TestAssessCycleRoute:
             if "overpass-api.de" in url:
                 # Only safest route is assessed via Overpass
                 return httpx.Response(200, json={"elements": good_ways})
+            if "valhalla" in url and "/trace_attributes" in url:
+                return httpx.Response(200, json={"edges": []})
             if "valhalla" in url and "/route" in url:
                 body = json.loads(request.content)
                 costing = body.get("costing", "")
@@ -672,6 +681,8 @@ class TestAssessCycleRoute:
             if "overpass" in url:
                 overpass_call_count[0] += 1
                 return httpx.Response(504, text="Gateway Timeout")
+            if "valhalla" in url and "/trace_attributes" in url:
+                return httpx.Response(200, json={"edges": []})
             if "valhalla" in url and "/route" in url:
                 return httpx.Response(200, json=_make_valhalla_response())
             return httpx.Response(404)
@@ -719,3 +730,127 @@ class TestCallToolDispatch:
         mcp = CycleRouteMCP()
 
         assert mcp.server is not None
+
+
+# =============================================================================
+# _request_trace_attributes
+# =============================================================================
+
+
+def _make_trace_attributes_response(edges: list[dict]) -> dict:
+    """Create a mock Valhalla trace_attributes response."""
+    return {"edges": edges}
+
+
+class TestRequestTraceAttributes:
+    """Tests for Valhalla trace_attributes way ID extraction."""
+
+    @pytest.mark.anyio
+    async def test_extracts_unique_way_ids(self):
+        """Extracts deduplicated way IDs from trace_attributes edges."""
+        trace_resp = _make_trace_attributes_response([
+            {"way_id": 100},
+            {"way_id": 200},
+            {"way_id": 100},
+        ])
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "trace_attributes" in str(request.url):
+                return httpx.Response(200, json=trace_resp)
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._request_trace_attributes(DEFAULT_COORDS)
+        assert result == {100, 200}
+
+    @pytest.mark.anyio
+    async def test_returns_none_on_http_error(self):
+        """Returns None when Valhalla returns HTTP 500."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "trace_attributes" in str(request.url):
+                return httpx.Response(500, text="Internal Server Error")
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._request_trace_attributes(DEFAULT_COORDS)
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_returns_none_on_timeout(self):
+        """Returns None when Valhalla times out."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("Connection timed out")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._request_trace_attributes(DEFAULT_COORDS)
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_returns_none_on_empty_edges(self):
+        """Returns None when trace_attributes returns empty edges."""
+        trace_resp = _make_trace_attributes_response([])
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "trace_attributes" in str(request.url):
+                return httpx.Response(200, json=trace_resp)
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._request_trace_attributes(DEFAULT_COORDS)
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_filters_out_zero_way_ids(self):
+        """Filters out zero way IDs from trace_attributes response."""
+        trace_resp = _make_trace_attributes_response([
+            {"way_id": 0},
+            {"way_id": 300},
+        ])
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "trace_attributes" in str(request.url):
+                return httpx.Response(200, json=trace_resp)
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        result = await mcp._request_trace_attributes(DEFAULT_COORDS)
+        assert result == {300}
+
+    @pytest.mark.anyio
+    async def test_sends_correct_request_body(self):
+        """Sends correct shape, costing, and filters to trace_attributes."""
+        captured = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "trace_attributes" in str(request.url):
+                captured.append(json.loads(request.content))
+                return httpx.Response(200, json=_make_trace_attributes_response([
+                    {"way_id": 100},
+                ]))
+            return httpx.Response(404)
+
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        mcp = CycleRouteMCP(http_client=client)
+
+        await mcp._request_trace_attributes(coords)
+
+        assert len(captured) == 1
+        body = captured[0]
+        assert body["costing"] == "bicycle"
+        assert body["shape_match"] == "edge_walk"
+        assert body["filters"] == {"attributes": ["edge.way_id"], "action": "include"}
+        assert body["shape"] == [
+            {"lat": 51.9, "lon": -1.15},
+            {"lat": 51.91, "lon": -1.14},
+        ]
