@@ -237,25 +237,62 @@ class TestBuildOverpassQuery:
         assert f"{last_lon}" in query
 
     def test_query_includes_barrier_node_query(self):
-        """[route-transition-analysis:build_overpass_query/TS-01] Barrier node query."""
+        """Barrier node proximity query present when no on-route way IDs."""
         coords = [[-1.15, 51.9], [-1.14, 51.91]]
         query = build_overpass_query(coords)
         assert "node(around:15," in query
         assert '["barrier"~"cycle_barrier|bollard|gate|stile|lift_gate"]' in query
 
     def test_query_includes_crossing_node_query(self):
-        """[route-transition-analysis:build_overpass_query/TS-02] Crossing node query."""
+        """Crossing node query present."""
         coords = [[-1.15, 51.9], [-1.14, 51.91]]
         query = build_overpass_query(coords)
         assert "node(around:20," in query
         assert '["crossing"]' in query
 
     def test_query_retains_way_query(self):
-        """[route-transition-analysis:build_overpass_query/TS-03] Way query preserved."""
+        """Way query preserved."""
         coords = [[-1.15, 51.9], [-1.14, 51.91]]
         query = build_overpass_query(coords)
         assert "way(around:" in query
         assert '["highway"]' in query
+
+    def test_on_route_way_ids_uses_membership_query(self):
+        """On-route way IDs produce way(id:...)->.onroute and node(w.onroute)."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords, on_route_way_ids={123, 456})
+        assert "way(id:" in query
+        assert "123" in query
+        assert "456" in query
+        assert "->.onroute" in query
+        assert "node(w.onroute)" in query
+        assert '["barrier"~"cycle_barrier|bollard|gate|stile|lift_gate"]' in query
+        # Proximity-based barrier query should NOT be present
+        assert "node(around:15," not in query
+
+    def test_on_route_way_ids_preserves_crossing_and_way_queries(self):
+        """On-route mode still includes crossing and highway way queries."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords, on_route_way_ids={100})
+        assert "node(around:20," in query
+        assert '["crossing"]' in query
+        assert "way(around:" in query
+        assert '["highway"]' in query
+
+    def test_empty_way_ids_falls_back_to_proximity(self):
+        """Empty on_route_way_ids set falls back to proximity-based barriers."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords, on_route_way_ids=set())
+        assert "node(around:15," in query
+        assert "way(id:" not in query
+        assert "->.onroute" not in query
+
+    def test_none_way_ids_falls_back_to_proximity(self):
+        """None on_route_way_ids falls back to proximity-based barriers."""
+        coords = [[-1.15, 51.9], [-1.14, 51.91]]
+        query = build_overpass_query(coords, on_route_way_ids=None)
+        assert "node(around:15," in query
+        assert "way(id:" not in query
 
 
 # =============================================================================

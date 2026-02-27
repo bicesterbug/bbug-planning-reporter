@@ -226,10 +226,13 @@ class CycleRouteMCP:
 
         Returns route assessment dict or None if no infrastructure data.
         """
+        # Identify on-route way IDs for barrier filtering
+        on_route_way_ids = await self._request_trace_attributes(route_coords, dest_name)
+
         # Rate limit before Overpass call
         await asyncio.sleep(EXTERNAL_API_DELAY)
 
-        overpass_query = build_overpass_query(route_coords)
+        overpass_query = build_overpass_query(route_coords, on_route_way_ids=on_route_way_ids)
         overpass_data = await query_overpass_resilient(
             self.http, overpass_query, destination=dest_name,
         )
@@ -315,6 +318,63 @@ class CycleRouteMCP:
                 return None
             return data
         except Exception:
+            return None
+
+    async def _request_trace_attributes(
+        self,
+        route_coords: list[list[float]],
+        dest_name: str = "",
+    ) -> set[int] | None:
+        """Request on-route OSM way IDs via Valhalla trace_attributes.
+
+        Posts the route shape to Valhalla's /trace_attributes endpoint with
+        edge_walk matching to identify exact OSM way IDs the route follows.
+
+        Returns a set of non-zero way IDs, or None on any failure.
+        """
+        try:
+            shape = [{"lat": coord[1], "lon": coord[0]} for coord in route_coords]
+            body = {
+                "shape": shape,
+                "costing": "bicycle",
+                "shape_match": "edge_walk",
+                "filters": {
+                    "attributes": ["edge.way_id"],
+                    "action": "include",
+                },
+            }
+            response = await self.http.post(
+                f"{self.valhalla_url}/trace_attributes",
+                json=body,
+                timeout=10.0,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "trace_attributes request failed",
+                    status=response.status_code,
+                    destination=dest_name,
+                )
+                return None
+
+            data = response.json()
+            edges = data.get("edges", [])
+            way_ids = {e.get("way_id", 0) for e in edges}
+            way_ids.discard(0)
+
+            if not way_ids:
+                logger.warning(
+                    "trace_attributes returned no way IDs",
+                    destination=dest_name,
+                )
+                return None
+
+            return way_ids
+        except Exception as exc:
+            logger.warning(
+                "trace_attributes request failed",
+                error=str(exc),
+                destination=dest_name,
+            )
             return None
 
     async def _assess_cycle_route(self, arguments: dict[str, Any]) -> dict[str, Any]:

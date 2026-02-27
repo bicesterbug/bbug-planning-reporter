@@ -162,13 +162,20 @@ def extract_lit(tags: dict[str, str]) -> bool | None:
     return None
 
 
-def build_overpass_query(coordinates: list[list[float]], buffer_m: int = 20) -> str:
+def build_overpass_query(
+    coordinates: list[list[float]],
+    buffer_m: int = 20,
+    on_route_way_ids: set[int] | None = None,
+) -> str:
     """
     Build an Overpass query to fetch way tags along a route.
 
     Args:
         coordinates: List of [lon, lat] pairs from the route geometry.
         buffer_m: Buffer around route points in metres.
+        on_route_way_ids: Optional set of OSM way IDs from Valhalla
+            trace_attributes. When provided, barrier nodes are fetched
+            from on-route ways only instead of by proximity.
 
     Returns:
         Overpass QL query string.
@@ -186,7 +193,22 @@ def build_overpass_query(coordinates: list[list[float]], buffer_m: int = 20) -> 
 
     coords_str = ",".join(around_parts)
 
-    query = f"""
+    if on_route_way_ids:
+        # On-route barrier filtering: fetch barrier nodes from on-route ways only
+        ids_str = ",".join(str(wid) for wid in sorted(on_route_way_ids))
+        query = f"""
+[out:json][timeout:25];
+way(id:{ids_str})->.onroute;
+(
+  way(around:{buffer_m},{coords_str})["highway"];
+  node(around:20,{coords_str})["crossing"];
+  node(w.onroute)["barrier"~"cycle_barrier|bollard|gate|stile|lift_gate"];
+);
+out geom;
+"""
+    else:
+        # Fallback: proximity-based barrier detection
+        query = f"""
 [out:json][timeout:25];
 (
   way(around:{buffer_m},{coords_str})["highway"];
