@@ -1845,31 +1845,6 @@ class AgentOrchestrator:
                     for d in structure.key_documents
                 ]
 
-                # Build route_narrative deterministically from MCP data
-                # Flat structure: assessment at top level (safest route),
-                # shortest_route_distance_m for reference
-                route_narrative = None
-                if self._route_assessments:
-                    route_narrative = {
-                        "destinations": [
-                            {
-                                "destination_name": ra.get("destination", "Unknown"),
-                                "shortest_route_summary": {
-                                    "distance_m": ra.get("shortest_route_distance_m", ra.get("distance_m", 0)),
-                                    "ltn_score": ra.get("score", {}).get("score", 0) if ra.get("same_route", True) else None,
-                                    "rating": ra.get("score", {}).get("rating") if ra.get("same_route", True) else None,
-                                },
-                                "safest_route_summary": {
-                                    "distance_m": ra.get("distance_m", 0),
-                                    "ltn_score": ra.get("score", {}).get("score", 0),
-                                    "rating": ra.get("score", {}).get("rating"),
-                                },
-                                "same_route": ra.get("same_route", True),
-                            }
-                            for ra in self._route_assessments
-                        ]
-                    }
-
             else:
                 # Fallback: single markdown call (no structured field extraction)
                 # Implements [structured-review-output:FR-007]
@@ -1925,7 +1900,31 @@ Be concise and evidence-based. Cite specific policy references."""
                 suggested_conditions = None
                 key_documents = None
                 summary = None
-                route_narrative = None
+
+            # Build route_narrative deterministically from MCP data (both paths)
+            # Flat structure: assessment at top level (safest route),
+            # shortest_route_distance_m for reference
+            route_narrative = None
+            if self._route_assessments:
+                route_narrative = {
+                    "destinations": [
+                        {
+                            "destination_name": ra.get("destination", "Unknown"),
+                            "shortest_route_summary": {
+                                "distance_m": ra.get("shortest_route_distance_m", ra.get("distance_m", 0)),
+                                "ltn_score": ra.get("score", {}).get("score", 0) if ra.get("same_route", True) else None,
+                                "rating": ra.get("score", {}).get("rating") if ra.get("same_route", True) else None,
+                            },
+                            "safest_route_summary": {
+                                "distance_m": ra.get("distance_m", 0),
+                                "ltn_score": ra.get("score", {}).get("score", 0),
+                                "rating": ra.get("score", {}).get("rating"),
+                            },
+                            "same_route": ra.get("same_route", True),
+                        }
+                        for ra in self._route_assessments
+                    ]
+                }
 
             # Combined token tracking
             total_input = structure_input_tokens + report_input_tokens
@@ -2024,11 +2023,11 @@ Be concise and evidence-based. Cite specific policy references."""
         review_structure = {
             "overall_rating": review.get("overall_rating"),
             "summary": review.get("summary"),
-            "aspects": review.get("aspects", []),
-            "policy_compliance": review.get("policy_compliance", []),
-            "recommendations": review.get("recommendations", []),
-            "suggested_conditions": review.get("suggested_conditions", []),
-            "key_documents": review.get("key_documents", []),
+            "aspects": review.get("aspects") or [],
+            "policy_compliance": review.get("policy_compliance") or [],
+            "recommendations": review.get("recommendations") or [],
+            "suggested_conditions": review.get("suggested_conditions") or [],
+            "key_documents": review.get("key_documents") or [],
         }
 
         # Build ingested documents list
