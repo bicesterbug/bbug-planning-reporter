@@ -10,6 +10,7 @@ The system is decomposed into the following features, aligned with the developme
 
 | Date | Feature | Specification | Design | Status | Phase |
 |------|---------|---------------|--------|--------|-------|
+| 2026-04-24 | [key-documents-url-backfill](key-documents-url-backfill/) | [research](key-documents-url-backfill/research.md) | [design](key-documents-url-backfill/design.md) | Draft | Bugfix |
 | 2026-02-27 | [route-barrier-filtering](route-barrier-filtering/) | [spec](route-barrier-filtering/specification.md) | [design](route-barrier-filtering/design.md) | Implemented | Bugfix |
 | 2026-02-22 | [route-segment-detail](route-segment-detail/) | [spec](route-segment-detail/specification.md) | [design](route-segment-detail/design.md) | Implemented | Enhancement |
 | 2026-02-21 | [route-assessment-refinement](route-assessment-refinement/) | [spec](route-assessment-refinement/specification.md) | [design](route-assessment-refinement/design.md) | Implemented | Enhancement |
