@@ -1981,7 +1981,7 @@ class TestKeyDocumentsBackfillPipeline:
 
         # Every entry has a populated url that matches the metadata entry.
         expected_titles = {"doc1": "Transport Assessment", "doc3": "Design and Access Statement"}
-        for entry, item in zip(key_docs, structure_dict["key_documents"]):
+        for entry, item in zip(key_docs, structure_dict["key_documents"], strict=True):
             doc_id = item["document_id"]
             assert entry["url"] is not None
             assert entry["url"] == url_by_id[doc_id]
