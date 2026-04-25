@@ -1903,6 +1903,183 @@ class TestBackfillKeyDocuments:
         assert result[2]["title"] == "Officer Report"
 
 
+class TestKeyDocumentsBackfillPipeline:
+    """End-to-end tests for the key_documents URL backfill across the full review pipeline.
+
+    These tests run the orchestrator from `run()` through every phase, exercising
+    metadata population, the structure call, and the backfill helper together.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pipeline_populates_url_from_metadata_for_every_entry(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+    ):
+        """
+        Given: pipeline runs with structure call returning two key_documents whose
+               document_ids are present in document_metadata
+        When: the orchestrator finishes
+        Then: every key_documents entry has a non-null url that matches the
+              metadata entry's URL
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        structure_dict = {
+            **SAMPLE_STRUCTURE_DICT,
+            "key_documents": [
+                {"document_id": "doc1", "category": "Transport & Access",
+                 "summary": "Traffic analysis."},
+                {"document_id": "doc3", "category": "Design & Layout",
+                 "summary": "Site layout."},
+            ],
+        }
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,
+            sample_ingest_response,
+            sample_ingest_response,
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect(
+                structure_dict=structure_dict,
+            )
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_backfill_pipeline",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        key_docs = result.review["key_documents"]
+        assert len(key_docs) == 2
+
+        # Build the {document_id: url} truth from the metadata that the
+        # ingestion phase populated.
+        metadata = orchestrator._ingestion_result.document_metadata
+        url_by_id = {m["document_id"]: m["url"] for m in metadata.values()}
+
+        assert url_by_id["doc1"] is not None
+        assert url_by_id["doc3"] is not None
+
+        # Every entry has a populated url that matches the metadata entry.
+        expected_titles = {"doc1": "Transport Assessment", "doc3": "Design and Access Statement"}
+        for entry, item in zip(key_docs, structure_dict["key_documents"]):
+            doc_id = item["document_id"]
+            assert entry["url"] is not None
+            assert entry["url"] == url_by_id[doc_id]
+            assert entry["title"] == expected_titles[doc_id]
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_handles_hallucinated_document_id(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        monkeypatch,
+        sample_application_response,
+        sample_list_documents_response,
+        sample_per_doc_download_responses,
+        sample_ingest_response,
+        sample_search_response,
+    ):
+        """
+        Given: structure call returns three key_documents — two real ids and one
+               hallucinated id ("notreal") that is not in document_metadata
+        When: the orchestrator finishes
+        Then: the response contains three entries; the two matching ids have
+              populated urls; the hallucinated id has url=None and
+              title="(unknown document)"; a warning is logged for the bad id
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+        structure_dict = {
+            **SAMPLE_STRUCTURE_DICT,
+            "key_documents": [
+                {"document_id": "doc1", "category": "Transport & Access",
+                 "summary": "Traffic analysis."},
+                {"document_id": "notreal", "category": "Design & Layout",
+                 "summary": "Hallucinated entry."},
+                {"document_id": "doc3", "category": "Application Core",
+                 "summary": "Site layout."},
+            ],
+        }
+
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            sample_list_documents_response,
+            *sample_per_doc_download_responses,
+            sample_ingest_response,
+            sample_ingest_response,
+            sample_ingest_response,
+            *_search_side_effects(7, sample_search_response),
+        ]
+
+        with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic, \
+             patch("src.agent.orchestrator.logger") as mock_logger:
+            mock_client_inst = MagicMock()
+            mock_client_inst.messages.create.side_effect = _make_three_phase_side_effect(
+                structure_dict=structure_dict,
+            )
+            MockAnthropic.return_value = mock_client_inst
+
+            orchestrator = AgentOrchestrator(
+                review_id="rev_backfill_hallucinated",
+                application_ref="25/01178/REM",
+                mcp_client=mock_mcp_client,
+                redis_client=mock_redis,
+            )
+
+            result = await orchestrator.run()
+
+        assert result.success is True
+        key_docs = result.review["key_documents"]
+        assert len(key_docs) == 3
+
+        assert key_docs[0]["url"] is not None
+        assert key_docs[0]["title"] == "Transport Assessment"
+
+        assert key_docs[1]["url"] is None
+        assert key_docs[1]["title"] == "(unknown document)"
+        assert key_docs[1]["category"] == "Design & Layout"
+        assert key_docs[1]["summary"] == "Hallucinated entry."
+
+        assert key_docs[2]["url"] is not None
+        assert key_docs[2]["title"] == "Design and Access Statement"
+
+        # The backfill helper logs a warning for the hallucinated id.
+        warning_calls = [
+            call for call in mock_logger.warning.call_args_list
+            if call.args and call.args[0] == "key_document id not in metadata"
+        ]
+        assert len(warning_calls) == 1
+        assert warning_calls[0].kwargs == {
+            "review_id": "rev_backfill_hallucinated",
+            "application_ref": "25/01178/REM",
+            "document_id": "notreal",
+        }
+
+        await orchestrator.close()
+
+
 # ---------------------------------------------------------------------------
 # review-scope-control tests
 # ---------------------------------------------------------------------------
