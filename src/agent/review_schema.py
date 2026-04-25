@@ -77,11 +77,10 @@ class ComplianceItem(BaseModel):
 class KeyDocumentItem(BaseModel):
     """A key document from the structure call."""
 
-    title: str
+    document_id: str  # Implements [key-documents-url-backfill:FR-004]
     # Implements [reliable-structure-extraction:FR-002] - Literal for category
     category: DocumentCategory
     summary: str
-    url: str | None = None
 
     @field_validator("category", mode="before")
     @classmethod

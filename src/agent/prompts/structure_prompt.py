@@ -85,10 +85,9 @@ Each aspect must have:
 **suggested_conditions**: Planning conditions in standard LPA format. Each condition must have: a trigger (e.g. "Prior to commencement", "Prior to first occupation"), a requirement ("a scheme for X shall be submitted to and approved in writing by the local planning authority"), and a "Reason:" line citing the relevant policy. Keep each condition to 1-2 sentences plus the Reason line. May be an empty array if no conditions are warranted.
 
 **key_documents**: Documents from the ingested documents list that are relevant to the cycling review. Select the most relevant documents. Each item:
-- "title": Document title matching the ingested documents list
+- "document_id": The exact identifier shown in square brackets `[...]` at the start of the matching entry in the ingested documents list. Echo it verbatim. Do not invent or modify ids.
 - "category": One of "Transport & Access", "Design & Layout", "Application Core"
 - "summary": One short sentence on cycling relevance (max ~15 words)
-- "url": Download URL from the ingested documents list, or null
 """
 
     user_prompt = f"""Assess the following planning application from a cycling advocacy perspective using the submit_review_structure tool.

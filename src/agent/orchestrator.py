@@ -36,7 +36,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import anthropic
 import redis.asyncio as redis
@@ -44,14 +43,15 @@ import structlog
 from pydantic import ValidationError
 
 from src.agent.mcp_client import MCPClientManager, MCPConnectionError, MCPServerType, MCPToolError
-from src.mcp_servers.cherwell_scraper.filters import DocumentFilter
 from src.agent.progress import ProgressTracker, ReviewPhase
 from src.agent.prompts.document_filter_prompt import build_document_filter_prompt
 from src.agent.prompts.report_prompt import build_report_prompt
 from src.agent.prompts.search_query_prompt import build_search_query_prompt
 from src.agent.prompts.structure_prompt import build_structure_prompt
 from src.agent.prompts.verification_prompt import build_verification_prompt
-from src.agent.review_schema import ReviewStructure
+from src.agent.review_schema import KeyDocumentItem, ReviewStructure
+from src.api.schemas import KeyDocument
+from src.mcp_servers.cherwell_scraper.filters import DocumentFilter
 from src.shared.storage import LocalStorageBackend, StorageBackend, StorageUploadError
 
 logger = structlog.get_logger(__name__)
@@ -1493,15 +1493,15 @@ class AgentOrchestrator:
         policy_evidence_text = "\n\n---\n\n".join(policy_evidence[:15]) if policy_evidence else "No policy content retrieved."
 
         # Implements [key-documents:FR-005] - Build ingested document list for LLM
+        # Implements [key-documents-url-backfill:FR-002] - Prefix with document_id, drop URL
         ingested_docs_text = "No document metadata available."
         if self._ingestion_result and self._ingestion_result.document_metadata:
             doc_lines = []
             for file_path, meta in self._ingestion_result.document_metadata.items():
                 desc = meta.get("description") or os.path.basename(file_path)
                 doc_type = meta.get("document_type", "Unknown")
-                raw_url = meta.get("url")
-                url = quote(raw_url, safe=":/?#[]@!$&'()*+,;=-._~%") if raw_url else "no URL"
-                doc_lines.append(f"- {desc} (type: {doc_type}, url: {url})")
+                doc_id = meta.get("document_id", "")
+                doc_lines.append(f"- [{doc_id}] {desc} (type: {doc_type})")
             if doc_lines:
                 ingested_docs_text = "\n".join(doc_lines)
 
@@ -1672,6 +1672,51 @@ class AgentOrchestrator:
 
         return "\n".join(summary_lines)
 
+    def _backfill_key_documents(
+        self,
+        items: list[KeyDocumentItem],
+        document_metadata: dict[str, dict[str, Any]],
+        review_id: str,
+        application_ref: str,
+    ) -> list[dict[str, Any]]:
+        """Backfill title and URL on key_documents from document_metadata.
+
+        # Implements [key-documents-url-backfill:FR-005]
+        # Implements [key-documents-url-backfill:FR-006]
+
+        Returns a list of dicts shaped like KeyDocument so the result remains
+        JSON-serialisable for storage in Redis and S3.
+        """
+        index = {m.get("document_id", ""): m for m in document_metadata.values()}
+        out: list[dict[str, Any]] = []
+        for item in items:
+            meta = index.get(item.document_id)
+            if meta is None:
+                logger.warning(
+                    "key_document id not in metadata",
+                    review_id=review_id,
+                    application_ref=application_ref,
+                    document_id=item.document_id,
+                )
+                out.append(
+                    KeyDocument(
+                        title="(unknown document)",
+                        url=None,
+                        category=item.category,
+                        summary=item.summary,
+                    ).model_dump()
+                )
+                continue
+            out.append(
+                KeyDocument(
+                    title=meta.get("description", "(unknown document)"),
+                    url=meta.get("url"),
+                    category=item.category,
+                    summary=item.summary,
+                ).model_dump()
+            )
+        return out
+
     async def _phase_generate_review(self) -> None:
         """
         Phase 5: Generate the review using two sequential Claude API calls.
@@ -1837,15 +1882,14 @@ class AgentOrchestrator:
                 recommendations = list(structure.recommendations)
                 suggested_conditions = list(structure.suggested_conditions)
                 summary = structure.summary
-                key_documents = [
-                    {
-                        "title": d.title,
-                        "category": d.category,
-                        "summary": d.summary,
-                        "url": d.url,
-                    }
-                    for d in structure.key_documents
-                ]
+                key_documents = self._backfill_key_documents(
+                    structure.key_documents,
+                    self._ingestion_result.document_metadata
+                    if self._ingestion_result
+                    else {},
+                    self._review_id,
+                    self._application_ref,
+                )
 
             else:
                 # Fallback: single markdown call (no structured field extraction)

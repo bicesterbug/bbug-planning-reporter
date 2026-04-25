@@ -400,6 +400,37 @@ class TestStructurePromptRouteAssessmentRemoved:
         assert "route_assessment" not in system
 
 
+class TestStructurePromptKeyDocumentsRequestsId:
+    """Verifies the key_documents block instructs Claude to echo document_id."""
+
+    def test_key_documents_requests_document_id(self):
+        """
+        Given: the structure prompt template
+        When: inspected for the key_documents schema block
+        Then: it instructs Claude to return document_id
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        assert '"document_id"' in system
+
+    def test_key_documents_does_not_request_authoritative_title_or_url(self):
+        """
+        Given: the structure prompt template
+        When: inspected for the key_documents schema block
+        Then: it does not ask Claude to produce title or url
+        """
+        system, _ = build_structure_prompt(
+            APP_SUMMARY, INGESTED_DOCS, APP_EVIDENCE, POLICY_EVIDENCE
+        )
+
+        # The key_documents bullet list should not ask Claude to provide title/url.
+        kd_section = system.split("**key_documents**", 1)[1].split("\n\n", 1)[0]
+        assert '"title"' not in kd_section
+        assert '"url"' not in kd_section
+
+
 PLANS_SUBMITTED = (
     "- Site Plan (type: Plans - Site Plan, image ratio: 92%)\n"
     "- Elevations (type: Elevations, image ratio: 88%)"

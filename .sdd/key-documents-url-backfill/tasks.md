@@ -35,20 +35,20 @@ This task adds the `document_id` field to the metadata value dict at two distinc
 
 ### Task 2.1: Update `KeyDocumentItem` — require `document_id`, remove `title` and `url`
 
-- **Status:** Backlog
+- **Status:** Done
 - **Requirements:** key-documents-url-backfill:FR-003, key-documents-url-backfill:FR-004
 - **Files to read:** `src/agent/review_schema.py`, `tests/` test files that reference `KeyDocumentItem`
 - **Files to modify/create:** `src/agent/review_schema.py`, tests that construct `KeyDocumentItem(...)` directly
 
 **Subtasks:**
-- [ ] Add required `document_id: str` field to `KeyDocumentItem` (review_schema.py:77-98).
-- [ ] Remove `title` and `url` fields entirely from `KeyDocumentItem`.
-- [ ] Preserve the existing `coerce_category` validator.
-- [ ] Add inline traceability comment `# Implements [key-documents-url-backfill:FR-004]` on the `document_id` field.
-- [ ] Update every test or production call site that constructs `KeyDocumentItem(title=..., url=...)` to use `document_id=...` instead (grep for `KeyDocumentItem(` to enumerate).
+- [x] Add required `document_id: str` field to `KeyDocumentItem` (review_schema.py:77-98).
+- [x] Remove `title` and `url` fields entirely from `KeyDocumentItem`.
+- [x] Preserve the existing `coerce_category` validator.
+- [x] Add inline traceability comment `# Implements [key-documents-url-backfill:FR-004]` on the `document_id` field.
+- [x] Update every test or production call site that constructs `KeyDocumentItem(title=..., url=...)` to use `document_id=...` instead (grep for `KeyDocumentItem(` to enumerate).
 
 **Tests:**
-- [ ] key-documents-url-backfill:TS-05 — constructing `KeyDocumentItem` from a dict missing `document_id` raises a Pydantic validation error.
+- [x] key-documents-url-backfill:TS-05 — constructing `KeyDocumentItem` from a dict missing `document_id` raises a Pydantic validation error.
 
 **Details:**
 
@@ -56,17 +56,17 @@ This is the hard break — every call site that builds `KeyDocumentItem(title=..
 
 ### Task 2.2: Update `ingested_docs_text` builder to include `document_id` and drop URL
 
-- **Status:** Backlog
+- **Status:** Done
 - **Requirements:** key-documents-url-backfill:FR-002
 - **Files to read:** `src/agent/orchestrator.py` (specifically lines 1493-1504), `tests/test_orchestrator.py`
 - **Files to modify/create:** `src/agent/orchestrator.py`, `tests/test_orchestrator.py`
 
 **Subtasks:**
-- [ ] Replace the existing `(type: X, url: Y)` format at orchestrator.py:1493-1504 with a format that prefixes each line with `[{document_id}]` followed by description and `(type: {doc_type})`.
-- [ ] Remove any `url:` substring from the generated text.
+- [x] Replace the existing `(type: X, url: Y)` format at orchestrator.py:1493-1504 with a format that prefixes each line with `[{document_id}]` followed by description and `(type: {doc_type})`.
+- [x] Remove any `url:` substring from the generated text.
 
 **Tests:**
-- [ ] key-documents-url-backfill:TS-03 — rendering two documents with distinct `document_id`s produces text containing both ids in `[...]` prefix form and no `url:` substring.
+- [x] key-documents-url-backfill:TS-03 — rendering two documents with distinct `document_id`s produces text containing both ids in `[...]` prefix form and no `url:` substring.
 
 **Details:**
 
@@ -74,17 +74,17 @@ This is a prompt-text-builder change only. The text-building block stays inline 
 
 ### Task 2.3: Update structure prompt to request `document_id` (not `title`/`url`)
 
-- **Status:** Backlog
+- **Status:** Done
 - **Requirements:** key-documents-url-backfill:FR-003
 - **Files to read:** `src/agent/prompts/structure_prompt.py` (specifically lines 87-91), existing test for prompt contents
 - **Files to modify/create:** `src/agent/prompts/structure_prompt.py`, test file covering prompt contents
 
 **Subtasks:**
-- [ ] Rewrite the `key_documents` instruction section (structure_prompt.py:87-91) so Claude is told to echo `document_id` from the ingested documents list.
-- [ ] Remove instructions that tell Claude to produce an authoritative `title` or `url`.
+- [x] Rewrite the `key_documents` instruction section (structure_prompt.py:87-91) so Claude is told to echo `document_id` from the ingested documents list.
+- [x] Remove instructions that tell Claude to produce an authoritative `title` or `url`.
 
 **Tests:**
-- [ ] key-documents-url-backfill:TS-04 — inspecting the structure prompt string shows it instructs Claude to return `document_id` and does not request `title` or `url`.
+- [x] key-documents-url-backfill:TS-04 — inspecting the structure prompt string shows it instructs Claude to return `document_id` and does not request `title` or `url`.
 
 **Details:**
 
@@ -92,27 +92,29 @@ Prompt engineering only. The instruction change must align with Task 2.2's new `
 
 ### Task 2.4: Add `_backfill_key_documents` helper and wire into orchestrator
 
-- **Status:** Backlog
+- **Status:** Done
 - **Requirements:** key-documents-url-backfill:FR-005, key-documents-url-backfill:FR-006, key-documents-url-backfill:FR-007
 - **Files to read:** `src/agent/orchestrator.py` (helpers section and lines 1838-1846), `src/api/schemas.py` (for `KeyDocument` shape), `tests/test_orchestrator.py`
 - **Files to modify/create:** `src/agent/orchestrator.py`, `tests/test_orchestrator.py`
 
 **Subtasks:**
-- [ ] Add private `_backfill_key_documents(items, document_metadata, review_id, application_ref) -> list[KeyDocument]` adjacent to the existing review-assembly helpers.
-- [ ] Inside the helper, build a `{document_id: metadata}` index from `document_metadata` values.
-- [ ] For each item with a matching `document_id`, emit `KeyDocument` with `title` from `description`, `url` from metadata `url`, and category/summary from the item.
-- [ ] For mismatches, emit `logger.warning("key_document id not in metadata", review_id=..., application_ref=..., document_id=item.document_id)` and emit a `KeyDocument` with `title="(unknown document)"`, `url=None`, and the item's category/summary.
-- [ ] Add inline `# Implements [key-documents-url-backfill:FR-005]` and `# Implements [key-documents-url-backfill:FR-006]` traceability comments on the helper.
-- [ ] Replace the passthrough dict-comp at orchestrator.py:1838-1846 with a call to the new helper, threading `review_id` and `application_ref` from orchestrator state.
+- [x] Add private `_backfill_key_documents(items, document_metadata, review_id, application_ref) -> list[KeyDocument]` adjacent to the existing review-assembly helpers.
+- [x] Inside the helper, build a `{document_id: metadata}` index from `document_metadata` values.
+- [x] For each item with a matching `document_id`, emit `KeyDocument` with `title` from `description`, `url` from metadata `url`, and category/summary from the item.
+- [x] For mismatches, emit `logger.warning("key_document id not in metadata", review_id=..., application_ref=..., document_id=item.document_id)` and emit a `KeyDocument` with `title="(unknown document)"`, `url=None`, and the item's category/summary.
+- [x] Add inline `# Implements [key-documents-url-backfill:FR-005]` and `# Implements [key-documents-url-backfill:FR-006]` traceability comments on the helper.
+- [x] Replace the passthrough dict-comp at orchestrator.py:1838-1846 with a call to the new helper, threading `review_id` and `application_ref` from orchestrator state.
 
 **Tests:**
-- [ ] key-documents-url-backfill:TS-06 — matching `document_id` produces a `KeyDocument` with `title` from metadata description and `url` from metadata url.
-- [ ] key-documents-url-backfill:TS-07 — unmatched `document_id` yields a `KeyDocument` with `url=None`, `title="(unknown document)"`, a warning is logged, and the entry is NOT dropped.
-- [ ] key-documents-url-backfill:TS-08 — three items with one mismatch produce three entries; two have populated URLs; the mismatched entry has `url=None`.
+- [x] key-documents-url-backfill:TS-06 — matching `document_id` produces a `KeyDocument` with `title` from metadata description and `url` from metadata url.
+- [x] key-documents-url-backfill:TS-07 — unmatched `document_id` yields a `KeyDocument` with `url=None`, `title="(unknown document)"`, a warning is logged, and the entry is NOT dropped.
+- [x] key-documents-url-backfill:TS-08 — three items with one mismatch produce three entries; two have populated URLs; the mismatched entry has `url=None`.
 
 **Details:**
 
 The helper is the single place where LLM `document_id` meets metadata truth. Duplicate ids in metadata: later entry wins in the index (not expected in practice but deterministic). The logger call uses `review_id`, `application_ref`, and `document_id` keyword fields only — do not add a `component=` kwarg; that is not the orchestrator's logging convention here. Confirm the wiring point: the dict-comp at lines 1838-1846 currently copies `KeyDocumentItem` straight to `KeyDocument`; after this task, the helper produces the list of `KeyDocument` objects directly.
+
+**Implementation note:** Helper returns `list[dict]` (constructed via `KeyDocument(...).model_dump()`) rather than `list[KeyDocument]` Pydantic instances because downstream serialisation (`json.dumps(review_data, default=str)` in `src/worker/review_jobs.py:223`) does not natively handle Pydantic models — the `default=str` fallback would corrupt them. The shape is identical to a `KeyDocument` so the public API contract is preserved unchanged.
 
 ## Phase 3: End-to-end coverage
 

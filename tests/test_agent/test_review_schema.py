@@ -74,16 +74,14 @@ VALID_STRUCTURE_JSON = {
     ],
     "key_documents": [
         {
-            "title": "Transport Assessment",
+            "document_id": "abc123def456",
             "category": "Transport & Access",
             "summary": "Analyses traffic impacts of the proposed development.",
-            "url": "https://example.com/ta.pdf",
         },
         {
-            "title": "Design and Access Statement",
+            "document_id": "789xyz012345",
             "category": "Design & Layout",
             "summary": "Describes site layout including internal roads.",
-            "url": None,
         },
     ],
 }
@@ -121,7 +119,8 @@ class TestReviewStructureValidJSON:
 
         assert len(structure.key_documents) == 2
         assert structure.key_documents[0].category == "Transport & Access"
-        assert structure.key_documents[1].url is None
+        assert structure.key_documents[0].document_id == "abc123def456"
+        assert structure.key_documents[1].document_id == "789xyz012345"
 
     def test_valid_json_string_parses(self):
         """
@@ -415,11 +414,28 @@ class TestKeyDocumentCategoryCoercion:
     ])
     def test_category_coercion(self, input_cat, expected):
         doc = KeyDocumentItem(
-            title="Test Doc",
+            document_id="abc123",
             category=input_cat,
             summary="Test summary",
         )
         assert doc.category == expected
+
+
+class TestKeyDocumentItemRequiresDocumentId:
+    """Tests that KeyDocumentItem requires document_id."""
+
+    def test_missing_document_id_raises(self):
+        """
+        Given: a dict with category and summary but no document_id
+        When: validated via KeyDocumentItem(**data)
+        Then: Pydantic raises a validation error
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            KeyDocumentItem(
+                category="Transport & Access",
+                summary="Test summary",
+            )
+        assert "document_id" in str(exc_info.value)
 
 
 class TestFlexibleAspects:

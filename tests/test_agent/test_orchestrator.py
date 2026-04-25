@@ -257,8 +257,8 @@ SAMPLE_STRUCTURE_DICT = {
     "recommendations": ["Provide cycle track"],
     "suggested_conditions": [],
     "key_documents": [
-        {"title": "Transport Assessment", "category": "Transport & Access",
-         "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
+        {"document_id": "doc1", "category": "Transport & Access",
+         "summary": "Traffic analysis."},
     ],
 }
 
@@ -1412,10 +1412,10 @@ class TestGenerateReviewKeyDocuments:
             "recommendations": ["Provide cycle track"],
             "suggested_conditions": [],
             "key_documents": [
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Analyses traffic impacts.", "url": "https://example.com/ta.pdf"},
-                {"title": "Design and Access Statement", "category": "Design & Layout",
-                 "summary": "Describes site layout.", "url": "https://example.com/das.pdf"},
+                {"document_id": "ta_id", "category": "Transport & Access",
+                 "summary": "Analyses traffic impacts."},
+                {"document_id": "das_id", "category": "Design & Layout",
+                 "summary": "Describes site layout."},
             ],
         }
 
@@ -1438,8 +1438,8 @@ class TestGenerateReviewKeyDocuments:
             documents_ingested=2,
             document_paths=["/data/ta.pdf", "/data/das.pdf"],
             document_metadata={
-                "/data/ta.pdf": {"description": "Transport Assessment", "document_type": "Transport Assessment", "url": "https://example.com/ta.pdf"},
-                "/data/das.pdf": {"description": "Design and Access Statement", "document_type": "Design and Access Statement", "url": "https://example.com/das.pdf"},
+                "/data/ta.pdf": {"description": "Transport Assessment", "document_type": "Transport Assessment", "url": "https://example.com/ta.pdf", "document_id": "ta_id"},
+                "/data/das.pdf": {"description": "Design and Access Statement", "document_type": "Design and Access Statement", "url": "https://example.com/das.pdf", "document_id": "das_id"},
             },
         )
 
@@ -1556,18 +1556,16 @@ class TestGenerateReviewKeyDocuments:
         await orchestrator.close()
 
     @pytest.mark.asyncio
-    async def test_document_urls_passed_through(
+    async def test_document_ids_passed_through_to_prompt(
         self,
         mock_mcp_client,
         mock_redis,
         monkeypatch,
     ):
         """
-        Verifies [key-documents:AgentOrchestrator._phase_generate_review/TS-04]
-
-        Given: Ingested document metadata includes urls
+        Given: Ingested document metadata includes document_id and url
         When: Phase 5 builds prompt
-        Then: Prompt includes document urls for Claude to reproduce in output
+        Then: Prompt includes the document_id (not the URL) so Claude can echo it
         """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
@@ -1589,22 +1587,33 @@ class TestGenerateReviewKeyDocuments:
                     "description": "Transport Assessment",
                     "document_type": "Transport Assessment",
                     "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=ta123",
+                    "document_id": "ta_doc_id",
                 },
             },
         )
 
+        structure_dict = {**SAMPLE_STRUCTURE_DICT, "key_documents": [
+            {"document_id": "ta_doc_id", "category": "Transport & Access",
+             "summary": "Traffic analysis."},
+        ]}
+
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
             mock_client_inst = MagicMock()
-            mock_client_inst.messages.create.side_effect = _make_review_side_effect()
+            mock_client_inst.messages.create.side_effect = _make_review_side_effect(
+                structure_dict=structure_dict,
+            )
             MockAnthropic.return_value = mock_client_inst
 
             await orchestrator._phase_generate_review()
 
-            # Check that the first (structure) call's user prompt included the URL
+            # Check that the first (structure) call's user prompt included the document_id
             first_call_args = mock_client_inst.messages.create.call_args_list[0]
             user_msg = first_call_args.kwargs["messages"][0]["content"]
-            assert "planningregister.cherwell.gov.uk" in user_msg
+            assert "[ta_doc_id]" in user_msg
             assert "Transport Assessment" in user_msg
+            # URL must not be in the prompt anymore
+            assert "planningregister.cherwell.gov.uk" not in user_msg
+            assert "url:" not in user_msg
 
         await orchestrator.close()
 
@@ -1661,15 +1670,12 @@ class TestKeyDocumentsIntegration:
             "recommendations": ["Provide cycle track"],
             "suggested_conditions": [],
             "key_documents": [
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Analyses traffic impacts of the proposed development.",
-                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc1"},
-                {"title": "Design and Access Statement", "category": "Design & Layout",
-                 "summary": "Describes site layout including cycle parking locations.",
-                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc3"},
-                {"title": "Site Plan", "category": "Design & Layout",
-                 "summary": "Shows proposed layout with access roads.",
-                 "url": "https://planningregister.cherwell.gov.uk/Document/Download?id=doc2"},
+                {"document_id": "doc1", "category": "Transport & Access",
+                 "summary": "Analyses traffic impacts of the proposed development."},
+                {"document_id": "doc3", "category": "Design & Layout",
+                 "summary": "Describes site layout including cycle parking locations."},
+                {"document_id": "doc2", "category": "Design & Layout",
+                 "summary": "Shows proposed layout with access roads."},
             ],
         }
 
@@ -1770,6 +1776,131 @@ class TestKeyDocumentsIntegration:
         assert parsed["key_documents"][0]["category"] == "Transport & Access"
 
         await orchestrator.close()
+
+
+class TestBackfillKeyDocuments:
+    """Tests for the _backfill_key_documents helper."""
+
+    def _make_orchestrator(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+        return AgentOrchestrator(
+            review_id="rev_test",
+            application_ref="25/01178/REM",
+            mcp_client=MagicMock(),
+            redis_client=AsyncMock(),
+        )
+
+    def test_matching_id_backfills_title_and_url_from_metadata(self, monkeypatch):
+        """
+        Given: KeyDocumentItem(document_id="abc") and metadata containing abc
+        When: _backfill_key_documents is called
+        Then: result has one KeyDocument with title from description and url from metadata
+        """
+        from src.agent.review_schema import KeyDocumentItem
+
+        orchestrator = self._make_orchestrator(monkeypatch)
+        items = [KeyDocumentItem(document_id="abc", category="Transport & Access",
+                                  summary="Traffic.")]
+        metadata = {
+            "/data/ta.pdf": {
+                "description": "NPPF Dec 2024",
+                "document_type": "Policy",
+                "url": "https://example.com/ta.pdf",
+                "document_id": "abc",
+            }
+        }
+
+        result = orchestrator._backfill_key_documents(
+            items, metadata, "rev_test", "25/01178/REM"
+        )
+
+        assert len(result) == 1
+        assert result[0]["title"] == "NPPF Dec 2024"
+        assert result[0]["url"] == "https://example.com/ta.pdf"
+        assert result[0]["category"] == "Transport & Access"
+        assert result[0]["summary"] == "Traffic."
+
+    def test_unmatched_id_emits_warning_and_url_none(self, monkeypatch):
+        """
+        Given: KeyDocumentItem(document_id="xxx") and metadata that does not contain xxx
+        When: _backfill_key_documents is called
+        Then: output contains one entry with url is None,
+              title is "(unknown document)", a warning is logged, entry NOT dropped
+        """
+        from src.agent.review_schema import KeyDocumentItem
+
+        orchestrator = self._make_orchestrator(monkeypatch)
+        items = [KeyDocumentItem(document_id="xxx", category="Application Core",
+                                  summary="Mystery.")]
+        metadata = {
+            "/data/ta.pdf": {
+                "description": "Transport Assessment",
+                "document_type": "TA",
+                "url": "https://example.com/ta.pdf",
+                "document_id": "abc",
+            }
+        }
+
+        with patch("src.agent.orchestrator.logger") as mock_logger:
+            result = orchestrator._backfill_key_documents(
+                items, metadata, "rev_test", "25/01178/REM"
+            )
+
+        assert len(result) == 1
+        assert result[0]["url"] is None
+        assert result[0]["title"] == "(unknown document)"
+        assert result[0]["category"] == "Application Core"
+        assert result[0]["summary"] == "Mystery."
+        mock_logger.warning.assert_called_once_with(
+            "key_document id not in metadata",
+            review_id="rev_test",
+            application_ref="25/01178/REM",
+            document_id="xxx",
+        )
+
+    def test_three_items_one_mismatch_produces_three_entries(self, monkeypatch):
+        """
+        Given: three items, two with matching ids and one without
+        When: _backfill_key_documents runs
+        Then: output has three entries; two have populated url; mismatched has url=None
+        """
+        from src.agent.review_schema import KeyDocumentItem
+
+        orchestrator = self._make_orchestrator(monkeypatch)
+        items = [
+            KeyDocumentItem(document_id="match1", category="Transport & Access",
+                            summary="Traffic."),
+            KeyDocumentItem(document_id="bogus", category="Design & Layout",
+                            summary="Mystery."),
+            KeyDocumentItem(document_id="match2", category="Application Core",
+                            summary="Officer."),
+        ]
+        metadata = {
+            "/data/ta.pdf": {
+                "description": "Transport Assessment",
+                "document_type": "TA",
+                "url": "https://example.com/ta.pdf",
+                "document_id": "match1",
+            },
+            "/data/officer.pdf": {
+                "description": "Officer Report",
+                "document_type": "Report",
+                "url": "https://example.com/officer.pdf",
+                "document_id": "match2",
+            },
+        }
+
+        result = orchestrator._backfill_key_documents(
+            items, metadata, "rev_test", "25/01178/REM"
+        )
+
+        assert len(result) == 3
+        assert result[0]["url"] == "https://example.com/ta.pdf"
+        assert result[0]["title"] == "Transport Assessment"
+        assert result[1]["url"] is None
+        assert result[1]["title"] == "(unknown document)"
+        assert result[2]["url"] == "https://example.com/officer.pdf"
+        assert result[2]["title"] == "Officer Report"
 
 
 # ---------------------------------------------------------------------------
@@ -2477,8 +2608,8 @@ class TestTwoPhaseReviewGeneration:
             "recommendations": ["Provide cycle track", "Add Sheffield stands"],
             "suggested_conditions": ["Submit cycle parking details"],
             "key_documents": [
-                {"title": "Transport Assessment", "category": "Transport & Access",
-                 "summary": "Traffic analysis.", "url": "https://example.com/ta.pdf"},
+                {"document_id": "ta_id", "category": "Transport & Access",
+                 "summary": "Traffic analysis."},
             ],
         }
 
@@ -2497,7 +2628,7 @@ class TestTwoPhaseReviewGeneration:
         orchestrator._ingestion_result = DocumentIngestionResult(
             documents_fetched=1, documents_ingested=1,
             document_paths=["/data/ta.pdf"],
-            document_metadata={"/data/ta.pdf": {"description": "TA", "document_type": "TA", "url": None}},
+            document_metadata={"/data/ta.pdf": {"description": "Transport Assessment", "document_type": "TA", "url": "https://example.com/ta.pdf", "document_id": "ta_id"}},
         )
 
         with patch("src.agent.orchestrator.anthropic.Anthropic") as MockAnthropic:
@@ -3459,8 +3590,8 @@ class TestDocumentTypeDetection:
         await orchestrator.close()
 
 
-class TestEvidenceContextUrlEncoding:
-    """Tests for URL encoding in _build_evidence_context document list."""
+class TestEvidenceContextIngestedDocsText:
+    """Tests for the ingested_docs_text format produced by _build_evidence_context."""
 
     def _make_orchestrator(self, monkeypatch, document_metadata):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
@@ -3478,40 +3609,33 @@ class TestEvidenceContextUrlEncoding:
         orchestrator._search_results = []
         return orchestrator
 
-    def test_spaces_in_url_are_encoded(self, monkeypatch):
+    def test_two_documents_produce_id_prefixed_lines(self, monkeypatch):
+        """
+        Given: two documents with distinct document_ids
+        When: ingested_docs_text is built
+        Then: both ids appear in [...] prefix form and no url: substring is present
+        """
         orchestrator = self._make_orchestrator(monkeypatch, {
-            "/data/doc.pdf": {
-                "description": "Officer Report",
-                "document_type": "Report",
-                "url": "https://example.com/docs/Officer Report.pdf",
-            }
+            "/data/ta.pdf": {
+                "description": "Transport Assessment",
+                "document_type": "Transport Assessment",
+                "url": "https://example.com/ta.pdf",
+                "document_id": "abc123",
+            },
+            "/data/das.pdf": {
+                "description": "Design and Access Statement",
+                "document_type": "DAS",
+                "url": "https://example.com/das.pdf",
+                "document_id": "def456",
+            },
         })
         _, ingested_docs_text, *_ = orchestrator._build_evidence_context()
-        assert "Officer%20Report.pdf" in ingested_docs_text
-        assert "Officer Report.pdf" not in ingested_docs_text
-
-    def test_already_encoded_url_not_double_encoded(self, monkeypatch):
-        orchestrator = self._make_orchestrator(monkeypatch, {
-            "/data/doc.pdf": {
-                "description": "Report",
-                "document_type": "Report",
-                "url": "https://example.com/docs/Officer%20Report.pdf",
-            }
-        })
-        _, ingested_docs_text, *_ = orchestrator._build_evidence_context()
-        assert "Officer%20Report.pdf" in ingested_docs_text
-        assert "%2520" not in ingested_docs_text
-
-    def test_none_url_shows_no_url(self, monkeypatch):
-        orchestrator = self._make_orchestrator(monkeypatch, {
-            "/data/doc.pdf": {
-                "description": "Report",
-                "document_type": "Report",
-                "url": None,
-            }
-        })
-        _, ingested_docs_text, *_ = orchestrator._build_evidence_context()
-        assert "no URL" in ingested_docs_text
+        assert "[abc123]" in ingested_docs_text
+        assert "[def456]" in ingested_docs_text
+        assert "url:" not in ingested_docs_text
+        assert "https://example.com" not in ingested_docs_text
+        assert "Transport Assessment" in ingested_docs_text
+        assert "Design and Access Statement" in ingested_docs_text
 
 
 # ---------------------------------------------------------------------------
