@@ -2148,6 +2148,143 @@ class TestS3StorageDownloadPhase:
         await orchestrator.close()
 
 
+class TestDocumentMetadataDocumentId:
+    """Tests for persisting document_id in document_metadata values."""
+
+    @pytest.mark.asyncio
+    async def test_document_id_persisted_on_fresh_download(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+    ):
+        """
+        Given: A selected document with document_id="abc123def456" downloaded fresh
+        When: Download phase completes
+        Then: document_metadata[local_path]["document_id"] == "abc123def456"
+        """
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            {
+                "status": "success",
+                "file_path": "/data/raw/25_01178_REM/001_Transport Assessment.pdf",
+                "file_size": 150000,
+            },
+        ]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_docid",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = [
+            {
+                "document_id": "abc123def456",
+                "description": "Transport Assessment",
+                "document_type": "Transport Assessment",
+                "url": "https://example.com/ta.pdf",
+                "date_published": "2024-01-01",
+            },
+        ]
+
+        await orchestrator._phase_download_documents()
+
+        meta = orchestrator._ingestion_result.document_metadata
+        local_path = "/data/raw/25_01178_REM/001_Transport Assessment.pdf"
+        assert local_path in meta
+        assert meta[local_path]["document_id"] == "abc123def456"
+
+        await orchestrator.close()
+
+    @pytest.mark.asyncio
+    async def test_document_id_persisted_across_reuse_and_fresh_with_s3_upload(
+        self,
+        mock_mcp_client,
+        mock_redis,
+        sample_application_response,
+        tmp_path,
+    ):
+        """
+        Given: One doc reused from S3 and one doc downloaded fresh (with S3 upload)
+        When: Download phase completes
+        Then: Both metadata entries carry a non-empty document_id and the S3
+              upload url mutation does not drop the document_id.
+        """
+        backend = _make_s3_backend_mock()
+
+        manifest_data = {
+            "review_id": "rev_prev",
+            "application_ref": "25/01178/REM",
+            "created_at": "2026-02-14T12:00:00Z",
+            "documents": [
+                {
+                    "document_id": "doc1",
+                    "description": "Transport Assessment",
+                    "s3_key": "25_01178_REM/001_Transport Assessment.pdf",
+                    "file_hash": "sha256:abc",
+                    "cherwell_url": "https://example.com/doc1",
+                },
+            ],
+        }
+
+        def mock_download_to(key, local_path):
+            if key == "25_01178_REM/manifest.json":
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text(json.dumps(manifest_data))
+            elif "Transport Assessment" in key:
+                pass
+            else:
+                raise FileNotFoundError(f"Key not found: {key}")
+
+        backend.download_to.side_effect = mock_download_to
+
+        # doc3 goes through the fresh-download path; its file lives under tmp_path
+        # so the S3 upload step at ~line 941 runs end-to-end
+        new_doc_path = str(tmp_path / "25_01178_REM" / "002_Design and Access Statement.pdf")
+        mock_mcp_client.call_tool.side_effect = [
+            sample_application_response,
+            {"status": "success", "file_path": new_doc_path, "file_size": 120000},
+        ]
+
+        selected = [S3_SELECTED_DOCUMENTS[0], S3_SELECTED_DOCUMENTS[2]]
+
+        orchestrator = AgentOrchestrator(
+            review_id="rev_docid_s3",
+            application_ref="25/01178/REM",
+            mcp_client=mock_mcp_client,
+            redis_client=mock_redis,
+            storage_backend=backend,
+            previous_review_id="rev_prev",
+        )
+        await orchestrator.initialize()
+
+        await orchestrator._phase_fetch_metadata()
+        orchestrator._selected_documents = selected
+
+        with patch.object(Path, "mkdir", return_value=None), \
+             patch.object(Path, "stat", return_value=SimpleNamespace(st_size=23)):
+            await orchestrator._phase_download_documents()
+
+        meta = orchestrator._ingestion_result.document_metadata
+        assert len(meta) == 2
+
+        # Every entry should have a non-empty document_id
+        doc_ids = {entry["document_id"] for entry in meta.values()}
+        assert "" not in doc_ids
+        assert doc_ids == {"doc1", "doc3"}
+
+        # The S3 upload path mutates url; document_id must survive that mutation
+        for entry in meta.values():
+            assert "test-bucket.nyc3.digitaloceanspaces.com" in entry["url"]
+            assert entry["document_id"]
+
+        await orchestrator.close()
+
+
 class TestS3StorageIngestionPhase:
     """
     Tests for S3 storage integration in ingestion phase.

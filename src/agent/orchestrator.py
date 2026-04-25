@@ -79,7 +79,7 @@ class DocumentIngestionResult:
     documents_ingested: int = 0
     failed_documents: list[dict[str, Any]] = field(default_factory=list)
     document_paths: list[str] = field(default_factory=list)
-    # Implements [key-documents:FR-005] - Maps file_path to {description, document_type, url}
+    # Implements [key-documents:FR-005] - Maps file_path to {description, document_type, url, document_id}
     document_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Implements [document-type-detection:FR-003] - Track image-based docs separately
     skipped_documents: list[dict[str, Any]] = field(default_factory=list)
@@ -855,6 +855,7 @@ class AgentOrchestrator:
                         "description": desc,
                         "document_type": doc.get("document_type"),
                         "url": public_url or doc_url,
+                        "document_id": doc.get("document_id", ""),
                     }
 
                     reused_count += 1
@@ -904,6 +905,7 @@ class AgentOrchestrator:
                             "description": desc,
                             "document_type": doc.get("document_type"),
                             "url": doc_url,
+                            "document_id": doc.get("document_id", ""),
                         }
                     new_count += 1
                 else:

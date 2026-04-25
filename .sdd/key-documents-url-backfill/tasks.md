@@ -12,20 +12,20 @@
 
 ### Task 1.1: Persist `document_id` in `IngestionResult.document_metadata`
 
-- **Status:** Backlog
+- **Status:** Done
 - **Requirements:** key-documents-url-backfill:FR-001
 - **Files to read:** `src/agent/orchestrator.py`, `src/mcp_servers/cherwell_scraper/parsers.py`, `tests/test_orchestrator.py`
 - **Files to modify/create:** `src/agent/orchestrator.py`, `tests/test_orchestrator.py`
 
 **Subtasks:**
-- [ ] Extend the value-shape documented at `IngestionResult.document_metadata` (orchestrator.py:83) to include `document_id`.
-- [ ] At the S3-reuse assignment site (~orchestrator.py:854), populate `document_id` in the metadata dict using `doc.get("document_id", "")`.
-- [ ] At the fresh-download assignment site (~orchestrator.py:903), populate `document_id` in the metadata dict using `doc.get("document_id", "")`.
-- [ ] Leave line ~941 alone — it is a URL mutation, not a population site.
+- [x] Extend the value-shape documented at `IngestionResult.document_metadata` (orchestrator.py:83) to include `document_id`.
+- [x] At the S3-reuse assignment site (~orchestrator.py:854), populate `document_id` in the metadata dict using `doc.get("document_id", "")`.
+- [x] At the fresh-download assignment site (~orchestrator.py:903), populate `document_id` in the metadata dict using `doc.get("document_id", "")`.
+- [x] Leave line ~941 alone — it is a URL mutation, not a population site.
 
 **Tests:**
-- [ ] key-documents-url-backfill:TS-01 — a selected document with `document_id="abc123def456"` results in `metadata[local_path]["document_id"] == "abc123def456"`.
-- [ ] key-documents-url-backfill:TS-02 — documents passing through both the S3-reuse and fresh-download paths have non-empty `document_id` in their metadata value, and the ~line 941 URL update does not drop it.
+- [x] key-documents-url-backfill:TS-01 — a selected document with `document_id="abc123def456"` results in `metadata[local_path]["document_id"] == "abc123def456"`.
+- [x] key-documents-url-backfill:TS-02 — documents passing through both the S3-reuse and fresh-download paths have non-empty `document_id` in their metadata value, and the ~line 941 URL update does not drop it.
 
 **Details:**
 
