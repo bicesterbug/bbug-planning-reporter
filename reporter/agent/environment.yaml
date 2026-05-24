@@ -1,0 +1,15 @@
+# Environment definition — created ONCE via `ant beta:environments create < environment.yaml`.
+# Store the returned id as REPORTER_ENVIRONMENT_ID.
+#
+# Cloud environment: Anthropic provisions the per-session container (the workspace).
+# Networking is `limited` because all outside-world access happens host-side via
+# custom tools — the container itself only needs to read/write workspace files, so
+# it needs no general egress. (Package managers off; no MCP servers declared.)
+
+name: bbug-reporter-env
+config:
+  type: cloud
+  networking:
+    type: limited
+    allow_package_managers: false
+    allow_mcp_servers: false

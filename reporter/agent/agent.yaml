@@ -1,0 +1,186 @@
+# Managed Agent definition — created ONCE via `ant beta:agents create < agent.yaml`.
+# Store the returned id as REPORTER_AGENT_ID. To change behaviour, update this file
+# and `ant beta:agents update --agent-id $ID --version N` (creates a new version).
+#
+# One agent, two modes: the autonomous (define_outcome) and cowork (interactive)
+# drivers both reference this same config.
+
+name: BBUG Cherwell Cycle Advocacy Agent
+model: claude-opus-4-7
+
+description: >
+  Prepares cycling-advocacy consultation responses to Cherwell planning
+  applications. Builds the evidence base and drafts the asks; a human always
+  decides the headline support/object/conditional position.
+
+system: |
+  You are the assessment engine for a cycling advocacy group responding to
+  Cherwell District Council planning applications. You produce a DRAFT
+  consultation response: the evidence base, the analysis, and the specific asks.
+
+  ## Operating principles
+  - TOOLS DO, SKILLS KNOW. Use the custom tools for every fact about the outside
+    world (the planning portal, documents, the cycle network, policy text). Use
+    your skills for how to judge what those facts mean. Never guess a fact a tool
+    can give you.
+  - ADVOCATE FRAMING, NOT OFFICER FRAMING. Look for gaps, weak commitments, and
+    missed opportunities — not just policy-floor compliance.
+  - THE RECOMMENDATION IS HUMAN. You must NEVER state a headline position
+    (support / object / conditional support). Prepare the evidence and the menu
+    of asks; a person decides.
+  - CITE EVERYTHING. Every substantive claim carries an inline citation:
+    [Doc: file p.N], [Policy: ref §clause], or [Position: id]. No citation, no claim.
+  - BASELINE IS TODAY'S NETWORK ONLY. assess_cycle_route reports the CURRENT cycle
+    network. Proposed infrastructure is NOT measured by any tool — you must INFER
+    it from the application documents and reason about whether it would credibly
+    change the baseline.
+
+  ## Mitigation inference (highest-risk step)
+  For each proposed measure you infer from the documents, submit it via
+  submit_mitigation_inference with: what is actually proposed (committed vs
+  aspirational), the route segments affected, whether it would change the LTS/
+  rating and why, a confidence score 0–1 with the basis stated, and any
+  credibility concerns (no funding, no land control, "indicative only", depends
+  on third-party works). Treat this as draft to be reviewed.
+
+  ## Workspace
+  Write staged drafts to the container as 01-triage.md, 02-baseline.md,
+  03-mitigation-inference.md, 04-assessment.md, 05-asks.md. Write the final
+  consultation response to /mnt/session/outputs/advocacy-response.md.
+
+  ## Where you must not be trusted
+  You do not assess highway safety in the regulatory sense, your trip-generation
+  comments are sense-checks not bespoke TRICS analyses, and mitigation inference
+  is judgement not measurement. Flag uncertainty rather than overstating.
+
+tools:
+  # Built-in workspace toolset (read/write/edit/glob/grep/bash). Web tools are
+  # disabled — all outside-world access goes through the host-side custom tools.
+  - type: agent_toolset_20260401
+    default_config: { enabled: true }
+    configs:
+      - { name: web_search, enabled: false }
+      - { name: web_fetch, enabled: false }
+
+  # ── Host-side custom tools (serviced by the webhook driver; return compact JSON) ──
+  - type: custom
+    name: fetch_application
+    description: >
+      Fetch a Cherwell application from the public register. Returns metadata, a
+      document manifest, and missing-document flags. Call this first.
+    input_schema:
+      type: object
+      properties:
+        application_ref: { type: string, description: "e.g. 25/01178/REM" }
+      required: [application_ref]
+
+  - type: custom
+    name: search_application_docs
+    description: >
+      Semantic search over the application's ingested documents. Returns top-N
+      cited chunks. Use instead of reading whole documents.
+    input_schema:
+      type: object
+      properties:
+        application_ref: { type: string }
+        query: { type: string }
+        n_results: { type: integer, default: 10 }
+      required: [application_ref, query]
+
+  - type: custom
+    name: search_policy
+    description: >
+      Semantic search over the policy knowledge base (NPPF, LTN 1/20, Cherwell
+      Local Plan, LTCP, etc.) with optional point-in-time filtering. Returns cited
+      clauses, tagged binding vs aspirational.
+    input_schema:
+      type: object
+      properties:
+        query: { type: string }
+        sources: { type: array, items: { type: string } }
+        effective_date: { type: string, description: "ISO date for temporal filtering" }
+        n_results: { type: integer, default: 10 }
+      required: [query]
+
+  - type: custom
+    name: assess_cycle_route
+    description: >
+      Baseline LTN 1/20 assessment of the CURRENT cycle network from the site to
+      key destinations. Returns scores, RAG ratings, provision breakdown, issues,
+      and S106 suggestions. Does NOT model proposed infrastructure.
+    input_schema:
+      type: object
+      properties:
+        application_ref: { type: string }
+        origin: { type: object, properties: { lat: { type: number }, lon: { type: number } } }
+        destinations:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              lat: { type: number }
+              lon: { type: number }
+              category: { type: string }
+            required: [name, lat, lon]
+      required: [destinations]
+
+  - type: custom
+    name: classify_documents
+    description: Select transport-relevant documents to ingest (cheap host-side classifier).
+    input_schema:
+      type: object
+      properties:
+        documents: { type: array, items: { type: object } }
+        include_consultation_responses: { type: boolean, default: false }
+      required: [documents]
+
+  - type: custom
+    name: generate_search_queries
+    description: Generate application + policy search queries (cheap host-side classifier).
+    input_schema:
+      type: object
+      properties:
+        application: { type: object }
+        ingested_docs: { type: array, items: { type: object } }
+      required: [application]
+
+  - type: custom
+    name: verify_claims
+    description: Verify the draft's claims against the supplied evidence chunks.
+    input_schema:
+      type: object
+      properties:
+        markdown: { type: string }
+        evidence: { type: array, items: { type: object } }
+      required: [markdown, evidence]
+
+  - type: custom
+    name: submit_mitigation_inference
+    description: >
+      Record one inferred proposed mitigation with confidence + reasoning. In
+      autonomous mode this routes the run to human review (the high-risk checkpoint).
+    input_schema:
+      type: object
+      properties:
+        measure: { type: string }
+        committed_or_aspirational: { type: string, enum: [committed, aspirational, unclear] }
+        affected_segments: { type: string }
+        would_change_baseline: { type: boolean }
+        reasoning: { type: string }
+        confidence: { type: number }
+        credibility_concerns: { type: array, items: { type: string } }
+      required: [measure, committed_or_aspirational, would_change_baseline, reasoning, confidence]
+
+  # ── TODO (need Blob/Voyage ingest pipeline): download_docs, ingest_document,
+  #    get_site_boundary, get_policy_section, export_response.
+
+# skills:
+#   Custom skills are uploaded via the Skills API first (POST /v1/skills); then
+#   reference them here by skill_id. Until uploaded, leave commented out — `ant`
+#   rejects unknown skill_ids. See skills/ for the SKILL.md sources.
+#   - { type: custom, skill_id: skill_..., version: latest }   # advocacy-positions
+#   - { type: custom, skill_id: skill_..., version: latest }   # transport-policy-cherwell
+#   - { type: custom, skill_id: skill_..., version: latest }   # transport-document-triage
+#   - { type: custom, skill_id: skill_..., version: latest }   # mitigation-inference
+#   - { type: custom, skill_id: skill_..., version: latest }   # advocacy-response

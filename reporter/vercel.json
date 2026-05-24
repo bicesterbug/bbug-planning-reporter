@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/tools/fetch_application.py": {
+      "memory": 512,
+      "maxDuration": 60,
+      "includeFiles": "api/_pylib/**"
+    },
+    "api/tools/assess_route.py": {
+      "memory": 1024,
+      "maxDuration": 300,
+      "includeFiles": "api/_pylib/**"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# Python deps for the Vercel deterministic-tool functions (api/tools/*.py).
+# Heavy self-hosted deps from the legacy stack (PyTorch, sentence-transformers,
+# ChromaDB, Tesseract) are intentionally dropped — embeddings move to Voyage,
+# the vector store to Neon/pgvector, and OCR to Claude vision.
+httpx>=0.27.0
+beautifulsoup4>=4.12.0
+structlog>=24.1.0
+# pymupdf is added when the ingest_document function (born-digital text extraction)
+# is implemented:
+# pymupdf>=1.24.0
