@@ -5,6 +5,4 @@
 httpx>=0.27.0
 beautifulsoup4>=4.12.0
 structlog>=24.1.0
-# pymupdf is added when the ingest_document function (born-digital text extraction)
-# is implemented:
-# pymupdf>=1.24.0
+pymupdf>=1.24.0          # born-digital text extraction (api/tools/extract_document.py)

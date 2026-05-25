@@ -75,6 +75,34 @@ tools:
       required: [application_ref]
 
   - type: custom
+    name: ingest_document
+    description: >
+      Download one application document, extract its text (born-digital via
+      pymupdf, scanned pages via Claude vision), and index it for search. Returns
+      a compact manifest only (type, pages, chunks indexed) — not the text. Call
+      for each transport-relevant document before searching it.
+    input_schema:
+      type: object
+      properties:
+        application_ref: { type: string }
+        document_url: { type: string }
+        source_file: { type: string }
+        document_type: { type: string }
+      required: [application_ref, document_url]
+
+  - type: custom
+    name: get_site_boundary
+    description: >
+      Look up the site boundary + centroid (route origin) for an application from
+      the Cherwell ArcGIS register. Call before assess_cycle_route if you don't
+      already have an origin.
+    input_schema:
+      type: object
+      properties:
+        application_ref: { type: string }
+      required: [application_ref]
+
+  - type: custom
     name: search_application_docs
     description: >
       Semantic search over the application's ingested documents. Returns top-N
@@ -172,8 +200,8 @@ tools:
         credibility_concerns: { type: array, items: { type: string } }
       required: [measure, committed_or_aspirational, would_change_baseline, reasoning, confidence]
 
-  # ── TODO (need Blob/Voyage ingest pipeline): download_docs, ingest_document,
-  #    get_site_boundary, get_policy_section, export_response.
+  # ── TODO: download_docs (Blob archival — ingest fetches by URL directly),
+  #    get_policy_section, export_response.
 
 # skills:
 #   Custom skills are uploaded via the Skills API first (POST /v1/skills); then

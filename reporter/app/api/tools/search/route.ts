@@ -5,26 +5,10 @@
 // filter). Embeds the query with Voyage, runs a cosine-similarity search, and
 // returns only the top-N CITED chunks — raw documents never reach the agent.
 
-import { neon } from "@neondatabase/serverless";
-import { requireEnv } from "@/lib/anthropic";
+import { getSql } from "@/lib/db";
+import { embed } from "@/lib/voyage";
 
 export const runtime = "nodejs";
-
-const VOYAGE_MODEL = process.env.VOYAGE_MODEL || "voyage-3";
-
-async function embedQuery(text: string): Promise<number[]> {
-  const resp = await fetch("https://api.voyageai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${requireEnv("VOYAGE_API_KEY")}`,
-    },
-    body: JSON.stringify({ input: [text], model: VOYAGE_MODEL, input_type: "query" }),
-  });
-  if (!resp.ok) throw new Error(`voyage embed failed: ${resp.status} ${await resp.text()}`);
-  const data = await resp.json();
-  return data.data[0].embedding as number[];
-}
 
 export async function POST(req: Request): Promise<Response> {
   if (process.env.INTERNAL_TOOL_TOKEN && req.headers.get("x-internal-token") !== process.env.INTERNAL_TOOL_TOKEN) {
@@ -39,8 +23,8 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "query and collection are required" }, { status: 400 });
   }
 
-  const sql = neon(requireEnv("DATABASE_URL"));
-  const embedding = await embedQuery(query);
+  const sql = getSql();
+  const [embedding] = await embed([query], "query");
   const vec = `[${embedding.join(",")}]`;
 
   let rows: Record<string, unknown>[];

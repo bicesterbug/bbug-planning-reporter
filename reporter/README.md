@@ -51,17 +51,18 @@ on Haiku **off** the premium agent loop; only judgement (triage interpretation,
 mitigation inference, asks, the response) runs on the agent, guided by skills. See
 the plan's matrix.
 
-## Status (foundation — build-order steps 0–1)
+## Status (foundation — build-order steps 0–1 + ingest pipeline)
 Implemented: Python engines ported (Cherwell parse, LTN 1/20 routing/scoring/issues);
-`fetch_application` + `assess_cycle_route` functions; webhook session driver +
-custom-tool dispatch; Haiku classify; Neon+pgvector search; trigger (both modes);
-agent + environment YAML; first three skills; DB schema.
+tools `fetch_application`, `get_site_boundary`, `assess_cycle_route`,
+`ingest_document` (pymupdf born-digital text + Claude-vision OCR → chunk → Voyage →
+Neon), `search_application_docs` / `search_policy`; webhook session driver +
+custom-tool dispatch; Haiku classify; trigger (both modes); agent + environment
+YAML; first three skills; DB schema.
 
-TODO (next): the ingest pipeline (`download_docs` → Blob, `ingest_document` =
-pymupdf + Claude-vision OCR → Voyage → Neon), `get_site_boundary`,
-`get_policy_section`, `export_response`; remaining 11 skills; Upstash rate-limit +
-escalation queue; eval harness vs the legacy pipeline. The legacy `../src` stack is
-**not yet retired** — do that only once this proves out.
+TODO (next): `download_docs` (Blob archival), `get_policy_section`,
+`export_response`; the policy-KB ingest (populate `policy_chunks`); remaining 11
+skills; Upstash rate-limit + escalation queue; eval harness vs the legacy pipeline.
+The legacy `../src` stack is **not yet retired** — do that only once this proves out.
 
 > Note: this foundation has not been run against live SaaS from this environment
 > (no provisioned Neon/Voyage/Valhalla/Anthropic keys here). Treat external wiring
