@@ -1,0 +1,45 @@
+{
+  "_comment": "Example payloads for POST /api/policy/ingest (admin, x-internal-token). One object per call. Structured sections preferred for cited policies; document_url for prose corpora.",
+
+  "structured_example": {
+    "source": "Cherwell_Local_Plan",
+    "title": "Cherwell Local Plan 2011-2031 Part 1",
+    "revision_id": "2015-adopted",
+    "effective_from": "2015-07-20",
+    "binding": true,
+    "supersede_previous": true,
+    "sections": [
+      {
+        "section_ref": "Policy SLE 4",
+        "binding": true,
+        "text": "Sustainable transport... (paste the verbatim policy text here)"
+      },
+      {
+        "section_ref": "Policy INF 1",
+        "binding": true,
+        "text": "Infrastructure and developer contributions... (verbatim text)"
+      }
+    ]
+  },
+
+  "prose_example": {
+    "source": "LTN_1_20",
+    "title": "Cycle Infrastructure Design (LTN 1/20)",
+    "revision_id": "2020-07",
+    "effective_from": "2020-07-27",
+    "binding": false,
+    "supersede_previous": true,
+    "document_url": "https://example.org/ltn-1-20.pdf"
+  },
+
+  "emerging_plan_example": {
+    "source": "Cherwell_Local_Plan_Review_2040",
+    "title": "Cherwell Local Plan Review 2040 (emerging)",
+    "revision_id": "2024-reg18",
+    "effective_from": "2024-01-01",
+    "binding": false,
+    "sections": [
+      { "section_ref": "Draft Policy (transport)", "binding": false, "text": "..." }
+    ]
+  }
+}

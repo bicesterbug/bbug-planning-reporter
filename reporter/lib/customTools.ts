@@ -20,6 +20,7 @@ const ROUTES: Record<string, Route> = {
   ingest_document: { path: "/api/tools/ingest" }, // ts (orchestrates extract + OCR + embed + store)
   search_application_docs: { path: "/api/tools/search" }, // ts
   search_policy: { path: "/api/tools/search" }, // ts (collection in input)
+  get_policy_section: { path: "/api/tools/policy_section" }, // ts (exact section lookup)
   classify_documents: { path: "/api/classify" }, // ts (task in input)
   generate_search_queries: { path: "/api/classify" }, // ts
   verify_claims: { path: "/api/classify" }, // ts
@@ -28,8 +29,8 @@ const ROUTES: Record<string, Route> = {
 // Tools intentionally not yet wired.
 //  - download_docs: ingest_document fetches by URL directly; Blob archival is a
 //    separate follow-up.
-//  - get_policy_section / export_response: pending.
-const NOT_IMPLEMENTED = new Set(["download_docs", "get_policy_section", "export_response"]);
+//  - export_response: pending.
+const NOT_IMPLEMENTED = new Set(["download_docs", "export_response"]);
 
 function baseUrl(): string {
   // REPORTER_BASE_URL e.g. https://reporter.bicesterbug.org ; on Vercel can be

@@ -131,6 +131,21 @@ tools:
       required: [query]
 
   - type: custom
+    name: get_policy_section
+    description: >
+      Retrieve the exact text of a named policy section (e.g. "Policy SLE 4",
+      LTN 1/20 "Table 5-2"), optionally for the application's effective date. Use
+      when you need verbatim policy wording rather than a semantic match.
+    input_schema:
+      type: object
+      properties:
+        source: { type: string, description: "e.g. LTN_1_20, NPPF, Cherwell_Local_Plan" }
+        section_ref: { type: string }
+        revision_id: { type: string }
+        effective_date: { type: string, description: "ISO date" }
+      required: [source, section_ref]
+
+  - type: custom
     name: assess_cycle_route
     description: >
       Baseline LTN 1/20 assessment of the CURRENT cycle network from the site to

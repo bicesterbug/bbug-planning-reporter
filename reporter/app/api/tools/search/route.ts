@@ -45,9 +45,14 @@ export async function POST(req: Request): Promise<Response> {
     const sources: string[] | null = body.sources ?? null;
     rows = (await sql`
       SELECT chunk_text, source AS source_file, section_ref AS page_number, source AS document_type,
+             binding, revision_id,
              1 - (embedding <=> ${vec}::vector) AS score
       FROM policy_chunks
-      WHERE (${effectiveDate}::date IS NULL OR effective_from <= ${effectiveDate}::date)
+      WHERE (
+              ${effectiveDate}::date IS NULL
+              OR (effective_from <= ${effectiveDate}::date
+                  AND (effective_to IS NULL OR effective_to > ${effectiveDate}::date))
+            )
         AND (${sources}::text[] IS NULL OR source = ANY(${sources}::text[]))
       ORDER BY embedding <=> ${vec}::vector
       LIMIT ${nResults}
@@ -60,6 +65,8 @@ export async function POST(req: Request): Promise<Response> {
     page: r.page_number,
     document_type: r.document_type,
     score: typeof r.score === "number" ? Number((r.score as number).toFixed(3)) : r.score,
+    // Policy chunks carry binding vs aspirational — the advocate distinction.
+    ...(collection === "policy" ? { binding: r.binding, revision_id: r.revision_id } : {}),
     citation:
       collection === "application"
         ? `[Doc: ${r.source_file}${r.page_number ? ` p.${r.page_number}` : ""}]`

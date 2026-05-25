@@ -22,7 +22,7 @@ export function chunkPages(pages: { page: number; text: string }[]): PageChunk[]
   return chunks;
 }
 
-function splitText(text: string): string[] {
+export function splitText(text: string): string[] {
   if (text.length <= MAX_CHARS) return [text];
 
   // Prefer paragraph boundaries, then sentence, then hard cut.
