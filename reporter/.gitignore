@@ -7,3 +7,8 @@ node_modules/
 next-env.d.ts
 __pycache__/
 *.pyc
+
+# The repo-root .gitignore ignores `lib/` (Python venv convention); that wrongly
+# catches our TypeScript control-plane lib. Re-include it.
+!lib/
+!lib/**
